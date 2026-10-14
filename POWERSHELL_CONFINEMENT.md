@@ -39,7 +39,7 @@ This verifies a prototype execution and trace path for fixed benign code.
 Linux PowerShell still exposes a Linux guest environment, not the Windows
 persona. Script-controllable tracing is not a sufficient audit boundary for
 submitted scripts, and these probes do not establish resistance to container
-escape. Dashboard command events are not implemented yet. Microsoft documents
+escape. Microsoft documents
 [PowerShell in official SDK images](https://learn.microsoft.com/en-us/powershell/scripting/install/powershell-in-docker),
 and Docker documents the [container run controls](https://docs.docker.com/reference/cli/docker/container/run/).
 
@@ -50,6 +50,30 @@ children are allowed, they must resolve to verified guest bytes and use the
 same guest persona.
 
 ## Command evidence
+
+The probe now hosts the fixture in a separate PowerShell runspace and observes
+the engine debugger's current command processor. The public debugger-stop
+invocation is a copy without bound parameters; the pinned engine's actual
+`MyInvocation` record supplies the evaluated values. Native command binders
+supply argument arrays directly, preserving spaces, quotes, and empty values.
+This uses private engine fields and must be revalidated for each engine version.
+
+The fixed fixtures passed direct checks for a constructed command name,
+nested `Invoke-Expression`, a splatted array, an alias, and quoted and empty
+native arguments. Structured `command_events` retain the resolved command,
+bound parameters, native argument array, source expression, and invocation
+order. Records describe the point before execution, without claiming successful
+completion. Snapshots have explicit depth, length, and event bounds; unsupported
+value types are marked. Breakpoints can still be removed or bypassed, and
+DebuggerHidden paths, new runspaces, and native descendants are not completely
+traced. This remains a fixed-probe tool, not an arbitrary-script analysis mode.
+
+Use `--dashboard-root <directory>` on the probe tool to save a partial run in
+the usual integrity-checked report format. The dashboard's Commands section
+shows these records with capture limitations, alongside guest native process
+command lines from existing runs. Real fixture evidence is saved in
+`output/powershell-command-capture-probe/probe.json`; its dashboard run lives
+under `output/powershell-dashboard-probe`. The dashboard remains read-only.
 
 Capture execution at command discovery and parameter binding, after variable
 expansion, alias resolution, splatting, and dynamic evaluation. Record the

@@ -1118,7 +1118,7 @@ COMMON = """
 <aside class="sidebar" aria-label="Workspace navigation">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">E</span>Emumee</a><div class="brand-caption">Windows emulation</div>
 <div class="nav-label">Workspace</div><nav class="side-nav"><a href="/"{% if view == 'runs' %} class="active" aria-current="page"{% endif %}>Analysis runs</a></nav>
-{% if view == 'detail' %}<div class="nav-label">This run</div><nav class="side-nav" aria-label="Run sections"><a href="#overview">Overview</a><a href="#artifacts">Artifacts</a><a href="#console">Console</a><a href="#coverage">API coverage</a><a href="#network">Network</a><a href="#events">Event timeline</a></nav>{% elif view == 'compare' %}<div class="nav-label">This comparison</div><nav class="side-nav" aria-label="Comparison sections"><a href="#outcomes">Outcomes</a><a href="#changes">API &amp; persona</a><a href="#artifacts">Artifacts</a><a href="#behavior">Behavior</a></nav>{% endif %}
+{% if view == 'detail' %}<div class="nav-label">This run</div><nav class="side-nav" aria-label="Run sections"><a href="#overview">Overview</a><a href="#artifacts">Artifacts</a><a href="#console">Console</a><a href="#commands">Commands</a><a href="#coverage">API coverage</a><a href="#network">Network</a><a href="#events">Event timeline</a></nav>{% elif view == 'compare' %}<div class="nav-label">This comparison</div><nav class="side-nav" aria-label="Comparison sections"><a href="#outcomes">Outcomes</a><a href="#changes">API &amp; persona</a><a href="#artifacts">Artifacts</a><a href="#behavior">Behavior</a></nav>{% endif %}
 <div class="sidebar-footer"><span class="local-dot"></span>Local workspace<br>Completed analysis reports</div></aside>
 <div class="workspace"><header class="topbar"><div class="crumb"><a href="/">Workspace</a><span class="crumb-separator">/</span><span class="current">{{ title }}</span></div><span class="local-label">Read-only reports</span></header><main class="wrap" id="main">
 {%- endmacro %}
@@ -1175,7 +1175,7 @@ COMPARE = COMMON + """
 
 DETAIL = COMMON + """
 {{ start('Run report', 'detail') }}
-<section id="overview"><div class="page-heading"><div class="eyebrow">{{ run.id }}</div><h1>{{ run.sample.name if run.sample else 'Analysis run' }}</h1><p class="lede">Execution results and evidence from this analysis run.</p><div class="hero-tags"><span class="pill {{ run.status }}">{{ run.status|capitalize }}</span>{% if run.engine %}<span class="chip">{{ run.engine }}</span>{% endif %}{% if run.sample and run.sample.architecture %}<span class="chip">{{ run.sample.architecture }}</span>{% endif %}{% if run.sample %}<span class="chip">{{ 'Managed' if run.sample.managed else 'Native' }}</span>{% endif %}</div></div>
+<section id="overview"><div class="page-heading"><div class="eyebrow">{{ run.id }}</div><h1>{{ run.sample.name if run.sample else 'Analysis run' }}</h1><p class="lede">Execution results and evidence from this analysis run.</p><div class="hero-tags"><span class="pill {{ run.status }}">{{ run.status|capitalize }}</span>{% if run.engine %}<span class="chip">{{ run.engine }}</span>{% endif %}{% if run.sample and run.sample.architecture %}<span class="chip">{{ run.sample.architecture }}</span>{% endif %}{% if run.sample %}<span class="chip">{{ 'PowerShell' if run.sample.kind in ('powershell', 'powershell-probe') else 'Managed' if run.sample.managed else 'Native' }}</span>{% endif %}</div></div>
 <div class="cards"><div class="card"><div class="label">Instructions</div><div class="metric">{{ run.instruction_count|ui_number if run.instruction_count is defined else '—' }}</div><div class="metric-note">Executed guest instructions</div></div><div class="card"><div class="label">Unique artifacts</div><div class="metric">{{ (run.artifact_groups|length if run.artifact_groups is defined else run.artifacts|length)|ui_number }}</div><div class="metric-note">Recovered evidence</div></div><div class="card"><div class="label">Denied operations</div><div class="metric">{{ (run.denied_operations or 0)|ui_number }}</div><div class="metric-note">Recorded network denials</div></div><div class="card"><div class="label">Guest result</div><div class="metric text">{% if run.guest_exit_code is defined and run.guest_exit_code is not none %}Exit {{ run.guest_exit_code }}{% elif run.guest_entry_return is defined and run.guest_entry_return is not none %}Return {{ run.guest_entry_return }}{% else %}Not recorded{% endif %}</div><div class="metric-note">{{ (run.completion_reason or 'No completion reason')|replace('_', ' ') }}</div></div></div>
 <div class="panel" style="margin-bottom:24px"><div class="facts">
 {% for label, value in (('Engine trace', trace_integrity), ('Network report', broker_integrity), ('Instruction limit', 'Reached' if run.instruction_limit_reached else 'Not reached'), ('Wall-clock limit', 'Reached' if run.timeout_reached else 'Not reached'), ('Guest exit code', run.guest_exit_code if run.guest_exit_code is defined and run.guest_exit_code is not none else 'Unknown'), ('Entry return', run.guest_entry_return if run.guest_entry_return is defined and run.guest_entry_return is not none else '—')) %}<div><div class="label">{{ label }}</div><div class="fact-value">{{ value }}</div></div>{% endfor %}
@@ -1198,7 +1198,7 @@ DETAIL = COMMON + """
 <h3>Sample &amp; execution</h3>
 <div class="panel"><div class="kv">
 <div class="wide"><span class="k">SHA-256</span><code>{{ run.sample.sha256 if run.sample else '—' }}</code></div>
-<div><span class="k">Type</span>{{ 'Managed' if run.sample and run.sample.managed else 'Native' }} {{ run.sample.kind if run.sample else '' }}</div>
+<div><span class="k">Type</span>{{ 'PowerShell' if run.sample and run.sample.kind in ('powershell', 'powershell-probe') else 'Managed' if run.sample and run.sample.managed else 'Native' }} {{ run.sample.kind if run.sample else '' }}</div>
 <div><span class="k">Started</span>{{ run.started_at|ui_datetime }}</div>
 <div><span class="k">Persona</span>{{ run.persona.hostname if run.persona else '—' }} / {{ run.persona.user_name if run.persona else '—' }}</div>
 <div><span class="k">Guest finished</span>{{ run.finished_at|ui_datetime }}</div>
@@ -1219,7 +1219,25 @@ DETAIL = COMMON + """
 {% if run.console_output.stderr %}<pre class="console">{{ run.console_output.stderr }}</pre>{% else %}<div class="muted">No stderr captured.</div>{% endif %}</div>
 </div>{% else %}<div class="empty">No console capture in this report.</div>{% endif %}
 </section>
-<section class="section" id="coverage">{% if run.cil_coverage %}
+<section class="section" id="commands"><h2>Command invocations <span class="count-tag">({{ command_count }})</span></h2>
+<p class="muted">Recorded command names, evaluated parameters, and native arguments where available. An invocation record does not establish successful completion.</p>
+{% if command_capture.complete is defined and not command_capture.complete %}<p class="coverage-note">Command capture is incomplete.{% for limitation in command_capture.limitations or [] %} {{ limitation }}{% endfor %}</p>{% endif %}
+{% if commands %}<p class="meta-line">Page {{ commands_page }} of {{ command_pages }}.
+{% if commands_page > 1 %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page, broker_page=broker_page, commands_page=commands_page - 1) }}#commands">Previous commands</a>{% endif %}
+{% if commands_page < command_pages %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page, broker_page=broker_page, commands_page=commands_page + 1) }}#commands">Next commands</a>{% endif %}</p>
+<div class="evidence-list">{% for command in commands %}<article class="panel"><h3><code>{{ command.path or command.command }}</code></h3>
+<p class="meta-line">{{ command.capture or 'Recorded command' }} · {{ command.phase or 'Invocation' }}{% if command.sequence %} · sequence {{ command.sequence }}{% endif %}</p>
+{% if command.command_line %}<div class="label">Guest command line</div><pre>{{ command.command_line }}</pre>{% endif %}
+{% if command.bound_parameters %}<div class="label">Evaluated parameters</div><pre>{{ command.bound_parameters|tojson(indent=2) }}</pre>{% endif %}
+{% if command.native_arguments is defined and command.native_arguments is not none %}<div class="label">Native argument array</div><pre>{{ command.native_arguments|tojson(indent=2) }}</pre>{% endif %}
+{% if command.unbound_arguments %}<div class="label">Unbound arguments</div><pre>{{ command.unbound_arguments|tojson(indent=2) }}</pre>{% endif %}
+{% if command.reason %}<p>{{ command.reason }}</p>{% endif %}
+{% if command.source_line %}<details class="raw"><summary>Source expression</summary><pre>{{ command.source_line }}</pre></details>{% endif %}
+<details class="raw"><summary>Full invocation record</summary><pre>{{ command|tojson(indent=2) }}</pre></details></article>{% endfor %}</div>
+{% else %}<div class="empty">No command invocation records in this report.</div>{% endif %}</section>
+<section class="section" id="coverage">{% if run.sample and run.sample.kind in ('powershell', 'powershell-probe') %}
+<h2>PowerShell capture scope</h2><p class="muted">Command invocation observations are shown above. This report does not establish Windows API compatibility or complete PowerShell coverage.</p>
+{% elif run.cil_coverage %}
 <h2>Observed CIL opcodes</h2><p class="muted">Counts show interpreter dispatch attempts during this run. They do not prove that .NET behavior is fully modeled. An unsupported operation appears in Coverage limits and errors above.</p>
 {% if run.cil_coverage.top_opcodes %}<div class="table-wrap"><table><thead><tr><th>Opcode</th><th>Attempts</th></tr></thead><tbody>
 {% for item in run.cil_coverage.top_opcodes %}<tr><td><code>{{ item.opcode }}</code></td><td>{{ item.count }}</td></tr>{% endfor %}

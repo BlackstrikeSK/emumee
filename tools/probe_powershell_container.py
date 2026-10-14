@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime as dt
 import json
 import re
 import subprocess
@@ -17,12 +18,112 @@ from pathlib import Path
 
 PROBE = r"""
 $ErrorActionPreference = 'Stop'
-$values = @(Trace-Command -Name CommandDiscovery,ParameterBinding -FilePath /work/trace.log -Expression {
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Management.Automation;
+using System.Management.Automation.Runspaces;
+using System.Reflection;
+using System.Collections;
+public static class EmumeeCommandCapture {
+    public static readonly List<object> Events = new List<object>();
+    public static int DroppedEvents;
+    public static object[] Run(string script) {
+        using (var runspace = RunspaceFactory.CreateRunspace()) {
+            runspace.Open();
+            runspace.Debugger.DebuggerStop += OnStop;
+            using (var ps = PowerShell.Create()) {
+                ps.Runspace = runspace;
+                ps.AddScript("Set-PSBreakpoint -Command '*' -Action { break } | Out-Null");
+                ps.Invoke();
+                ps.Commands.Clear();
+                ps.AddScript(script);
+                var values = new List<object>();
+                foreach (var value in ps.Invoke()) values.Add(value.BaseObject);
+                if (ps.HadErrors) throw new Exception(ps.Streams.Error[0].ToString());
+                return values.ToArray();
+            }
+        }
+    }
+    private static object Read(object target, string name) {
+        if (target == null) return null;
+        for (var type = target.GetType(); type != null; type = type.BaseType) {
+            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            var field = type.GetField(name, flags);
+            if (field != null) return field.GetValue(target);
+            var property = type.GetProperty(name, flags);
+            if (property != null) return property.GetValue(target);
+        }
+        return null;
+    }
+    private static void OnStop(object sender, DebuggerStopEventArgs args) {
+        var call = args.InvocationInfo;
+        var processor = Read(Read(sender, "_context"), "CurrentCommandProcessor");
+        var actual = Read(Read(processor, "Command"), "MyInvocation") as InvocationInfo;
+        args.ResumeAction = DebuggerResumeAction.Continue;
+        if (call.MyCommand == null || actual == null || actual.MyCommand == null ||
+            String.IsNullOrEmpty(call.MyCommand.Name) || call.MyCommand.Name != actual.MyCommand.Name) return;
+        if (Events.Count >= 2000) { DroppedEvents++; return; }
+        var native = processor.GetType().Name == "NativeCommandProcessor";
+        var binder = native ? Read(processor, "NativeParameterBinderController") : null;
+        Events.Add(new Dictionary<string, object> {
+            ["event"] = "powershell_command_invocation",
+            ["sequence"] = Events.Count + 1,
+            ["timestamp_utc"] = DateTime.UtcNow.ToString("O"),
+            ["phase"] = "before_execution",
+            ["capture"] = "engine_debugger_command_processor",
+            ["command"] = actual.MyCommand.Name,
+            ["invocation_name"] = actual.InvocationName,
+            ["command_type"] = actual.MyCommand.CommandType.ToString(),
+            ["bound_parameters"] = Snapshot(actual.BoundParameters, 0),
+            ["unbound_arguments"] = Snapshot(actual.UnboundArguments, 0),
+            ["native_arguments"] = native ? Snapshot(Read(binder, "ArgumentList"), 0) : null,
+            ["path"] = native ? Read(processor, "Path") : null,
+            ["source_line"] = call.Line,
+        });
+    }
+    private static object Snapshot(object value, int depth) {
+        if (value == null) return null;
+        if (depth > 8) return new { truncated = true };
+        if (value is PSObject ps) return Snapshot(ps.BaseObject, depth + 1);
+        if (value is string text) return text.Length <= 16384 ? (object)text : new { truncated = true, prefix = text.Substring(0, 16384) };
+        if (value is SwitchParameter toggle) return toggle.IsPresent;
+        if (value is bool || value.GetType().IsPrimitive || value is decimal) return value;
+        if (value is ScriptBlock script) return new { type = "ScriptBlock", text = script.ToString() };
+        if (value is IDictionary dictionary) {
+            var copy = new Dictionary<string, object>();
+            foreach (DictionaryEntry item in dictionary) {
+                if (copy.Count >= 128) { copy["capture_truncated"] = true; break; }
+                copy[(string)item.Key] = Snapshot(item.Value, depth + 1);
+            }
+            return copy;
+        }
+        if (value is IList list) {
+            var copy = new List<object>();
+            foreach (var item in list) {
+                if (copy.Count >= 128) { copy.Add(new { truncated = true }); break; }
+                copy.Add(Snapshot(item, depth + 1));
+            }
+            return copy.ToArray();
+        }
+        return new { unsupported_value_type = value.GetType().FullName };
+    }
+}
+'@
+$fixtureScript = @'
+Trace-Command -Name CommandDiscovery,ParameterBinding -FilePath /work/trace.log -Expression {
     $name = 'Write-' + 'Output'
     & $name ('runtime-' + 'resolved-argument')
     Invoke-Expression ('Write-Output ' + "'nested-resolved-argument'")
     & /bin/echo ('native-' + 'resolved-argument')
-})
+    $splat = @{ InputObject = @(('array-' + 'first'), 'array-second'); NoEnumerate = $true }
+    & $name @splat | Out-Null
+    $alias = 'ec' + 'ho'
+    & $alias ('alias-' + 'resolved') | Out-Null
+    & /bin/echo 'space value' 'quote"value' '' | Out-Null
+}
+'@
+$values = @([EmumeeCommandCapture]::Run($fixtureScript))
 $client = [System.Net.Sockets.TcpClient]::new()
 $connected = $false
 try {
@@ -36,6 +137,8 @@ $status = [IO.File]::ReadAllText('/proc/self/status')
     powershell_version = $PSVersionTable.PSVersion.ToString()
     platform = $PSVersionTable.Platform
     values = $values
+    command_events = @([EmumeeCommandCapture]::Events.ToArray())
+    dropped_command_events = [EmumeeCommandCapture]::DroppedEvents
     network_connected = $connected
     root_write_succeeded = $rootWrite
     host_drive_visible = [IO.Directory]::Exists('/mnt/c')
@@ -107,14 +210,23 @@ def probe(image: str, resume_container: str | None = None) -> dict:
         }
         if not all(checks.values()):
             raise RuntimeError("Container configuration verification failed: " + str(checks))
+        started_at = dt.datetime.now(dt.timezone.utc).isoformat()
         raw = docker("start", "--attach", name, timeout=90)
         if len(raw.encode("utf-8")) > 1024 * 1024:
             raise RuntimeError("Fixed probe output exceeded its expected bound")
         final = json.loads(docker("inspect", name))[0]["State"]
         if final["Running"] or final["ExitCode"] != 0 or final.get("OOMKilled"):
             raise RuntimeError("Fixed PowerShell probe did not complete successfully")
-        result = json.loads(raw)
+        finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        try:
+            result = json.loads(raw)
+        except ValueError:
+            raise RuntimeError("Fixed probe returned invalid JSON: " + repr(raw[:1000])) from None
         expected = ["runtime-resolved-argument", "nested-resolved-argument", "native-resolved-argument"]
+        commands = result["command_events"]
+        def bound_input(value: list[str]) -> bool:
+            return any(event["command"] == "Write-Output" and
+                       event["bound_parameters"].get("InputObject") == value for event in commands)
         observed_checks = {
             "runtime_values": result["values"] == expected,
             "network_denied": result["network_connected"] is False,
@@ -127,13 +239,24 @@ def probe(image: str, resume_container: str | None = None) -> dict:
                 "BIND arg [runtime-resolved-argument] to param [InputObject] SUCCESSFUL",
                 "BIND arg [nested-resolved-argument] to param [InputObject] SUCCESSFUL",
                 "BIND cmd line arg [native-resolved-argument] to position [0]")),
+            "structured_runtime_arguments": bound_input([expected[0]]) and bound_input([expected[1]]),
+            "structured_splat_array": bound_input(["array-first", "array-second"]),
+            "resolved_alias": bound_input(["alias-resolved"]),
+            "native_argument_boundaries": any(event["native_arguments"] == ["space value", 'quote"value', ""]
+                                              for event in commands),
+            "no_dropped_commands": result["dropped_command_events"] == 0,
         }
         return {"image": image, "image_id": image_info["Id"],
+                "execution_started_at": started_at, "execution_finished_at": finished_at,
                 "configuration_checks": checks, "observed_checks": observed_checks,
                 "passed": all(observed_checks.values()), "probe": result,
                 "limitations": ["Fixed harmless probe only; no submitted scripts are accepted",
                                 "Linux PowerShell does not reproduce a Windows persona",
                                 "Trace-Command is script-controllable and is not a complete audit boundary",
+                                "Debugger capture uses private version-specific engine fields and can be disabled by script code",
+                                "DebuggerHidden paths, new runspaces, and native descendants are not completely traced",
+                                "Complex values use bounded snapshots; unsupported value types are marked",
+                                "Records observe invocations before execution and do not establish successful completion",
                                 "The probe does not establish resistance to container escape"]}
     finally:
         if created:
@@ -145,10 +268,15 @@ def main() -> None:
     parser.add_argument("--image", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resume-container", help="Resume this fixed probe after a create observation timeout")
+    parser.add_argument("--dashboard-root", type=Path, help="Save verified fixed-probe evidence as a partial dashboard run")
     args = parser.parse_args()
     report = probe(args.image, args.resume_container)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if args.dashboard_root and report["passed"]:
+        from emumee.powershell_probe_report import save_probe_run
+        run = save_probe_run(report, args.dashboard_root, PROBE)
+        print(json.dumps({"dashboard_run": str(run)}))
     print(json.dumps({"passed": report["passed"], "output": str(args.output),
                       "checks": report["observed_checks"]}))
     if not report["passed"]:

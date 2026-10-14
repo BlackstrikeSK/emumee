@@ -100,6 +100,20 @@ def _dict_events(value) -> list[dict]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
+def _command_events(engine: dict) -> list[dict]:
+    commands = [event for event in _dict_events(engine.get("command_events"))
+                if isinstance(event.get("command"), str) and event["command"]]
+    for event in _dict_events(engine.get("virtual_process_events")):
+        if event.get("event") != "virtual_process_create":
+            continue
+        commands.append({"command": event.get("path") or event.get("application") or "Guest process",
+                         "command_line": event.get("command_line", ""),
+                         "capture": "guest_process_api", "api": event.get("api"),
+                         "phase": "created" if event.get("success") else "rejected",
+                         "reason": event.get("reason")})
+    return commands
+
+
 def _timeline_events(engine: dict) -> list[dict]:
     """Merge native trace streams by execution tick, retaining provenance."""
     streams = [("events", _dict_events(engine.get("events"))),
@@ -107,6 +121,7 @@ def _timeline_events(engine: dict) -> list[dict]:
                ("virtual_file_events", _dict_events(engine.get("virtual_file_events"))),
                ("virtual_registry_events", _dict_events(engine.get("virtual_registry_events"))),
                ("virtual_process_events", _dict_events(engine.get("virtual_process_events"))),
+               ("command_events", _dict_events(engine.get("command_events"))),
                ("dll_initialization_events", _dict_events(engine.get("dll_initialization_events")))]
     for number, entry in enumerate(engine.get("entry_points") or []):
         if isinstance(entry, dict):
@@ -442,6 +457,12 @@ def create_app(root: Path) -> Flask:
             engine = {}
         broker_events = _dict_events(_broker_json(path, run))
         events = _timeline_events(engine)
+        commands = _command_events(engine)
+        command_capture = engine.get("command_capture")
+        if not isinstance(command_capture, dict):
+            command_capture = {}
+        commands_per_page = 100
+        command_pages = max(1, (len(commands) + commands_per_page - 1) // commands_per_page)
         page_size = 2000
         event_pages = max(1, (len(events) + page_size - 1) // page_size)
         broker_pages = max(1, (len(broker_events) + page_size - 1) // page_size)
@@ -455,6 +476,8 @@ def create_app(root: Path) -> Flask:
             return value
         events_page = requested_page("events_page", event_pages)
         broker_page = requested_page("broker_page", broker_pages)
+        commands_page = requested_page("commands_page", command_pages)
+        command_start = (commands_page - 1) * commands_per_page
         event_start = (events_page - 1) * page_size
         broker_start = (broker_page - 1) * page_size
         fixture_rules = None
@@ -479,6 +502,9 @@ def create_app(root: Path) -> Flask:
                             "Legacy unbound" if run.get("network_broker_report") else
                             "Unavailable")
         return render_template_string(DETAIL, run=run,
+                                      commands=commands[command_start:command_start + commands_per_page],
+                                      command_count=len(commands), command_pages=command_pages,
+                                      commands_page=commands_page, command_capture=command_capture,
                                       events=events[event_start:event_start + page_size],
                                       event_count=len(events), event_pages=event_pages,
                                       events_page=events_page,

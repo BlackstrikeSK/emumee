@@ -1,5 +1,19 @@
 # Coverage, containment, and test plan
 
+## PowerShell command-capture feasibility
+
+The fixed Linux-container probe now captures evaluated command data directly
+from the pinned PowerShell engine's current command processor and native
+parameter binder. Dynamic names, nested evaluation, splatted arrays, aliases,
+and native argument boundaries have been checked in the actual container.
+The dashboard displays structured invocation records and existing guest native
+process command lines, using the normal engine-report integrity check. Records
+describe invocations before execution, and the probe report is marked partial.
+Private engine fields, script-controllable breakpoints, hidden paths, new
+runspaces, native descendants, and Windows persona mapping remain open. No
+arbitrary PowerShell script execution mode is enabled. See
+[POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md) for evidence and limits.
+
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,

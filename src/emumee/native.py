@@ -1338,7 +1338,8 @@ def run_native(
             return module.base
 
         for name in ("LoadLibraryA", "LoadLibraryW", "LoadLibraryExA", "LoadLibraryExW"):
-            se.add_api_hook(load_companion, "kernel32", name)
+            for module in ("kernel32", "api-ms-win-core-libraryloader-l1-2-0"):
+                se.add_api_hook(load_companion, module, name)
 
         def find_process_module(emu, requested: str):
             if ntpath.dirname(requested):
@@ -1568,7 +1569,8 @@ def run_native(
                 return address
             return original(params)
 
-        se.add_api_hook(resolve_companion_export, "kernel32", "GetProcAddress")
+        for module in ("kernel32", "api-ms-win-core-libraryloader-l1-2-0"):
+            se.add_api_hook(resolve_companion_export, module, "GetProcAddress")
 
         def nt_loader_result(emu, api_name: str, output: int,
                              call_pc: int, call_return: int,
@@ -1794,7 +1796,8 @@ def run_native(
             enter_next(emu, frame_consumed=False)
             return 1
 
-        se.add_api_hook(free_guest_dll, "kernel32", "FreeLibrary")
+        for module in ("kernel32", "api-ms-win-core-libraryloader-l1-2-0"):
+            se.add_api_hook(free_guest_dll, module, "FreeLibrary")
 
         def ldr_unload_dll(emu, api_name, original, params):
             handle = int(params[0])

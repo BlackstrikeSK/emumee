@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import ipaddress
 import struct
 import unittest
 from types import SimpleNamespace
@@ -47,6 +48,40 @@ class MemoryEmulator:
 
 
 class GuestNetworkAdapterTests(unittest.TestCase):
+    def test_ipv4_route_table_size_and_persona_addresses(self):
+        for width in (4, 8):
+            with self.subTest(width=width):
+                emu = MemoryEmulator(width)
+                persona = load_persona(None)
+                persona["network_adapter"].update({
+                    "ipv4": "10.10.4.22", "prefix_length": 23,
+                    "gateway": "10.10.4.1", "if_index": 7})
+                model = GuestNetworkAdapter(persona)
+                size_ptr, buffer = 0x10100, 0x11000
+                emu.mem_write(size_ptr, struct.pack("<I", 0))
+                call = lambda address: model._get_ip_forward_table(
+                    emu, "iphlpapi.GetIpForwardTable", None,
+                    [address, size_ptr, 0])
+                self.assertEqual(call(0), 122)
+                required = struct.unpack("<I", emu.mem_read(size_ptr, 4))[0]
+                self.assertEqual(required, 4 + 3 * 56)
+                emu.mem_write(size_ptr, struct.pack("<I", required - 1))
+                self.assertEqual(call(buffer), 122)
+                self.assertEqual(emu.mem_read(buffer, required), b"\0" * required)
+                self.assertEqual(call(buffer), 0)
+                image = emu.mem_read(buffer, required)
+                self.assertEqual(struct.unpack_from("<I", image)[0], 3)
+                self.assertEqual(ipaddress.IPv4Address(image[4:8]),
+                                 ipaddress.IPv4Address("0.0.0.0"))
+                self.assertEqual(ipaddress.IPv4Address(image[16:20]),
+                                 ipaddress.IPv4Address("10.10.4.1"))
+                self.assertEqual(struct.unpack_from("<I", image, 20)[0], 7)
+                self.assertEqual(ipaddress.IPv4Address(image[60:64]),
+                                 ipaddress.IPv4Address("10.10.4.0"))
+                self.assertEqual(ipaddress.IPv4Address(image[64:68]),
+                                 ipaddress.IPv4Address("255.255.254.0"))
+                self.assertEqual(call(0x30000), 87)
+
     def test_get_network_params_returns_guest_fixed_info_and_dns_list(self):
         for width in (4, 8):
             with self.subTest(width=width):

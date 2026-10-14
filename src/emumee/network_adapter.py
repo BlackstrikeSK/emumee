@@ -11,6 +11,7 @@ import speakeasy.common as common
 
 
 ERROR_BUFFER_OVERFLOW = 111
+ERROR_INSUFFICIENT_BUFFER = 122
 ERROR_INVALID_PARAMETER = 87
 ERROR_NO_DATA = 232
 ERROR_NOT_SUPPORTED = 50
@@ -102,6 +103,8 @@ class GuestNetworkAdapter:
         self.unsupported: list[str] = []
 
     def install(self, emulator) -> None:
+        emulator.add_api_hook(self._get_ip_forward_table, "iphlpapi",
+                              "GetIpForwardTable", argc=3)
         emulator.add_api_hook(self._get_adapters_addresses, "iphlpapi",
                               "GetAdaptersAddresses", argc=5)
         emulator.add_api_hook(self._convert_length_to_ipv4_mask, "iphlpapi",
@@ -215,6 +218,48 @@ class GuestNetworkAdapter:
                     address + size <= int(mapping.base) + int(mapping.size) and
                     int(mapping.prot) & required and
                     (guard is None or guard(emu, address, size)))
+
+    def _get_ip_forward_table(self, emu, api_name, _original, params) -> int:
+        buffer, size_ptr, ordered = map(int, params)
+        if not self._access(emu, size_ptr, 4, True):
+            return ERROR_INVALID_PARAMETER
+        adapter = self.persona["network_adapter"]
+        subnet = ipaddress.IPv4Network((adapter["ipv4"],
+                                        adapter["prefix_length"]), strict=False)
+        routes = [
+            ("0.0.0.0", "0.0.0.0", adapter["gateway"], adapter["if_index"], 4, 3, 25),
+            (str(subnet.network_address), str(subnet.netmask), "0.0.0.0",
+             adapter["if_index"], 3, 2, 25),
+            (adapter["ipv4"], "255.255.255.255", "0.0.0.0",
+             adapter["if_index"], 3, 2, 25),
+        ]
+        if ordered:
+            routes.sort(key=lambda row: (int(ipaddress.IPv4Address(row[0])),
+                                         int(ipaddress.IPv4Address(row[1]))))
+        def ipword(address: str) -> int:
+            return int.from_bytes(ipaddress.IPv4Address(address).packed, "little")
+        image = bytearray(struct.pack("<I", len(routes)))
+        for destination, mask, next_hop, if_index, route_type, protocol, metric in routes:
+            image.extend(struct.pack("<14I", ipword(destination), ipword(mask), 0,
+                                     ipword(next_hop), if_index, route_type, protocol,
+                                     0, 0, metric, *([0xffffffff] * 4)))
+        required = len(image)
+        try:
+            capacity = int.from_bytes(emu.mem_read(size_ptr, 4), "little")
+            if not buffer or capacity < required:
+                emu.mem_write(size_ptr, struct.pack("<I", required))
+                self.events.append({"event": "guest_ipv4_routes", "status":
+                                    ERROR_INSUFFICIENT_BUFFER, "required": required})
+                return ERROR_INSUFFICIENT_BUFFER
+            if not self._access(emu, buffer, required, True):
+                return ERROR_INVALID_PARAMETER
+            emu.mem_write(buffer, bytes(image))
+            emu.mem_write(size_ptr, struct.pack("<I", required))
+        except Exception:
+            return ERROR_INVALID_PARAMETER
+        self.events.append({"event": "guest_ipv4_routes", "status": 0,
+                            "required": required, "interface_index": adapter["if_index"]})
+        return 0
 
     def _get_adapters_addresses(self, emu, api_name, _original, params) -> int:
         family, flags, reserved, buffer, size_ptr = map(int, params)

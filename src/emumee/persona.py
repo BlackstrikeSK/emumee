@@ -15,6 +15,7 @@ from pathlib import Path
 from speakeasy.config import get_default_config_dict
 from .kerberos import ENCRYPTION_TYPES, ticket_datetime
 from .audit_policy import validate_policy
+from .dns_records import validate_records
 
 from .persona_content import (DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files,
                               driver_package_files, registry_keys)
@@ -71,6 +72,7 @@ DEFAULT_PERSONA = {
     "shadow_copies": [],
     "backup_versions": [],
     "stored_credentials": [],
+    "dns_records": [],
     "kerberos": {"logon_id": 0x10001, "tickets": []},
     "boot_config": {
         "loader_guid": "{17f03c5e-781a-429f-90d7-5f6a8e1472c3}",
@@ -543,6 +545,7 @@ def load_persona(path: Path | None) -> dict:
             ipaddress.IPv4Address(item)
     except (ValueError, TypeError, ipaddress.AddressValueError) as exc:
         raise ValueError("Persona network_adapter IPv4 settings are invalid") from exc
+    validate_records(persona)
     build = persona["windows_build"]
     if not isinstance(build, int) or isinstance(build, bool) or not 22000 <= build <= 65535:
         raise ValueError("Persona windows_build must be a Windows 11 build between 22000 and 65535")

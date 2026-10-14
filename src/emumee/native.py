@@ -31,6 +31,7 @@ from .feature_config import GuestFeatureConfiguration
 from .cpu import VirtualCPU
 from .identity import GuestIdentity
 from .audit import GuestAudit
+from .dns import GuestDNS
 from .guest_programs import hostname_exe
 from .enumeration_programs import enumeration_programs
 from .network import NetworkBridge
@@ -769,6 +770,9 @@ def run_native(
     guest_tokens = GuestTokens(persona)
     guest_lsa = GuestLSA(persona)
     guest_audit = GuestAudit(persona)
+    guest_dns = GuestDNS(persona)
+    guest_dns.events = bridge.events
+    bridge.guest_dns = guest_dns
     guest_network_adapter = GuestNetworkAdapter(persona)
     guest_network_adapter.network_bridge = bridge
     guest_feature_configuration = GuestFeatureConfiguration()
@@ -797,6 +801,10 @@ def run_native(
     guest_audit.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
     guest_audit.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
+    guest_dns.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    guest_dns.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     guest_identity.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
@@ -841,6 +849,7 @@ def run_native(
         bridge.cleanup_process(process)
         guest_lsa.cleanup_process(emu, process)
         guest_audit.cleanup_process(emu, process)
+        guest_dns.cleanup_process(emu, process)
         guest_identity.cleanup_process(process)
         crt_streams.cleanup_process(process)
         crt_startup.cleanup_process(process)
@@ -883,6 +892,7 @@ def run_native(
             "msvcrt", "??3@YAXPEAX@Z", argc=1)
         heap_checks.install(se)
         guest_network_adapter.install(se)
+        guest_dns.install(se)
         guest_feature_configuration.install(se)
         virtual_registry.install(se)
         virtual_process.install(se)

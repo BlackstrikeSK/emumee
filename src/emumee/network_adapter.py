@@ -138,7 +138,6 @@ class GuestNetworkAdapter:
         emulator.add_api_hook(self._rtl_ipv4_address_to_string_ex_w, "ntdll",
                               "RtlIpv4AddressToStringExW", argc=4)
         emulator.add_api_hook(self._inet_ntop_w, "ws2_32", "InetNtopW", argc=4)
-        emulator.add_api_hook(self._dns_free, "dnsapi", "DnsFree", argc=2)
         emulator.add_api_hook(self._get_network_params, "iphlpapi",
                               "GetNetworkParams", argc=2)
 
@@ -483,13 +482,6 @@ class GuestNetworkAdapter:
             return 0
         emu.mem_write(output, payload)
         return output
-
-    def _dns_free(self, _emu, api_name, _original, params):
-        address = int(params[0])
-        if address:
-            self.unsupported.append(f"{api_name}: non-null DNS record free unsupported")
-        # The null case owns no allocation. Never pass guest pointers to the host.
-        return None
 
     def _get_network_params(self, emu, api_name, _original, params) -> int:
         buffer, size_ptr = map(int, params)

@@ -221,15 +221,6 @@ class GuestNetworkAdapterTests(unittest.TestCase):
                 self.assertEqual(second.Next, 0)
                 self.assertEqual(call(0x30000), 87)
 
-    def test_null_dns_free_and_non_null_is_reported(self):
-        model = GuestNetworkAdapter(load_persona(None))
-        self.assertIsNone(model._dns_free(None, "dnsapi.DnsFree", None,
-                                           [0, 0x10144]))
-        self.assertFalse(model.unsupported)
-        self.assertIsNone(model._dns_free(None, "dnsapi.DnsFree", None,
-                                           [0x1234, 1]))
-        self.assertEqual(len(model.unsupported), 1)
-
     def test_ipv4_mask_bytes_and_invalid_length(self):
         emu = MemoryEmulator(8)
         model = GuestNetworkAdapter(load_persona(None))

@@ -23,6 +23,7 @@ never change host state.
 | [`vssadmin.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/vssadmin) | Yes | `list shadows`, `list shadows /for=C:`, `list volumes`, and `list providers` from guest shadow and volume metadata |
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
+| [`nslookup.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/nslookup) | Yes | Noninteractive A, AAAA, and PTR queries against the offline guest DNS catalog; IPv4 reverse lookup; optional explicit primary persona DNS server |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
@@ -62,7 +63,7 @@ but it is not included by default unless the table above says so.
 | `w32tm.exe` | Time service configuration and peer status | Guest Windows Time service state and peer metadata. Not included by default. |
 | `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
 | `ping.exe`, `tracert.exe`, `pathping.exe` | Network reachability and route discovery | Guest ICMP and route-hop simulation, with attempted operations logged. Not included by default. |
-| `nslookup.exe` | DNS enumeration | Guest DNS records, server selection, and query logging. Not included by default. |
+| `nslookup.exe` beyond the listed forms | Other record types, search suffixes, other servers, and interactive commands | SRV, MX, TXT, CNAME chains, recursive resolution, and interactive mode remain unmodeled; unsupported command forms exit 87. |
 | `cmdkey.exe` beyond `/list` | Target filters and credential changes | A dynamic guest credential store and command parser; unsupported forms exit 87. |
 | `klist.exe` beyond the listed forms | Other logon IDs, sessions, `tgt`, bindings, and cache changes | More guest LSA session and cache models are needed. Encoded tickets and usable keys are not modeled; unsupported forms exit 87. |
 | `nltest.exe` beyond the listed forms | Other domains, server targets, discovery flags, secure channels, and changes | Dynamic domain services and Windows domain APIs remain unmodeled; unsupported forms exit 87. |
@@ -87,6 +88,39 @@ Generated `cmdkey.exe /list` reads only the persona's `stored_credentials`
 metadata: target, user, type, and persistence. The default guest has no stored
 credentials. The schema accepts no password field, and the utility never
 opens a host credential store. Add and delete operations exit 87.
+
+Guest `nslookup.exe` calls the emulated `DnsQuery_W` API. The same offline record
+catalog supplies `DnsQuery_A`, `DnsQuery_UTF8`, and known-name `gethostbyname`
+answers. Local hostname/FQDN A records, the persona IPv4 reverse record, and
+domain-controller A/PTR records derive from persona identity. Up to 64 additional
+`dns_records` entries can supply A, AAAA, and PTR answers; contradictory identity
+records and duplicate records are rejected. A record has `name`, `type`, `data`,
+and `ttl` fields (TTL is 0–604800 seconds). DNS names are ASCII, case-insensitive,
+and may have a trailing dot. Internationalized names are not modeled.
+
+The utility supports `nslookup <name>`, `-type=A`, `-type=AAAA`, `-type=PTR`, and
+IPv4 reverse lookups. An explicit server must be the configured primary guest
+DNS IPv4 address; other servers exit 87. It prints the configured server address
+with the display name `UnKnown`; server-name discovery is not simulated. No
+interactive prompt, search-list expansion, or default combined A/AAAA query is
+implemented. Missing names and missing record types fail with exit code 1.
+
+`DnsQuery_*` logs success, missing records, unsupported flags/server arrays, and
+invalid inputs as `guest_dns_query` events. Query records and their linked string
+data live in bounded, process-owned guest memory; `DnsFree`/`DnsRecordListFree`
+and process exit release owned responses. Queries never call the host resolver,
+create sockets, or contact the network broker. The normal report and dashboard
+network timeline include the query, status, answers, and `network_used: false`.
+Legacy `gethostbyname` gives known persona names precedence over its existing
+optional network broker; only its first A record is returned. Other names keep
+the existing broker policy. Other resolver APIs remain separate coverage gaps.
+
+```json
+{"dns_records": [
+  {"name": "files.corp.example", "type": "A", "data": "192.168.1.20", "ttl": 300},
+  {"name": "ipv6.corp.example", "type": "AAAA", "data": "2001:db8::20", "ttl": 300}
+]}
+```
 
 Generated `auditpol.exe` renders nine categories and 59 Windows 11 audit
 subcategories, including their SDK GUIDs. `audit_policy.subcategories` maps

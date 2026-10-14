@@ -68,6 +68,7 @@ class NetworkBridge:
         self.pending_winhttp: dict[int, dict] = {}
         self.pending_wininet: dict[int, dict] = {}
         self.rpc = None
+        self.guest_dns = None
         run_dir = catalog.root.parent
         from .networkipc import FileRPCClient, broker_ipc_dir
         if (broker_ipc_dir(run_dir) / "network-requests.bin").is_file():
@@ -309,6 +310,24 @@ class NetworkBridge:
                                 "reason": "hostname exceeds limit"})
             return 0
         try:
+            if self.guest_dns is not None:
+                from .dns_records import dns_name
+                normalized = dns_name(hostname)
+                owned = [r for r in self.guest_dns.records if r["name"] == normalized]
+                if owned:
+                    addresses = [r["data"] for r in owned if r["type"] == "A"]
+                    if not addresses:
+                        self.events.append({"event": "guest_dns_query", "api": api_name,
+                                            "host": normalized, "record_type": 1, "source": "persona",
+                                            "network_used": False, "status": 9501})
+                        return 0
+                    address = addresses[0]
+                    emu.get_network_manager().dns.names[hostname.lower()] = address
+                    emu.get_network_manager().dns.names[hostname] = address
+                    self.events.append({"event": "guest_dns_query", "api": api_name,
+                                        "host": normalized, "record_type": 1, "source": "persona",
+                                        "network_used": False, "status": 0, "answers": [address]})
+                    return original(params)
             if self.rpc is None:
                 raise NetworkDenied("Network broker unavailable")
             address = self.rpc.call("resolve", host=hostname)

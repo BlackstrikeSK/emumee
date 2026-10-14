@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import re
 import struct
+import ntpath
+
+import pefile
 
 import speakeasy.common as common
 
@@ -49,6 +52,56 @@ _SYSTEM_MESSAGES = {
 }
 
 
+def mui_string(image: bytes, string_id: int) -> str | None:
+    """Read a bounded RT_STRING entry from an explicitly staged MUI PE."""
+    if string_id < 0 or len(image) > 32 * 1024 * 1024:
+        return None
+    try:
+        pe = pefile.PE(data=image, fast_load=True)
+        try:
+            pe.parse_data_directories(directories=[
+                pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+            root = getattr(pe, 'DIRECTORY_ENTRY_RESOURCE', None)
+            if root is None:
+                return None
+            block_id = (string_id >> 4) + 1
+            item_id = string_id & 15
+            for resource in root.entries:
+                if resource.id != 6 or not hasattr(resource, 'directory'):
+                    continue
+                for block in resource.directory.entries:
+                    if block.id != block_id or not hasattr(block, 'directory'):
+                        continue
+                    for language in block.directory.entries:
+                        if not hasattr(language, 'data'):
+                            continue
+                        leaf = language.data.struct
+                        size = int(leaf.Size)
+                        if size < 32 or size > 65536:
+                            continue
+                        raw = pe.get_data(int(leaf.OffsetToData), size)
+                        if len(raw) != size:
+                            continue
+                        pos = 0
+                        for index in range(16):
+                            if pos + 2 > size:
+                                break
+                            length = struct.unpack_from('<H', raw, pos)[0]
+                            pos += 2
+                            end = pos + length * 2
+                            if end > size:
+                                break
+                            if index == item_id:
+                                return raw[pos:end].decode('utf-16le') if length else None
+                            pos = end
+        finally:
+            pe.close()
+    except (ValueError, OSError, pefile.PEFormatError, AttributeError,
+            IndexError, struct.error, UnicodeError):
+        return None
+    return None
+
+
 class WinMessages:
     def __init__(self, locale: str = "en-US"):
         self.locale = locale.casefold().replace("_", "-")
@@ -57,6 +110,36 @@ class WinMessages:
         self.read_guard = None
         self.write_guard = None
         self.module_visible = None
+        self.guest_images: dict[str, bytes] = {}
+        self.current_dir = ''
+        self._mui_cache: dict[tuple[str, int], str | None] = {}
+
+    def _mui_message(self, module, string_id: int) -> str | None:
+        name = ntpath.basename(str(module.name))
+        candidates = [path for path in self.guest_images
+                      if ntpath.splitext(ntpath.basename(path))[0].casefold()
+                      == ntpath.splitext(name)[0].casefold()]
+        module_path = ntpath.normcase(ntpath.normpath(str(getattr(module, 'path', ''))))
+        preferred = ntpath.normcase(ntpath.normpath(ntpath.join(
+            self.current_dir, name if ntpath.splitext(name)[1] else name + '.exe')))
+        if module_path in candidates:
+            stem_path = module_path
+        elif preferred in candidates:
+            stem_path = preferred
+        elif len(candidates) == 1:
+            stem_path = candidates[0]
+        else:
+            return None
+        mui_path = ntpath.normcase(ntpath.normpath(ntpath.join(
+            ntpath.dirname(stem_path), self.locale,
+            ntpath.basename(stem_path) + '.mui')))
+        image = self.guest_images.get(mui_path)
+        if image is None:
+            return None
+        key = (mui_path, string_id)
+        if key not in self._mui_cache:
+            self._mui_cache[key] = mui_string(image, string_id)
+        return self._mui_cache[key]
 
     def install(self, emulator) -> None:
         emulator.add_api_hook(self._format_w, "kernel32", "FormatMessageW", argc=7)
@@ -213,6 +296,8 @@ class WinMessages:
         if metadata is None:
             return 0
         message = metadata.string_table.get(string_id)
+        if message is None:
+            message = self._mui_message(module, string_id)
         if message is None:
             if any(str(resource.type_id).casefold() == "mui"
                    for resource in metadata.resources):

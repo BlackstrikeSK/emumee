@@ -39,9 +39,12 @@ from .virtualprocess import (PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
 from .virtualregistry import VirtualRegistryBridge
 from .ui_language import ThreadUILanguage
 from .winmessages import WinMessages
+from .version_info import GuestVersionInfo
+from .winstrings import GuestStrings
+from .tokens import GuestTokens
 
 
-SIGNATURE_ARGUMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*: ")
+SIGNATURE_ARGUMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*: \S")
 MAX_GUEST_DLLS = 32
 STATUS_SUCCESS = 0
 STATUS_ACCESS_VIOLATION = 0xC0000005
@@ -713,6 +716,12 @@ def run_native(
     catalog = ArtifactCatalog(run_dir / "artifacts", checkpoint=True)
     catalog.carve_pe(data, "embedded_input", skip_offset_zero=True)
     se = speakeasy.Speakeasy(config=cfg)
+    version_images = {ntpath.join(persona["current_dir"], info.name): data}
+    for mapped in cfg["filesystem"]["files"]:
+        source_bytes = persona_sources.get(str(mapped.get("path", "")))
+        if source_bytes is not None and mapped.get("mode") == "full_path":
+            version_images[mapped["emu_path"]] = source_bytes
+    version_info = GuestVersionInfo(persona["current_dir"], version_images)
     event_sequence = [0]
     dll_init_events: list[dict] = _PositionedEvents(se, event_sequence)
     clock = VirtualClock(persona)
@@ -732,6 +741,20 @@ def run_native(
     guest_environment = GuestEnvironmentBlocks()
     ui_language = ThreadUILanguage(persona)
     win_messages = WinMessages(persona["locale"])
+    guest_strings = GuestStrings()
+    guest_tokens = GuestTokens(persona)
+    win_messages.guest_images = version_info.images
+    win_messages.current_dir = persona["current_dir"]
+    version_info.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    version_info.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
+    guest_strings.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    guest_tokens.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    guest_tokens.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
     heap_checks = GuestHeapChecks()
     crt_streams.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
@@ -778,6 +801,15 @@ def run_native(
         guest_environment.install(se)
         ui_language.install(se)
         win_messages.install(se)
+        version_info.install(se)
+        guest_strings.install(se)
+        guest_tokens.install(se)
+        # Speakeasy models the x86 MSVC operator delete decoration, while
+        # modern x64 binaries import this different decoration.
+        se.add_api_hook(
+            lambda emu, _name, _original, params: emu.mem_free(int(params[0]))
+            if int(params[0]) else None,
+            "msvcrt", "??3@YAXPEAX@Z", argc=1)
         heap_checks.install(se)
         virtual_registry.install(se)
         virtual_process.install(se)
@@ -2289,6 +2321,7 @@ def run_native(
         errors.extend(guest_environment.unsupported)
         errors.extend(ui_language.unsupported)
         errors.extend(win_messages.unsupported)
+        errors.extend(guest_strings.unsupported)
         if limit_reached:
             errors.append(f"Native instruction budget exhausted at {max_instructions} instructions")
         if timeout_reached:

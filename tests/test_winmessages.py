@@ -6,6 +6,7 @@ import ctypes
 import struct
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import speakeasy.common as common
 
@@ -174,6 +175,27 @@ class WinMessageTests(unittest.TestCase):
         self.assertEqual(self.messages._load_string_w(
             self.guest, "user32.LoadStringW", None, [0, 5001, 0x1000, 10]), 0)
         self.assertIn("external MUI string 0x1389", self.messages.unsupported[0])
+
+    def test_load_string_w_reads_only_explicit_guest_mui(self):
+        metadata = SimpleNamespace(string_table={},
+                                   resources=[SimpleNamespace(type_id="MUI")])
+        self.guest.modules = [SimpleNamespace(
+            base=0x400000, name="fixture",
+            get_pe_metadata=lambda: metadata)]
+        self.messages.current_dir = r"C:\samples"
+        self.messages.guest_images = {
+            r"c:\samples\fixture.exe": b"guest exe",
+            r"c:\samples\en-us\fixture.exe.mui": b"guest MUI",
+        }
+        with patch("emumee.winmessages.mui_string", return_value="Guest text") as read:
+            result = self.messages._load_string_w(
+                self.guest, "user32.LoadStringW", None,
+                [0, 5001, 0x1000, 32])
+        self.assertEqual(result, len("Guest text"))
+        self.assertEqual(self.guest.mem_read(0x1000, 22),
+                         "Guest text\0".encode("utf-16le"))
+        read.assert_called_once_with(b"guest MUI", 5001)
+        self.assertFalse(self.messages.unsupported)
 
 
 if __name__ == "__main__":

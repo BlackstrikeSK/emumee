@@ -22,6 +22,7 @@ never change host state.
 | `systeminfo.exe` | Yes | Default system identity and resources |
 | [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | Yes | `el` and `gl <simple channel>` through guest registry APIs |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
+| [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Yes | Default, `filters`, `instances`, `volumes` from guest minifilters and C: volume |
 | `tasklist.exe` | Yes | Default persona process snapshot and `/svc` service to process view |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
 | `arp.exe` | Yes | `-a` for the modeled IPv4 ARP entry |
@@ -49,7 +50,7 @@ but it is not included by default unless the table above says so.
 | `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
 | `mountvol.exe` beyond the listed forms | Other volume mount points and changes | Multiple volumes and mount mutations remain unmodeled. |
 | [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | `/enum-drivers`, `/enum-devices` | A guest driver package store and PnP device inventory; `driverquery` records alone do not describe installed packages or devices. |
-| [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Filter, instance, and volume enumeration | Guest minifilter records, altitudes, and attachment state. |
+| `fltmc.exe` beyond the listed forms | Named filters or instances, frames, loading, unloading, and attachment changes | A dynamic guest Filter Manager and more than one volume. |
 | `wevtutil.exe` beyond the listed forms | `qe`, `gli`, publishers, remote queries, and changes | A guest event record store and live status model; only channel names and configuration are modeled. |
 | `bcdedit.exe` beyond the listed forms | `/enum all`, other identifiers, BCD store paths, and changes | A full guest Boot Configuration Data store; the included PE currently renders two configured active entries. |
 | [`gpresult.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult) | `/r` | Guest applied policy and RSoP data for the persona user and computer. |
@@ -140,6 +141,13 @@ start mode, display name, and image path. The listed `.sys` path is metadata;
 the image file and kernel execution are not modeled. The supported local read
 forms are default table, `/v`, `/fo list`, `/fo csv`, and `/nh`. Remote and
 unmodeled arguments exit 87 without contacting the host.
+
+Generated `fltmc.exe` reads the persona's `minifilters` list, whose names must
+refer to running file-system driver records. The same records create guest
+Services `Instances` registry keys with altitudes. `filters` and `instances`
+report those guest records; `volumes` reports the sole `C:` NTFS volume and
+its configured GUID. The default Defender persona includes `WdFilter`.
+Unsupported changes exit 87 without loading or unloading a host filter.
 
 The included `netstat.exe` is compiled from repository C source and calls a
 guest-only `GetExtendedTcpTable` model. Successful outbound TCP connections

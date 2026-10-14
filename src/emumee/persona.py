@@ -85,6 +85,12 @@ DEFAULT_PERSONA = {
         {"name": "Wdf01000", "display_name": "Kernel Mode Driver Framework Runtime",
          "path": r"System32\drivers\Wdf01000.sys", "start": 3,
          "type": 1, "running": True},
+        {"name": "WdFilter", "display_name": "Microsoft Defender Antivirus Mini-Filter Driver",
+         "path": r"System32\drivers\WdFilter.sys", "start": 0,
+         "type": 2, "running": True},
+    ],
+    "minifilters": [
+        {"name": "WdFilter", "altitude": "328010", "instances": 1},
     ],
     "event_channels": [
         {"name": "Application", "enabled": True, "max_size": 20971520,
@@ -161,6 +167,8 @@ def load_persona(path: Path | None) -> dict:
             persona["boot_config"].update(boot)
         custom_registry = "registry_keys" in supplied
         refresh_registry = not custom_registry
+        if "drivers" in supplied and "minifilters" not in supplied:
+            persona["minifilters"] = []
         custom_files = "virtual_files" in supplied
         custom_current_dir = "current_dir" in supplied
         previous_name = persona["user_name"]
@@ -304,6 +312,28 @@ def load_persona(path: Path | None) -> dict:
                 (driver["start"] == 4 and driver["running"])):
             raise ValueError("Persona driver entries are invalid")
         service_names.add(driver["name"].casefold())
+    filters = persona["minifilters"]
+    if not isinstance(filters, list) or len(filters) > 32:
+        raise ValueError("Persona minifilters must have at most 32 entries")
+    driver_by_name = {driver["name"].casefold(): driver for driver in drivers}
+    filter_names: set[str] = set()
+    for filter_item in filters:
+        if (not isinstance(filter_item, dict) or
+                set(filter_item) != {"name", "altitude", "instances"} or
+                not isinstance(filter_item["name"], str) or
+                filter_item["name"].casefold() in filter_names or
+                filter_item["name"].casefold() not in driver_by_name or
+                driver_by_name[filter_item["name"].casefold()]["type"] != 2 or
+                not driver_by_name[filter_item["name"].casefold()]["running"] or
+                not isinstance(filter_item["altitude"], str) or
+                not re.fullmatch(r"[0-9]{1,6}(?:\.[0-9]{1,3})?", filter_item["altitude"]) or
+                not isinstance(filter_item["instances"], int) or
+                isinstance(filter_item["instances"], bool) or
+                not 1 <= filter_item["instances"] <= 16):
+            raise ValueError("Persona minifilter entries are invalid")
+        filter_names.add(filter_item["name"].casefold())
+    if sum(filter_item["instances"] for filter_item in filters) > 64:
+        raise ValueError("Persona minifilter instance count exceeds 64")
     channels = persona["event_channels"]
     if not isinstance(channels, list) or len(channels) > 32:
         raise ValueError("Persona event_channels must have at most 32 entries")

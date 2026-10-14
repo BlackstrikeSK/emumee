@@ -587,6 +587,35 @@ class PersonaContentTests(unittest.TestCase):
                         ValueError, "driver entries"):
                     load_persona(path)
 
+    def test_minifilter_inventory_matches_driver_services_and_validates_altitude(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            driver = {"name": "ExampleFilter", "display_name": "Example Filter",
+                      "path": r"System32\drivers\ExampleFilter.sys", "start": 3,
+                      "type": 2, "running": True}
+            filter_item = {"name": "ExampleFilter", "altitude": "370000.5",
+                           "instances": 2}
+            path.write_text(json.dumps({"drivers": [driver],
+                                        "minifilters": [filter_item]}), encoding="utf-8")
+            persona = load_persona(path)
+            base = r"\Services\ExampleFilter\Instances"
+            instance_root = next(item for item in persona["registry_keys"]
+                                 if item["path"].endswith(base))
+            self.assertEqual(instance_root["values"][0]["data"],
+                             "ExampleFilter Instance 1")
+            self.assertTrue(any(item["path"].endswith(base + r"\ExampleFilter Instance 2")
+                                for item in persona["registry_keys"]))
+            path.write_text(json.dumps({"drivers": [driver]}), encoding="utf-8")
+            self.assertEqual(load_persona(path)["minifilters"], [])
+            for broken in ({**filter_item, "altitude": "host"},
+                           {**filter_item, "instances": 0},
+                           {**filter_item, "name": "MissingDriver"}):
+                path.write_text(json.dumps({"drivers": [driver],
+                                            "minifilters": [broken]}), encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaisesRegex(
+                        ValueError, "minifilter entries"):
+                    load_persona(path)
+
     def test_event_channel_inventory_refreshes_registry_and_validates_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

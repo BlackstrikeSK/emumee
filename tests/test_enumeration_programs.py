@@ -16,6 +16,70 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_fltmc_reports_only_persona_minifilters_and_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            driver = {"name": "ExampleFilter", "display_name": "Example File Filter",
+                      "path": r"System32\drivers\ExampleFilter.sys", "start": 3,
+                      "type": 2, "running": True}
+            guid = "{3478f6ca-c619-4f67-8bde-44e638a25610}"
+            config.write_text(json.dumps({
+                "drivers": [driver],
+                "minifilters": [{"name": "ExampleFilter", "altitude": "370000.5",
+                                 "instances": 2}],
+                "volume_guid": guid,
+            }), encoding="utf-8")
+            persona = load_persona(config)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["fltmc.exe"]
+                    pe = inspect_pe(image, "fltmc.exe")
+                    self.assertEqual(pe.architecture, "x64" if is_x64 else "x86")
+                    for index, (args, expected) in enumerate((
+                            ([], "ExampleFilter"),
+                            (["filters"], "370000.5"),
+                            (["instances"], "ExampleFilter Instance 2"),
+                            (["volumes"], guid))):
+                        result = run_native(image, pe, persona, root / f"{is_x64}-{index}",
+                                            [], 10, 100_000, guest_args=args)
+                        self.assertFalse(result["errors"])
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertIn(expected, result["console_output"]["stdout"])
+                        self.assertNotIn("WdFilter", result["console_output"]["stdout"])
+                    rejected = run_native(image, pe, persona, root / f"{is_x64}-unload",
+                                          [], 10, 100_000,
+                                          guest_args=["unload", "ExampleFilter"])
+                    self.assertFalse(rejected["errors"])
+                    self.assertEqual(rejected["guest_exit_code"], 87)
+                    self.assertEqual(rejected["console_output"]["stdout"], "")
+                    driverquery = enumeration_programs(is_x64, persona)["driverquery.exe"]
+                    result = run_native(driverquery, inspect_pe(driverquery, "driverquery.exe"),
+                                        persona, root / f"{is_x64}-driverquery", [],
+                                        10, 100_000)
+                    self.assertFalse(result["errors"])
+                    self.assertIn("ExampleFilter", result["console_output"]["stdout"])
+
+    def test_winexec_launches_guest_fltmc(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"fltmc.exe filters\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("WdFilter", result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\fltmc.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_bcdedit_reports_persona_boot_entries_and_rejects_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

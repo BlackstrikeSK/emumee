@@ -220,6 +220,30 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
         if arguments.casefold() in {"c: /l", "c:\\ /l"}:
             return volume + "\r\n"
         raise ValueError("unsupported mountvol arguments")
+    if name == "fltmc.exe":
+        argument = arguments.casefold()
+        filters = persona["minifilters"]
+        if argument in {"", "filters"}:
+            lines = ["Filter Name                     Num Instances    Altitude    Frame",
+                     "------------------------------  -------------  ----------  -----"]
+            lines.extend(f"{item['name']:<30}  {item['instances']:<13}  "
+                         f"{item['altitude']:<10}  0" for item in filters)
+            return "\r\n".join(lines) + "\r\n"
+        if argument == "instances":
+            lines = ["Instance Name                   Altitude    Volume Name",
+                     "------------------------------  ----------  -----------"]
+            for item in filters:
+                for index in range(item["instances"]):
+                    instance = item["name"] + " Instance" + (
+                        f" {index + 1}" if item["instances"] > 1 else "")
+                    lines.append(f"{instance:<30}  {item['altitude']:<10}  C:\\")
+            return "\r\n".join(lines) + "\r\n"
+        if argument == "volumes":
+            volume = "\\\\?\\Volume" + persona["volume_guid"] + "\\"
+            return ("Volume Name                                      Dos Name  File System\r\n"
+                    "-----------------------------------------------  --------  -----------\r\n"
+                    f"{volume:<47}  C:\\       NTFS\r\n")
+        raise ValueError("unsupported fltmc arguments")
     if name == "bcdedit.exe":
         argument = arguments.casefold()
         if argument not in {"", "/enum", "/enum active", "/v",
@@ -627,7 +651,8 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
-                 "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe"):
+                 "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
+                 "fltmc.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -654,6 +679,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "mountvol.exe": ("C: /L", "C:\\ /L"),
                      "bcdedit.exe": ("/enum", "/enum active", "/v",
                                      "/enum active /v", "/enum {current}"),
+                     "fltmc.exe": ("filters", "instances", "volumes"),
                      "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)

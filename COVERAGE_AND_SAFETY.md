@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -108,6 +108,13 @@ create guest Services registry keys. A custom persona can replace the default
 list; a child process cannot enumerate host drivers. `.sys` image content,
 kernel execution, signed driver data, remote queries, and combined flags remain
 unmodeled.
+
+Generated `fltmc.exe` reports the persona's running file-system minifilters
+through its default, `filters`, `instances`, and `volumes` views. Filter names,
+altitudes, and instance counts agree with guest driver records and Services
+registry instance keys; the sole volume agrees with the persona's `C:` GUID.
+The default Defender persona includes `WdFilter`. Unsupported `unload` exits
+87 without touching a host driver or Filter Manager.
 
 Generated `schtasks.exe` prints the persona's bounded scheduled-task snapshot.
 It supports the default query, `/query`, `/query /fo LIST`, `/query /fo CSV`,

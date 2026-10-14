@@ -438,6 +438,17 @@ def registry_keys(persona: dict) -> list[dict]:
                           value("Type", driver["type"], "REG_DWORD"),
                           value("DisplayName", driver["display_name"]),
                           value("ImagePath", driver["path"], "REG_EXPAND_SZ")))
+    for filter_item in persona["minifilters"]:
+        base = (r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services" +
+                "\\" + filter_item["name"] + r"\Instances")
+        instance_names = [filter_item["name"] + " Instance" +
+                          (f" {index + 1}" if filter_item["instances"] > 1 else "")
+                          for index in range(filter_item["instances"])]
+        keys.append(entry(base, value("DefaultInstance", instance_names[0])))
+        for instance in instance_names:
+            keys.append(entry(base + "\\" + instance,
+                              value("Altitude", filter_item["altitude"]),
+                              value("Flags", 0, "REG_DWORD")))
     for channel in persona["event_channels"]:
         keys.append(entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\EventLog" +
                           "\\" + channel["name"],

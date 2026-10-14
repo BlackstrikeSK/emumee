@@ -506,6 +506,7 @@ def create_app(root: Path) -> Flask:
                                       commands=commands[command_start:command_start + commands_per_page],
                                       command_count=len(commands), command_pages=command_pages,
                                       commands_page=commands_page, command_capture=command_capture,
+                                      script_source=engine.get("submitted_script_source") if isinstance(engine.get("submitted_script_source"), str) else None,
                                       events=events[event_start:event_start + page_size],
                                       event_count=len(events), event_pages=event_pages,
                                       events_page=events_page,

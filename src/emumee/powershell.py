@@ -1,0 +1,281 @@
+"""Run supplied PowerShell only inside a verified, offline Docker Desktop Linux VM."""
+
+from __future__ import annotations
+
+import datetime as dt
+import base64
+import hashlib
+import json
+import secrets
+import subprocess
+import threading
+import time
+import uuid
+from pathlib import Path
+
+from .powershell_capture import (SDK_IMAGE, SOURCE_COMMIT, command_events, docker,
+                                engine_command_events, observer_image, verified_events)
+from .reports import ENGINE_INTEGRITY, valid_summary
+
+MAX_SCRIPT = 1024 * 1024
+MAX_TRACE = 4 * 1024 * 1024
+LIMITATIONS = [
+    "Experimental Linux PowerShell runtime; Windows commands, APIs, and persona integration are incomplete",
+    "Engine invocation values are guest-generated and can be forged or bypassed with arbitrary .NET/native access",
+    "Native argv bytes are observed at syscall entry and confirmed on exec; concurrent argument mutation can race observation",
+    "Method calls and arbitrary object values are not fully captured; command capture is incomplete",
+    "Console capture covers successful write/writev calls to guest stdout/stderr backing files, including duplicated descriptors, up to 64 KiB per stream and 4096 bytes per syscall; other redirections are not captured",
+    "The container boundary depends on Docker Desktop's Linux VM and kernel; container escape resistance is not established",
+]
+
+
+def _read_bounded(path: Path, limit: int) -> bytes:
+    with path.open('rb') as stream:
+        content = stream.read(limit + 1)
+    if not content or len(content) > limit:
+        raise ValueError(f'{path.name} must contain 1..{limit} bytes')
+    return content
+
+
+def configuration_checks(info: dict) -> dict:
+    host, config = info['HostConfig'], info['Config']
+    return {
+        'network_none': host['NetworkMode'] == 'none',
+        'read_only_root': host['ReadonlyRootfs'] is True,
+        'no_binds': not host.get('Binds'),
+        'no_host_mounts': all(m.get('Type') == 'tmpfs' for m in info.get('Mounts', [])),
+        'no_devices': not host.get('Devices') and not host.get('DeviceRequests'),
+        'no_privileged': host['Privileged'] is False,
+        'capabilities_dropped': host['CapDrop'] == ['ALL'] and not host.get('CapAdd'),
+        'no_new_privileges': host['SecurityOpt'] == ['no-new-privileges=true'],
+        'private_pid_namespace': not host.get('PidMode'),
+        'private_ipc_namespace': host.get('IpcMode') == 'private',
+        'unprivileged_user': config['User'] == '65534:65534',
+        'memory_limited': host['Memory'] == 512 * 1024 * 1024,
+        'swap_limited': host['MemorySwap'] == 512 * 1024 * 1024,
+        'pids_limited': host['PidsLimit'] == 64,
+        'cpu_limited': host['NanoCpus'] == 1_000_000_000,
+        'temporary_files_only': host.get('Tmpfs') == {
+            '/work': 'rw,nosuid,nodev,noexec,size=16m,mode=1777',
+            '/tmp': 'rw,nosuid,nodev,noexec,size=16m,mode=1777'},
+        'logging_disabled': host['LogConfig']['Type'] == 'none',
+        'trusted_entrypoint': config.get('Entrypoint') is None,
+        'expected_command': config['Cmd'] == ['/observer', '--script'],
+    }
+
+
+def _attach(name: str, input_bytes: bytes, timeout: int) -> tuple[bytes, bytes, str | None]:
+    """Drain both pipes with hard memory caps; terminate the container on excess or timeout."""
+    process = subprocess.Popen(['docker', 'start', '--attach', '--interactive', name],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    buffers = [bytearray(), bytearray()]
+    excess = threading.Event()
+    failures = []
+
+    def drain(stream, index, limit):
+        try:
+            while True:
+                block = stream.read(8192)
+                if not block:
+                    break
+                available = limit - len(buffers[index])
+                buffers[index].extend(block[:available])
+                if len(block) > available:
+                    excess.set()
+        except OSError as error:
+            failures.append(str(error))
+            excess.set()
+        finally:
+            stream.close()
+
+    def feed():
+        try:
+            process.stdin.write(input_bytes)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+    threads = [threading.Thread(target=drain, args=(process.stdout, 0, MAX_TRACE), daemon=True),
+               threading.Thread(target=drain, args=(process.stderr, 1, 65536), daemon=True),
+               threading.Thread(target=feed, daemon=True)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + timeout
+    reason = None
+    try:
+        while process.poll() is None:
+            if excess.wait(0.05):
+                reason = 'observer_output_limit'
+                break
+            if time.monotonic() >= deadline:
+                reason = 'timeout'
+                break
+        if reason:
+            # Inspect even if kill reports an already-stopped container.
+            try:
+                docker('kill', name, timeout=10)
+            except RuntimeError:
+                pass
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+            reason = reason or 'docker_attach_failure'
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        for thread in threads:
+            thread.join(timeout=2)
+    if any(t.is_alive() for t in threads) or failures:
+        raise RuntimeError('Docker attach streams did not close cleanly')
+    return bytes(buffers[0]), bytes(buffers[1]), reason
+
+
+def project_trace(events: list[dict]) -> tuple[list[dict], list[dict], dict, list[str]]:
+    commands = command_events(events)
+    errors = []
+    for event in events:
+        if event['event'] != 'guest_engine_record':
+            continue
+        try:
+            commands.extend(engine_command_events([event]))
+        except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
+            errors.append(f"Rejected malformed engine record at observer sequence {event['sequence']}")
+    commands.sort(key=lambda c: c['observer_sequence'])
+    for number, command in enumerate(commands, 1):
+        command['sequence'] = number
+    network = [{**event, 'event': 'network_denied', 'api': 'linux.syscall',
+                'capture': 'external_linux_ptrace', 'network_used': False,
+                'reason': 'Network syscall denied before execution'}
+               for event in events if event['event'] == 'native_syscall_denied' and
+               event['syscall_number'] in {41, 42, 43, 44, 45, 46, 47, 49, 50, 53, 288, 299, 307}]
+    console = {'stdout': '', 'stderr': '', 'stdout_truncated': False, 'stderr_truncated': False}
+    for fd, field in ((1, 'stdout'), (2, 'stderr')):
+        writes = [event for event in events if event['event'] == 'native_console_write' and event['fd'] == fd]
+        data = b''.join(bytes.fromhex(event['data_hex']) for event in writes)
+        console[field] = data.decode('utf-8', errors='backslashreplace')
+        console[field + '_truncated'] = any(event['truncated'] for event in writes)
+    return commands, network, console, errors
+
+
+def run_script(sample: Path, observer: Path, instrumented_engine: Path, *, timeout=60) -> dict:
+    if type(timeout) is not int or not 1 <= timeout <= 300:
+        raise ValueError('PowerShell timeout must be 1..300 seconds')
+    if sample.suffix.lower() != '.ps1':
+        raise ValueError('PowerShell input must be a .ps1 file')
+    source = _read_bounded(sample, MAX_SCRIPT)
+    payload = _read_bounded(observer, 16 * 1024 * 1024)
+    if payload[:6] != b'\x7fELF\x02\x01':
+        raise ValueError('Observer must be a trusted built Linux x86-64 ELF')
+    engine_payload = _read_bounded(instrumented_engine, 32 * 1024 * 1024)
+    build = json.loads(_read_bounded(instrumented_engine.with_suffix('.build.json'), 65536))
+    if (build.get('source_commit') != SOURCE_COMMIT or build.get('sdk_image') != SDK_IMAGE or
+            build.get('assembly_sha256') != hashlib.sha256(engine_payload).hexdigest()):
+        raise ValueError('Instrumented engine does not match its pinned build evidence')
+    daemon = json.loads(docker('info', '--format', '{{json .}}'))
+    if daemon.get('OSType') != 'linux' or daemon.get('OperatingSystem') != 'Docker Desktop':
+        raise ValueError('This execution mode requires Docker Desktop with its Linux VM')
+    base = json.loads(docker('image', 'inspect', SDK_IMAGE))[0]
+    if base['Os'] != 'linux' or base['Architecture'] != 'amd64':
+        raise ValueError('Pinned Linux amd64 SDK image is required')
+    image = observer_image(SDK_IMAGE, payload, engine_payload)
+    name = 'emumee-powershell-' + uuid.uuid4().hex
+    # The script travels through observer stdin into tmpfs; never a bind mount or image layer.
+    created = False
+    try:
+        docker('create', '--name', name, '--interactive', '--pull=never', '--network=none',
+               '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges=true',
+               '--user=65534:65534', '--pids-limit=64', '--memory=512m', '--memory-swap=512m', '--cpus=1',
+               '--ipc=private', '--hostname=emumee-powershell', '--workdir=/work', '--log-driver=none',
+               '--tmpfs=/work:rw,nosuid,nodev,noexec,size=16m,mode=1777',
+               '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777',
+               '--env=HOME=/work', '--env=POWERSHELL_TELEMETRY_OPTOUT=1',
+               '--env=DOTNET_CLI_TELEMETRY_OPTOUT=1', '--env=DOTNET_EnableDiagnostics=0',
+               '--env=OPENSSL_CONF=/dev/null', '--entrypoint=', image, '/observer', '--script', timeout=90)
+        created = True
+        info = json.loads(docker('inspect', name))[0]
+        checks = configuration_checks(info)
+        if not all(checks.values()):
+            raise RuntimeError('Container configuration failed checks: ' + ', '.join(k for k, v in checks.items() if not v))
+        key = secrets.token_bytes(32)
+        started = dt.datetime.now(dt.timezone.utc).isoformat()
+        raw, stderr, stop_reason = _attach(name, key + len(source).to_bytes(4, 'big') + source, timeout)
+        state = json.loads(docker('inspect', name))[0]['State']
+        if state['Running']:
+            raise RuntimeError('Container still running after attach ended')
+        errors = []
+        # A killed observer can leave its last write incomplete. Authenticate every retained whole line.
+        if raw and not raw.endswith(b'\n'):
+            raw = raw[:raw.rfind(b'\n') + 1]
+            errors.append('Observer output ended with an incomplete record')
+        try:
+            events = verified_events(raw, key, require_finished=False)
+        except (ValueError, TypeError, KeyError, RecursionError, UnicodeError) as error:
+            events = []
+            errors.append('Observer trace rejected: ' + str(error))
+        complete = bool(events and events[-1]['event'] == 'observer_finished')
+        commands, network, console, parse_errors = project_trace(events)
+        errors.extend(parse_errors)
+        if not complete:
+            errors.append('Observer lifecycle did not finish; retained records are incomplete')
+        errors.extend(e.get('reason', 'Observer error') for e in events if e['event'] == 'observer_error')
+        if state.get('OOMKilled'):
+            errors.append('Container memory limit reached')
+        if stop_reason:
+            errors.append('Container stopped: ' + stop_reason)
+        if stderr:
+            errors.append('Docker attach diagnostics: ' + stderr.decode('utf-8', errors='replace')[:2000])
+        root_exit = events[-1].get('root_exit_code') if complete else None
+        if root_exit is not None and root_exit != 0:
+            errors.append(f'PowerShell exited with code {root_exit}')
+        return {'source': source.decode('utf-16' if source[:2] in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig', errors='replace'),
+                'sample_name': sample.name, 'sample_sha256': hashlib.sha256(source).hexdigest(),
+                'input_bytes_base64': base64.b64encode(source).decode('ascii'),
+                'execution_started_at': started, 'execution_finished_at': dt.datetime.now(dt.timezone.utc).isoformat(),
+                'image': SDK_IMAGE, 'image_id': image, 'base_image_id': base['Id'],
+                'observer_sha256': hashlib.sha256(payload).hexdigest(), 'instrumented_engine_build': build,
+                'configuration_checks': checks, 'observer_events': events, 'observer_trace_complete': complete,
+                'command_events': commands, 'network_events': network, 'console_output': console,
+                'errors': errors, 'guest_exit_code': root_exit, 'timeout_reached': stop_reason == 'timeout',
+                'completion_reason': 'timeout' if stop_reason == 'timeout' else ('error' if errors else 'exit_process'),
+                'limitations': LIMITATIONS}
+    finally:
+        if created:
+            docker('rm', '--force', name)
+
+
+def save_script_run(report: dict, root: Path) -> Path:
+    now = dt.datetime.now(dt.timezone.utc)
+    run_id = now.strftime('%Y%m%dT%H%M%SZ-') + uuid.uuid4().hex[:8]
+    engine = {'command_events': report['command_events'], 'network_events': report['network_events'],
+              'command_capture': {'complete': False, 'source': 'engine_instrumentation_and_external_native',
+                                  'dropped_events': None,
+                                  'event_loss_unknown': not report['observer_trace_complete'],
+                                  'observer_state': 'no_interruption_observed' if report['observer_trace_complete'] else 'terminated',
+                                  'limitations': report['limitations']},
+              'submitted_script_source': report['source'], 'execution_evidence': report}
+    payload = json.dumps(engine, indent=2, ensure_ascii=False).encode('utf-8')
+    summary = {'id': run_id, 'status': 'partial', 'engine': 'powershell-container',
+               'sample': {'name': report['sample_name'], 'kind': 'powershell', 'managed': True,
+                          'architecture': 'x64', 'sha256': report['sample_sha256']},
+               'started_at': report['execution_started_at'], 'finished_at': report['execution_finished_at'],
+               'guest_exit_code': report['guest_exit_code'], 'completion_reason': report['completion_reason'],
+               'guest_trace_complete': False, 'timeout_reached': report['timeout_reached'],
+               'errors': report['errors'], 'artifacts': [], 'console_output': report['console_output'],
+               'engine_report': 'engine-report.json', 'engine_report_size': len(payload),
+               'engine_report_sha256': hashlib.sha256(payload).hexdigest(),
+               'network_attempts': report['network_events'][:1000],
+               'run_manifest': {'probe_only': False, 'execution_boundary': 'docker-desktop-linux-vm',
+                                'network_mode': 'none', 'image': report['image'], 'image_id': report['image_id'],
+                                'configuration_checks': report['configuration_checks'],
+                                'engine_report_integrity': ENGINE_INTEGRITY}}
+    if not valid_summary(summary):
+        raise ValueError('Invalid PowerShell report envelope')
+    root.mkdir(parents=True, exist_ok=True)
+    run = root / run_id
+    run.mkdir()
+    (run / 'engine-report.json').write_bytes(payload)
+    (run / 'summary.json').write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding='utf-8')
+    return run

@@ -1,6 +1,6 @@
-/* Fixed-probe Linux x86-64 process observer. Built statically in WSL; executed
- * only in the unprivileged, no-network probe container. Not a sandbox launcher
- * for submitted scripts. A host-provided key authenticates observer records. */
+/* Linux x86-64 process observer. Built statically in WSL; executed only inside
+ * a verified unprivileged, offline container. --script reads bounded source
+ * after the host-provided key, which authenticates observer records. */
 #define _GNU_SOURCE
 #include <sys/ptrace.h>
 #include <linux/ptrace.h>
@@ -11,6 +11,8 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -31,7 +33,11 @@ static char payload[300000];
 static size_t used;
 static unsigned long sequence;
 static pid_t root_pid;
-static struct { pid_t pid; int blocked; } tasks[64];
+static int script_mode;
+static size_t console_totals[2];
+static struct stat console_identity[2];
+static struct { pid_t pid; int blocked; int console_fd; size_t console_size;
+                int console_truncated; unsigned char console[4096]; } tasks[64];
 
 static void emit(void) {
     unsigned char digest[EVP_MAX_MD_SIZE]; unsigned int length = 0;
@@ -116,6 +122,73 @@ static int denied(const struct ptrace_syscall_info *info) {
     return 0;
 }
 
+static int script_input(void) {
+    unsigned char header[4]; size_t count = 0;
+    while (count < 4) {
+        ssize_t n = read(0, header + count, 4 - count);
+        if (n <= 0) return -1;
+        count += (size_t)n;
+    }
+    uint32_t size = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) |
+                    ((uint32_t)header[2] << 8) | header[3];
+    if (!size || size > 1024 * 1024) return -1;
+    int fd = open("/work/input.ps1", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0400);
+    if (fd < 0) return -1;
+    unsigned char data[4096];
+    while (size) {
+        ssize_t n = read(0, data, size < sizeof(data) ? size : sizeof(data));
+        if (n <= 0) { close(fd); return -1; }
+        size_t offset = 0;
+        while (offset < (size_t)n) {
+            ssize_t written = write(fd, data + offset, (size_t)n - offset);
+            if (written <= 0) { close(fd); return -1; }
+            offset += (size_t)written;
+        }
+        size -= (uint32_t)n;
+    }
+    return close(fd);
+}
+
+static void console_entry(pid_t pid, int index, const struct ptrace_syscall_info *info) {
+    tasks[index].console_fd = 0;
+    if (!script_mode || (info->entry.nr != SYS_write && info->entry.nr != SYS_writev)) return;
+    /* .NET duplicates standard handles. Identify their backing inode rather
+       than assuming that output always uses descriptor 1 or 2. */
+    char path[96]; struct stat identity;
+    snprintf(path, sizeof(path), "/proc/%d/fd/%llu", pid, (unsigned long long)info->entry.args[0]);
+    if (stat(path, &identity)) return;
+    int stream = -1;
+    for (int i = 0; i < 2; ++i)
+        if (identity.st_dev == console_identity[i].st_dev && identity.st_ino == console_identity[i].st_ino) stream = i;
+    if (stream < 0) return;
+    if (console_totals[stream] > 65536) return;
+    size_t limit = 65536 - console_totals[stream];
+    if (limit > sizeof(tasks[index].console)) limit = sizeof(tasks[index].console);
+    size_t size = 0, total = 0;
+    unsigned long count = info->entry.nr == SYS_writev ? info->entry.args[2] : 1;
+    if (count > 1024) return; /* invalid iov count; let the kernel reject it */
+    for (unsigned long i = 0; i < count; ++i) {
+        unsigned long address = info->entry.args[1], length = info->entry.args[2];
+        if (info->entry.nr == SYS_writev) {
+            unsigned long vector = info->entry.args[1] + i * 16;
+            address = peek(pid, vector);
+            length = peek(pid, vector + 8);
+        }
+        if (length > SIZE_MAX - total) { total = SIZE_MAX; break; }
+        total += length;
+        size_t copied = length < limit - size ? length : limit - size;
+        for (size_t j = 0; j < copied; ++j) {
+            unsigned long current = address + j;
+            tasks[index].console[size++] = (unsigned char)(peek(pid, current & ~7UL) >> ((current & 7) * 8));
+        }
+    }
+    if (!total) return;
+    tasks[index].console_fd = stream + 1;
+    tasks[index].console_size = size;
+    tasks[index].console_truncated = size < total;
+    if (!limit) console_totals[stream]++; /* report exhausted stream only once */
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) return 90;
     size_t count = 0;
@@ -124,6 +197,16 @@ int main(int argc, char **argv) {
         if (n <= 0) return 91;
         count += (size_t)n;
     }
+    script_mode = argc == 2 && !strcmp(argv[1], "--script");
+    if (script_mode && script_input()) return 91;
+    int console_fds[2] = {-1, -1};
+    if (script_mode) {
+        const char *paths[] = {"/work/stdout", "/work/stderr"};
+        for (int i = 0; i < 2; ++i) {
+            console_fds[i] = open(paths[i], O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+            if (console_fds[i] < 0 || fstat(console_fds[i], &console_identity[i])) return 91;
+        }
+    }
     struct rlimit core = {0, 0};
     if (setrlimit(RLIMIT_CORE, &core) || prctl(PR_SET_DUMPABLE, 0)) return 92;
     root_pid = fork();
@@ -131,13 +214,19 @@ int main(int argc, char **argv) {
     if (!root_pid) {
         OPENSSL_cleanse(key, sizeof(key));
         int fd = open("/dev/null", O_RDWR);
-        if (fd < 0 || dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0 || dup2(fd, 198) < 0) _exit(94);
+        if (fd < 0 || dup2(fd, 0) < 0 || dup2(script_mode ? console_fds[0] : fd, 1) < 0 ||
+                dup2(script_mode ? console_fds[1] : fd, 2) < 0 || dup2(fd, 198) < 0) _exit(94);
+        for (int i = 0; i < 2; ++i) if (console_fds[i] > 2) close(console_fds[i]);
         if (fd > 2) close(fd);
         if (prctl(PR_SET_DUMPABLE, 1) || ptrace(PTRACE_TRACEME, 0, 0, 0)) _exit(94);
         raise(SIGSTOP);
-        execvp(argv[1], argv + 1);
+        char *script_argv[] = {"pwsh", "-NoLogo", "-NoProfile", "-NonInteractive",
+                               "-File", "/work/input.ps1", NULL};
+        char **launch = script_mode ? script_argv : argv + 1;
+        execvp(launch[0], launch);
         _exit(94);
     }
+    for (int i = 0; i < 2; ++i) if (console_fds[i] >= 0) close(console_fds[i]);
     int status;
     if (waitpid(root_pid, &status, 0) != root_pid || !WIFSTOPPED(status)) fail("trace_setup_failed");
     unsigned long options = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK |
@@ -179,6 +268,7 @@ int main(int argc, char **argv) {
                     (info.op == PTRACE_SYSCALL_INFO_ENTRY && info.entry.nr & 0x40000000UL))
                 fail("unsupported_tracee_architecture");
             if (info.op == PTRACE_SYSCALL_INFO_ENTRY) {
+                console_entry(pid, index, &info);
                 if (info.entry.nr == SYS_execve || info.entry.nr == SYS_execveat) exec_event(pid, &info);
                 if (info.entry.nr == SYS_write && info.entry.args[0] == 198) {
                     unsigned long length = info.entry.args[2];
@@ -196,6 +286,20 @@ int main(int argc, char **argv) {
                     begin(); add("{\"event\":\"native_syscall_denied\",\"pid\":%d,\"syscall_number\":%llu,\"errno\":%d}",
                                   pid, (unsigned long long)info.entry.nr, error); emit();
                 }
+            } else if (info.op == PTRACE_SYSCALL_INFO_EXIT && tasks[index].console_fd) {
+                if (!info.exit.is_error && info.exit.rval > 0) {
+                    size_t size = tasks[index].console_size;
+                    if ((unsigned long long)info.exit.rval < size) size = (size_t)info.exit.rval;
+                    int stream = tasks[index].console_fd - 1;
+                    size_t remaining = console_totals[stream] < 65536 ? 65536 - console_totals[stream] : 0;
+                    if (size > remaining) { size = remaining; tasks[index].console_truncated = 1; }
+                    console_totals[tasks[index].console_fd - 1] += size;
+                    begin(); add("{\"event\":\"native_console_write\",\"pid\":%d,\"fd\":%d,\"truncated\":%s,\"data_hex\":\"",
+                        pid, tasks[index].console_fd, tasks[index].console_truncated ? "true" : "false");
+                    for (size_t j = 0; j < size; ++j) add("%02x", tasks[index].console[j]);
+                    add("\"}"); emit();
+                }
+                tasks[index].console_fd = 0;
             } else if (info.op == PTRACE_SYSCALL_INFO_EXIT && tasks[index].blocked) {
                 struct user_regs_struct registers;
                 if (ptrace(PTRACE_GETREGS, pid, 0, &registers)) fail("register_read_failed");

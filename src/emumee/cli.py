@@ -11,6 +11,7 @@ import ntpath
 import os
 import re
 import sys
+import subprocess
 import threading
 import time
 import uuid
@@ -816,6 +817,13 @@ def main(argv: list[str] | None = None) -> int:
     p_dashboard.set_defaults(func=lambda args: _dashboard(args))
     p_persona = sub.add_parser("persona", help="Print a configurable default Windows identity")
     p_persona.set_defaults(func=lambda args: _persona())
+    p_powershell = sub.add_parser("powershell", help="Experimental supplied-script execution in an offline Docker Desktop Linux VM")
+    p_powershell.add_argument("sample", help="PowerShell .ps1 file (up to 1 MiB)")
+    p_powershell.add_argument("--observer", required=True, help="Trusted Linux observer built with tools/build_powershell_exec_observer.ps1")
+    p_powershell.add_argument("--instrumented-engine", required=True, help="Trusted pinned engine DLL with its .build.json evidence")
+    p_powershell.add_argument("--output", help="Dashboard report directory (default: ./output)")
+    p_powershell.add_argument("--timeout", type=int, default=60, help="Container deadline in seconds (1..300)")
+    p_powershell.set_defaults(func=_powershell)
     args = parser.parse_args(argv)
     if (getattr(args, "timeout", 1) <= 0 or getattr(args, "max_instructions", 1) <= 0
             or getattr(args, "memory_mb", 1) <= 0 or getattr(args, "max_output_mb", 1) <= 0):
@@ -828,6 +836,20 @@ def main(argv: list[str] | None = None) -> int:
 def _persona() -> int:
     print(json.dumps(DEFAULT_PERSONA, indent=2))
     return 0
+
+
+def _powershell(args: argparse.Namespace) -> int:
+    from .powershell import run_script, save_script_run
+    try:
+        report = run_script(Path(args.sample), Path(args.observer), Path(args.instrumented_engine),
+                            timeout=args.timeout)
+        run_dir = save_script_run(report, _output_root(args.output))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps({"run_dir": str(run_dir), "status": "partial", "guest_exit_code": report["guest_exit_code"],
+                      "commands": len(report["command_events"]), "errors": report["errors"]}, ensure_ascii=False))
+    return 1 if report["errors"] else 0
 
 
 def _dashboard(args: argparse.Namespace) -> int:

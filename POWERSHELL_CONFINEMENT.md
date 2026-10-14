@@ -1,10 +1,103 @@
-# PowerShell guest execution: feasibility gates
+# PowerShell confinement and command capture
 
-PowerShell feasibility work follows native enumeration coverage. It is not an
-Emumee execution mode today. Guest `CreateProcess` rejects managed child PEs,
-and the bounded managed interpreter does not implement the PowerShell engine.
-Running host `powershell.exe` or `pwsh.exe` from the worker would not satisfy
-guest execution or persona isolation.
+Emumee has an experimental `powershell` command for supplied `.ps1` files.
+It runs PowerShell 7.5.12 inside Docker Desktop's Linux VM using the pinned,
+instrumented engine and an external native-process observer. It does not run
+host `powershell.exe` or `pwsh.exe`. The PE worker's `CreateProcess` path still
+rejects managed child PEs; it does not route PowerShell into this separate mode.
+
+## Supplied scripts
+
+Build the observer and instrumented engine using the commands in the
+instrumented-engine section below. Docker Desktop must be running its Linux
+backend, with the pinned SDK image already pulled. Then run:
+
+```powershell
+.venv\Scripts\python.exe -m emumee powershell examples\powershell-capture.ps1 `
+  --observer output\powershell-exec-observer\observer `
+  --instrumented-engine output\powershell-instrumented-engine\System.Management.Automation.dll `
+  --output output\powershell-dashboard-probe --timeout 60
+```
+
+The script is limited to 1 MiB and the deadline to 1–300 seconds. Only the
+selected file enters the guest, through a length-prefixed observer stdin
+channel after the private authentication key. No source directory is mounted;
+script bytes are written to `/work/input.ps1` in a fresh temporary filesystem,
+and are never added to an image layer. Host environment variables and profiles
+are not passed into PowerShell. Both the script and native descendants execute
+inside the guest. The runtime root is read-only, network mode is `none`, all
+capabilities are dropped, and no-new-privileges is enabled. It uses private PID
+and IPC namespaces, UID/GID 65534, a 64-process limit, one CPU, 512 MiB memory
+with the same memory-plus-swap limit, and two 16 MiB noexec temporary filesystems.
+The CLI inspects these settings before starting the observer. Docker documents
+the [run controls](https://docs.docker.com/reference/cli/docker/container/run/),
+[resource limits](https://docs.docker.com/engine/containers/resource_constraints/),
+and [temporary filesystems](https://docs.docker.com/engine/storage/tmpfs/).
+
+The external observer blocks network socket creation and selected connection,
+message, namespace, and observer-access syscalls before execution. Socket
+denials appear in the dashboard network timeline. A fresh key authenticates
+record order and transport. On timeout or trace-budget exhaustion the CLI
+terminates the container, checks that execution stopped, and removes it.
+Whole authenticated records received before termination are retained and
+marked incomplete. Host trace buffering is capped at 4 MiB and Docker attach
+diagnostics at 64 KiB. Invalid engine payloads are rejected individually;
+they do not discard independent native exec records.
+
+Console capture observes successful `write`/`writev` calls to the guest's
+stdout/stderr backing files, including duplicated descriptors used by .NET.
+These backing files live only in the bounded `/work` temporary filesystem.
+Snapshots are limited to 4096 bytes per syscall and 64 KiB per stream, with
+explicit truncation flags. Other output redirections and writes through
+different syscall families are not covered.
+
+Reports retain decoded source, exact original input bytes as base64, the input
+hash, evaluated command records, raw observer records, console output, exit
+status, and configuration evidence. The dashboard shows the submitted source,
+evaluated parameters, native argv arrays, errors, and denied network calls.
+Every run is marked partial because command capture is incomplete. The CLI
+returns 0 for an observed zero PowerShell exit without run errors, 1 for a
+recorded execution error or timeout, and 2 for setup/reporting failures.
+
+**Remaining requirements:** this is Linux PowerShell, with Linux identity and
+native binaries. Windows persona APIs and Windows utilities are not integrated.
+Arbitrary .NET method calls are not fully observed. Engine parameter records
+are guest-generated and can be forged or bypassed; authenticated transport
+does not prove their truth. Native argv snapshots can race concurrent mutation
+between syscall entry and the kernel's argument copy. Hostile observer
+tampering, all exec edge cases, complete network intent, and container escape
+resistance remain unproven. The overall Windows persona and complete-command
+capture goal is still open.
+
+The harmless example exercises a constructed command name, base64-decoded
+value, splatting, nested `Invoke-Expression`, pipeline binding, Unicode and
+empty native arguments, and a denied network socket. Integration tests are
+opt-in because they require the built artifacts and running Docker Desktop:
+
+```powershell
+$env:EMUMEE_POWERSHELL_INTEGRATION = '1'
+.venv\Scripts\python.exe -m unittest tests.test_powershell tests.test_powershell_exec_observer tests.test_command_dashboard -q
+```
+
+The sections below document the earlier fixed feasibility probes and the
+engine build used by the supplied-script mode.
+
+### Verified supplied-script gate (2026-10-14 UTC)
+
+The 20-test PowerShell/observer/dashboard gate passed with Docker integration
+enabled. Live cases verified evaluated values and native argv bytes, ordinary
+PowerShell and native console output, a denied IPv4 socket, an absent host-only
+file and host environment value, no Docker socket, a denied root write and
+observer-memory read, UID 65534, nonzero exit 13, retained command/console
+records after an eight-second timeout, rejected malformed engine data with
+continued native capture, console truncation, and termination at a reduced
+host trace budget. Every integration case checked container removal.
+
+A separate invocation through `emumee powershell` completed the example with
+38 invocation records, exit 0, no run errors, and all configuration checks true.
+The live dashboard showed its submitted source, evaluated Unicode values,
+pipeline argument, native argv, and denied socket. Its local evidence is
+`output/powershell-dashboard-probe/20261014T221028Z-060b40db`.
 
 ## Execution boundary
 
@@ -153,7 +246,7 @@ Linux identity still differs from the Windows persona. `execveat` descriptor
 paths, all multithreaded exec edge cases, broader syscall coverage, complete
 network intent, hostile observer tampering, and container escape resistance
 remain unverified. Engine-level evaluated-parameter logging and a Windows
-persona execution boundary remain required before enabling general scripts.
+persona execution boundary remain requirements for complete Windows behavior.
 
 ## Instrumented-engine experiment
 
@@ -205,9 +298,9 @@ git clone --depth 1 --branch v7.5.12 --filter=blob:none https://github.com/Power
 
 The assembly build sidecar records source, patch, and assembly hashes. The
 runtime image verifies that evidence and replaces only the matching pinned
-SDK's engine assembly. It remains a fixed-probe experiment: arbitrary submitted
-scripts, general method-call capture, a Windows persona, native child PowerShell
-engine propagation, and resistance to hostile engine/observer tampering remain
+SDK's engine assembly. The supplied-script mode now uses this same assembly.
+General method-call capture, a Windows persona, native child PowerShell engine
+propagation checks, and resistance to hostile engine/observer tampering remain
 unverified.
 
 On 2026-10-14 the combined fixed probe passed 19 checks, including cmdlet values

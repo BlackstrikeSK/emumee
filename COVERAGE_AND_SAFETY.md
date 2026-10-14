@@ -12,7 +12,10 @@ derived only from the selected persona. Direct guest child launches through
 `WinExec` on both architectures printed custom persona values and added a
 guest child entry point.
 The `tasklist` rows use the same names, PIDs, and session mapping as the persona
-process configuration. Generated `ipconfig.exe /all` prints the persona's
+process configuration. `tasklist.exe /svc` assigns active persona service names
+to the first matching process PID; disabled services are absent. The generated
+utility has a 64 KiB total embedded-text limit across its command views.
+Generated `ipconfig.exe /all` prints the persona's
 hostname, adapter description, MAC address, DHCP flag, IPv4 settings, and DNS
 servers. Bare-name and quoted full-path `WinExec` launches reached that output
 on both architectures. A supplied `/release` argument exited 87 without output;

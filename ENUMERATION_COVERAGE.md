@@ -17,7 +17,7 @@ never change host state.
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
-| `tasklist.exe` | Yes | Default persona process snapshot |
+| `tasklist.exe` | Yes | Default persona process snapshot and `/svc` service to process view |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
 | `arp.exe` | Yes | `-a` for the modeled IPv4 ARP entry |
 | `route.exe` | Yes | `print`, `print -4` |
@@ -41,7 +41,7 @@ but it is not included by default unless the table above says so.
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
-| [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with service, device, and driver file probes. |
+| [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | The current persona has no kernel driver service records or `.sys` guest files. Add those modeled surfaces before exposing a driver list. |
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
 | `sc.exe` beyond the listed forms | More query options and service changes | A dynamic Service Control Manager model and parser. |
@@ -74,6 +74,12 @@ reported as running when its named process appears in the persona process
 snapshot and it is not disabled. The same entries generate guest service
 registry keys unless a custom registry replaces them. Named `sc query` covers
 the first three services; the list forms cover all configured services.
+
+Generated `tasklist.exe /svc` joins the persona process snapshot with active
+persona services by process name. If a process name occurs more than once, the
+services appear on the first matching PID, using the same deterministic PID
+assignment as the default `tasklist.exe` view. Disabled or absent services are
+not listed.
 
 The included `reg.exe` is compiled from repository C source and calls guest
 registry APIs for any existing local key. It accepts quoted paths and displays

@@ -16,7 +16,7 @@ from .persona_content import PROCESS_PATHS, oem_code_page
 from .tokens import GuestTokens, PRIVILEGE_DESCRIPTIONS, PRIVILEGE_NAMES
 
 
-_MAX_TEXT = 32 * 1024
+_MAX_TEXT = 64 * 1024
 
 
 def _align(value: int, boundary: int) -> int:
@@ -226,6 +226,26 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
                 f"Processor(s):              {cpu['cores'] * cpu['threads_per_core']} logical processors\r\n"
                 f"                           {cpu['brand']}\r\n")
     if name == "tasklist.exe":
+        if arguments and arguments.casefold() != "/svc":
+            raise ValueError("unsupported tasklist arguments")
+        if arguments:
+            lines = ["Image Name                     PID Services",
+                     "========================= ======== ============================================"]
+            process_names = [process.casefold() for process in persona["processes"]]
+            services_by_index: dict[int, list[str]] = {}
+            for service in persona["services"]:
+                if service["start"] == 4:
+                    continue
+                try:
+                    index = process_names.index(service["process"].casefold())
+                except ValueError:
+                    continue
+                services_by_index.setdefault(index, []).append(service["name"])
+            for index, process in enumerate(persona["processes"]):
+                pid = 4 if process.casefold() == "system" else 420 + index * 168
+                services = ", ".join(services_by_index.get(index, ())) or "N/A"
+                lines.append(f"{process:25} {pid:8} {services}")
+            return "\r\n".join(lines) + "\r\n"
         lines = ["Image Name                     PID Session Name        Session#    Mem Usage",
                  "========================= ======== ================ =========== ============"]
         for index, process in enumerate(persona["processes"]):
@@ -535,6 +555,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "schtasks.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
+                     "tasklist.exe": ("/svc",),
                      "arp.exe": ("-a",),
                      "route.exe": ("print", "print -4"),
                      "netsh.exe": ("interface ipv4 show config",

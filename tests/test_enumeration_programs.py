@@ -16,6 +16,43 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_tasklist_service_view_matches_guest_process_and_service_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            custom = root / "persona.json"
+            custom.write_text(json.dumps({
+                "processes": ["System", "svchost.exe", "svchost.exe", "MsMpEng.exe"],
+                "services": [
+                    {"name": "EventLog", "display_name": "Windows Event Log",
+                     "process": "svchost.exe", "start": 2, "type": 32},
+                    {"name": "WinDefend", "display_name": "Microsoft Defender Antivirus Service",
+                     "process": "MsMpEng.exe", "start": 2, "type": 16},
+                    {"name": "DormantSvc", "display_name": "Dormant Service",
+                     "process": "svchost.exe", "start": 4, "type": 32},
+                ],
+            }), encoding="utf-8")
+            persona = load_persona(custom)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["tasklist.exe"]
+                    result = run_native(image, inspect_pe(image, "tasklist.exe"),
+                                        persona, root / str(is_x64), [], 10, 100_000,
+                                        guest_args=["/svc"])
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["guest_exit_code"], 0)
+                    output = result["console_output"]["stdout"]
+                    self.assertEqual(output, enumeration_text("tasklist.exe", persona, "/svc"))
+                    svchost_rows = [line for line in output.splitlines()
+                                    if line.startswith("svchost.exe")]
+                    self.assertEqual(len(svchost_rows), 2)
+                    self.assertIn("588", svchost_rows[0])
+                    self.assertIn("EventLog", svchost_rows[0])
+                    self.assertIn("756", svchost_rows[1])
+                    self.assertIn("N/A", svchost_rows[1])
+                    self.assertIn("WinDefend", output)
+                    self.assertNotIn("DormantSvc", output)
+                    self.assertIn("EventLog", enumeration_text("sc.exe", persona, "query"))
+
     def test_schtasks_queries_use_guest_task_inventory_and_reject_create(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -234,6 +271,7 @@ class EnumerationProgramTests(unittest.TestCase):
                                     ("arp.exe", "-a"),
                                     ("netsh.exe", "interface ipv4 show config"),
                                     ("whoami.exe", "/user"),
+                                    ("tasklist.exe", "/svc"),
                                     ("query.exe", "user"),
                                     ("quser.exe", ""),
                                     ("qwinsta.exe", ""),

@@ -37,14 +37,16 @@ class VirtualRegistryBridge:
 
     def install(self, emulator) -> None:
         for suffix in ("A", "W"):
-            emulator.add_api_hook(self._set_value, "advapi32", "RegSetValueEx" + suffix, argc=6)
-            emulator.add_api_hook(self._query_value, "advapi32", "RegQueryValueEx" + suffix, argc=6)
-            emulator.add_api_hook(self._create_key, "advapi32", "RegCreateKey" + suffix, argc=3)
-            emulator.add_api_hook(self._create_key_ex, "advapi32", "RegCreateKeyEx" + suffix, argc=9)
-            emulator.add_api_hook(self._open_key, "advapi32", "RegOpenKey" + suffix, argc=3)
-            emulator.add_api_hook(self._open_key_ex, "advapi32", "RegOpenKeyEx" + suffix, argc=5)
-            emulator.add_api_hook(self._delete_key, "advapi32", "RegDeleteKey" + suffix, argc=2)
-        emulator.add_api_hook(self._close_key, "advapi32", "RegCloseKey", argc=1)
+            for module in ("advapi32", "api-ms-win-core-registry-l1-1-0"):
+                emulator.add_api_hook(self._set_value, module, "RegSetValueEx" + suffix, argc=6)
+                emulator.add_api_hook(self._query_value, module, "RegQueryValueEx" + suffix, argc=6)
+                emulator.add_api_hook(self._create_key, module, "RegCreateKey" + suffix, argc=3)
+                emulator.add_api_hook(self._create_key_ex, module, "RegCreateKeyEx" + suffix, argc=9)
+                emulator.add_api_hook(self._open_key, module, "RegOpenKey" + suffix, argc=3)
+                emulator.add_api_hook(self._open_key_ex, module, "RegOpenKeyEx" + suffix, argc=5)
+                emulator.add_api_hook(self._delete_key, module, "RegDeleteKey" + suffix, argc=2)
+        for module in ("advapi32", "api-ms-win-core-registry-l1-1-0"):
+            emulator.add_api_hook(self._close_key, module, "RegCloseKey", argc=1)
 
     @staticmethod
     def _name(emu, api_name: str, address: int) -> str:
@@ -71,6 +73,12 @@ class VirtualRegistryBridge:
         process = (emu.get_current_process() if hasattr(emu, "get_current_process")
                    else None)
         return id(process) if process is not None else id(emu)
+
+    @staticmethod
+    def _canonical_handle(handle: int) -> int:
+        """Windows x64 sign-extends predefined 32-bit HKEY constants."""
+        low = handle & 0xffffffff
+        return low if low in PREDEFINED_HANDLES and handle >> 32 == 0xffffffff else handle
 
     def _owned_key(self, emu, handle: int):
         if (handle not in PREDEFINED_HANDLES and
@@ -100,7 +108,7 @@ class VirtualRegistryBridge:
         return path if len(path) <= 32767 else None
 
     def _open_or_create(self, emu, api_name: str, params, *, create: bool, ex: bool = False):
-        handle = int(params[0])
+        handle = self._canonical_handle(int(params[0]))
         subkey = self._name(emu, api_name, int(params[1]))
         output = int(params[4] if ex else params[2])
         manager = emu.regman
@@ -171,6 +179,7 @@ class VirtualRegistryBridge:
     def _create_key_ex(self, emu, api_name, original, params):
         (handle, subkey_ptr, reserved, class_ptr, options, desired_access,
          security_ptr, output, disposition) = map(int, params)
+        handle = self._canonical_handle(handle)
         if reserved or class_ptr or options or security_ptr:
             self.events.append({"event": "virtual_registry_key_create", "api": api_name,
                                 "status": 50, "reason": "unsupported creation options"})
@@ -204,6 +213,7 @@ class VirtualRegistryBridge:
 
     def _delete_key(self, emu, api_name, original, params):
         handle, subkey_ptr = map(int, params)
+        handle = self._canonical_handle(handle)
         parent = self._owned_key(emu, handle)
         subkey = self._name(emu, api_name, subkey_ptr)
         event = {"event": "virtual_registry_key_delete", "api": api_name,
@@ -242,7 +252,7 @@ class VirtualRegistryBridge:
         return 0
 
     def _close_key(self, emu, api_name, original, params):
-        handle = int(params[0])
+        handle = self._canonical_handle(int(params[0]))
         manager = emu.regman
         key = self._owned_key(emu, handle)
         status = 0 if key else 6
@@ -256,6 +266,7 @@ class VirtualRegistryBridge:
 
     def _set_value(self, emu, api_name, original, params):
         handle, name_ptr, reserved, value_type, data_ptr, size = map(int, params)
+        handle = self._canonical_handle(handle)
         name = self._name(emu, api_name, name_ptr)
         key = self._owned_key(emu, handle)
         event = {"event": "virtual_registry_write", "api": api_name,
@@ -317,6 +328,7 @@ class VirtualRegistryBridge:
 
     def _query_value(self, emu, api_name, original, params):
         handle, name_ptr, reserved, type_ptr, data_ptr, size_ptr = map(int, params)
+        handle = self._canonical_handle(handle)
         name = self._name(emu, api_name, name_ptr)
         key = self._owned_key(emu, handle)
         event = {"event": "virtual_registry_query", "api": api_name,

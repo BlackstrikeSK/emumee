@@ -59,8 +59,15 @@ class LegacyCRTStreams:
         for module in ("msvcrt", "ucrtbase"):
             emulator.add_api_hook(self._acrt_iob_func, module, "__acrt_iob_func", argc=1,
                                   call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._acrt_iob_func, "api-ms-win-crt-private-l1-1-0",
+                              "_o___acrt_iob_func", argc=1,
+                              call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._vsnwprintf, "msvcrt", "_vsnwprintf", argc=4,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        for module in ("ucrtbase", "api-ms-win-crt-private-l1-1-0"):
+            for name in ("__stdio_common_vswprintf", "_o___stdio_common_vswprintf"):
+                emulator.add_api_hook(self._stdio_common_vswprintf, module, name,
+                                      argc=6, call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fileno, "msvcrt", "_fileno", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._get_osfhandle, "msvcrt", "_get_osfhandle",
@@ -75,6 +82,12 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._write_descriptor, "msvcrt", "_write", argc=3,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        for name, callback, argc in (("_o__fileno", self._fileno, 1),
+                                     ("_o__get_osfhandle", self._get_osfhandle, 1),
+                                     ("_o__setmode", self._setmode, 2),
+                                     ("_o__write", self._write_descriptor, 3)):
+            emulator.add_api_hook(callback, "api-ms-win-crt-private-l1-1-0",
+                                  name, argc=argc, call_conv=e_arch.CALL_CONV_CDECL)
         for name in ("strchr", "strrchr", "wcschr", "wcsrchr"):
             emulator.add_api_hook(self._find_character, "msvcrt", name, argc=2,
                                   call_conv=e_arch.CALL_CONV_CDECL)
@@ -384,3 +397,12 @@ class LegacyCRTStreams:
         except Exception as exc:
             self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
             return -1
+
+    def _stdio_common_vswprintf(self, emu, api_name, _original, params) -> int:
+        """UCRT wide formatting wrapper over the bounded guest vararg reader."""
+        options, buffer, count, format_ptr, locale, arg_ptr = map(int, params)
+        if locale or options & ~0x3:
+            self.unsupported.append(f"{api_name}: unsupported locale or formatting options")
+            return -1
+        return self._vsnwprintf(emu, api_name, _original,
+                               [buffer, count, format_ptr, arg_ptr])

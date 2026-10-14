@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import speakeasy.common as common
+from speakeasy.winenv import arch as e_arch
 
 
 MAX_CHARS = 32767
@@ -22,11 +23,34 @@ class GuestStrings:
     def install(self, emulator) -> None:
         emulator.add_api_hook(self._find_ordinal, 'kernel32',
                               'FindStringOrdinal', argc=6)
+        emulator.add_api_hook(self._find_ordinal,
+                              'api-ms-win-core-libraryloader-l1-2-0',
+                              'FindStringOrdinal', argc=6)
         for suffix in ('A', 'W'):
-            emulator.add_api_hook(self._compare, 'kernel32',
-                                  'CompareString' + suffix, argc=6)
+            for module in ('kernel32', 'api-ms-win-core-string-l1-1-0'):
+                emulator.add_api_hook(self._compare, module,
+                                      'CompareString' + suffix, argc=6)
             emulator.add_api_hook(self._length, 'kernel32',
                                   'lstrlen' + suffix, argc=1)
+        for module in ('ucrtbase', 'api-ms-win-crt-private-l1-1-0'):
+            emulator.add_api_hook(self._wcschr, module, 'wcschr', argc=2,
+                                  call_conv=e_arch.CALL_CONV_CDECL)
+
+    def _wcschr(self, emu, api_name, _original, params) -> int:
+        address, wanted = map(int, params)
+        wanted &= 0xffff
+        for index in range(MAX_CHARS + 1):
+            char_address = address + index * 2
+            if not self._access(emu, char_address, 2):
+                self.unsupported.append(f'{api_name}: inaccessible or unterminated string')
+                return 0
+            char = int.from_bytes(emu.mem_read(char_address, 2), 'little')
+            if char == wanted:
+                return char_address
+            if char == 0:
+                return 0
+        self.unsupported.append(f'{api_name}: string exceeds limit')
+        return 0
 
     def _access(self, emu, address: int, size: int) -> bool:
         if not address or size <= 0:

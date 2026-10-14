@@ -201,6 +201,9 @@ class LegacyCRTStreamsTests(unittest.TestCase):
             emu, "msvcrt._memicmp", None, [0x1000, 0x2000, 4]), 0)
         self.assertEqual(bridge._bulk_memory_api(
             emu, "msvcrt._memicmp", None, [0, 0, 0]), 0)
+        self.assertEqual(bridge._bulk_memory_api(
+            emu, "api-ms-win-crt-private-l1-1-0._o__memicmp", None,
+            [0x1000, 0x2000, 3]), 0)
 
     def test_vsnwprintf_reads_guest_varargs_and_honors_count(self):
         for width in (4, 8):
@@ -229,7 +232,24 @@ class LegacyCRTStreamsTests(unittest.TestCase):
                     emu, "msvcrt._vsnwprintf", None,
                     [0x5000, 4, 0x1000, 0x3000]), -1)
                 self.assertEqual(read(0x5000, 8).decode("utf-16le"), "Test")
+                self.assertEqual(crt._stdio_common_vswprintf(
+                    emu, "api-ms-win-crt-private-l1-1-0._o___stdio_common_vswprintf",
+                    None, [0, 0x6000, 16, 0x1000, 0, 0x3000]), 7)
+                self.assertEqual(read(0x6000, 16).decode("utf-16le"), "Test 42\0")
                 self.assertFalse(crt.unsupported)
+
+    def test_private_ucrt_stream_alias_is_registered(self):
+        hooks = {}
+        class Registrar:
+            def add_api_hook(self, callback, module, name, **kwargs):
+                hooks[(module, name)] = callback.__name__
+        LegacyCRTStreams().install(Registrar())
+        self.assertEqual(hooks[("api-ms-win-crt-private-l1-1-0",
+                                "_o___acrt_iob_func")], "_acrt_iob_func")
+        self.assertEqual(hooks[("api-ms-win-crt-private-l1-1-0",
+                                "_o__fileno")], "_fileno")
+        self.assertEqual(hooks[("api-ms-win-crt-private-l1-1-0",
+                                "_o__write")], "_write_descriptor")
 
     def test_vsnwprintf_rejects_unmodeled_format(self):
         emu = _Emulator(4)

@@ -68,6 +68,25 @@ class WinStringTests(unittest.TestCase):
         self.assertEqual(self.api._length(
             self.emu, 'kernel32.lstrlenW', None, [0]), 0)
 
+    def test_compare_string_api_set_is_registered(self):
+        hooks = []
+        class Registrar:
+            def add_api_hook(self, _callback, module, name, **kwargs):
+                hooks.append((module, name, kwargs['argc']))
+        self.api.install(Registrar())
+        self.assertIn(('api-ms-win-core-string-l1-1-0', 'CompareStringW', 6),
+                      hooks)
+        self.assertIn(('api-ms-win-core-libraryloader-l1-2-0',
+                       'FindStringOrdinal', 6), hooks)
+
+    def test_wcschr_returns_guest_pointer_including_terminator(self):
+        self.assertEqual(self.api._wcschr(
+            self.emu, 'ucrtbase.wcschr', None, [0x100, ord('B')]), 0x10a)
+        self.assertEqual(self.api._wcschr(
+            self.emu, 'ucrtbase.wcschr', None, [0x100, 0]), 0x112)
+        self.assertEqual(self.api._wcschr(
+            self.emu, 'ucrtbase.wcschr', None, [0x100, ord('Z')]), 0)
+
     def test_report_does_not_treat_colon_text_as_signature(self):
         coverage = _api_coverage({'entry_points': [{'events': [
             {'event': 'api', 'api_name': 'kernel32.lstrlenW', 'args': ['ERROR: ']},

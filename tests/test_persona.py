@@ -287,6 +287,46 @@ class PersonaContentTests(unittest.TestCase):
                           next(value["data"] for value in run_mru["values"]
                                if value["name"] == "a"))
 
+    def test_extended_desktop_files_and_registry_follow_custom_persona(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            override = root / 'persona.json'
+            override.write_text(json.dumps({
+                'user_name': 'Morgan', 'hostname': 'DESKTOP-Q3R8V2A',
+                'locale': 'de-DE', 'timezone': 'W. Europe Standard Time',
+                'utc_offset_minutes': 60,
+            }), encoding='utf-8')
+            persona = load_persona(override)
+            self.assertEqual(len(persona['virtual_files']), 41)
+            staged = dict(materialize_virtual_files(persona, root / 'staged'))
+            receipt = staged[r'C:\Users\Morgan\Documents\Receipts\train-apr-2026.txt']
+            self.assertIn(b'24.50', receipt.read_bytes())
+            self.assertIn(r'C:\Users\Morgan\Documents\Receipts',
+                          desktop_directories('Morgan'))
+            config = make_speakeasy_config(persona, 'sample.exe', 10, 1000)
+            registry = RegistryManager(
+                HandleAllocator(), SpeakeasyConfig.model_validate(config).registry)
+            timezone = registry.get_key_from_config(
+                r'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\TimeZoneInformation')
+            self.assertEqual(timezone.get_value('TimeZoneKeyName').get_data(),
+                             'W. Europe Standard Time')
+            self.assertEqual(int(timezone.get_value('ActiveTimeBias').get_data()),
+                             0xFFFFFFC4)
+            shell = registry.get_key_from_config(
+                r'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders')
+            self.assertEqual(shell.get_value('Downloads').get_data(),
+                             r'C:\Users\Morgan\Downloads')
+            international = registry.get_key_from_config(
+                r'HKEY_CURRENT_USER\Control Panel\International')
+            self.assertEqual(international.get_value('sShortDate').get_data(),
+                             'dd.MM.yyyy')
+            self.assertEqual(international.get_value('sTimeFormat').get_data(),
+                             'HH:mm:ss')
+            with self.assertRaisesRegex(ValueError, 'utc_offset_minutes'):
+                override.write_text(json.dumps({'utc_offset_minutes': 'invalid'}),
+                                    encoding='utf-8')
+                load_persona(override)
+
     def test_overrides_refresh_dependent_guest_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

@@ -72,6 +72,14 @@ def load_persona(path: Path | None) -> dict:
         custom_current_dir = "current_dir" in supplied
         previous_name = persona["user_name"]
         persona.update(supplied)
+        offset = persona["utc_offset_minutes"]
+        if (not isinstance(offset, int) or isinstance(offset, bool) or
+                not -840 <= offset <= 840):
+            raise ValueError("Persona utc_offset_minutes must be between -840 and 840")
+        timezone_name = persona["timezone"]
+        if (not isinstance(timezone_name, str) or not timezone_name or
+                len(timezone_name) > 128 or "\0" in timezone_name):
+            raise ValueError("Persona timezone must be a nonempty Windows time zone name")
         if (persona["user_name"] != previous_name and not custom_current_dir and
                 persona["current_dir"].casefold() ==
                 rf"C:\Users\{previous_name}\Downloads".casefold()):

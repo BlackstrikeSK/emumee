@@ -92,6 +92,15 @@ class WinMessageTests(unittest.TestCase):
         self.messages.read_guard = self.guest.access
         self.messages.write_guard = self.guest.access
 
+    def test_libraryloader_loadstring_alias_is_registered(self):
+        hooks = {}
+        class Registrar:
+            def add_api_hook(self, callback, module, name, **kwargs):
+                hooks[(module, name)] = (callback.__name__, kwargs["argc"])
+        self.messages.install(Registrar())
+        self.assertEqual(hooks[("api-ms-win-core-libraryloader-l1-2-0",
+                                "LoadStringW")], hooks[("user32", "LoadStringW")])
+
     def format(self, flags, source=0, message_id=0, language=0,
                output=0x1000, capacity=256, arguments=0):
         return self.messages._format_w(self.guest, "kernel32.FormatMessageW", None,

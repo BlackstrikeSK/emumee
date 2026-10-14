@@ -109,6 +109,9 @@ class VirtualProcessBridge:
             emulator.add_api_hook(self._bulk_memory_api, "msvcrt", name, argc=3)
         emulator.add_api_hook(self._bulk_memory_api, "msvcrt", "_memicmp", argc=3,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._bulk_memory_api,
+                              "api-ms-win-crt-private-l1-1-0", "_o__memicmp",
+                              argc=3, call_conv=e_arch.CALL_CONV_CDECL)
         for name, argc in (("lstrlen", 1), ("lstrcmp", 2), ("lstrcmpi", 2),
                            ("lstrcpy", 2), ("lstrcpyn", 3), ("lstrcat", 2)):
             for suffix in ("A", "W"):
@@ -1641,6 +1644,8 @@ class VirtualProcessBridge:
     def _bulk_memory_api(self, emu, api_name, original, params):
         """Validate guest pointer ownership before Python-backed memory helpers run."""
         name = api_name.rsplit(".", 1)[-1].lower()
+        if name.startswith("_o_"):
+            name = name[3:]
         values = [int(value) for value in params]
         if name == "rtlzeromemory":
             ranges = [("destination", values[0])]

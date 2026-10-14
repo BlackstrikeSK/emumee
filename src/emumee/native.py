@@ -792,6 +792,7 @@ def run_native(
         guest_lsa.cleanup_process(emu, process)
         guest_identity.cleanup_process(process)
         crt_streams.cleanup_process(process)
+        crt_startup.cleanup_process(process)
         return virtual_files.cleanup_process(emu, process)
 
     virtual_process.process_cleanup_handler = cleanup_guest_process

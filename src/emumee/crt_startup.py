@@ -20,6 +20,8 @@ class CRTStartup:
         self.read_guard = None
         self.write_guard = None
         self.execute_guard = None
+        self._initial_env_by_process: dict[tuple[int, bool], int] = {}
+        self._argument_globals_by_process: dict[int, tuple[int, int, int]] = {}
 
     def install(self, emulator) -> None:
         for name, method in (("_initterm", self._initterm),
@@ -30,6 +32,121 @@ class CRTStartup:
                               argc=5, call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._getmainargs, "msvcrt", "__getmainargs",
                               argc=5, call_conv=e_arch.CALL_CONV_CDECL)
+        for module in ("api-ms-win-crt-private-l1-1-0", "ucrtbase"):
+            for name, wide in (("_o__get_initial_wide_environment", True),
+                               ("_o__get_initial_narrow_environment", False),
+                               ("_get_initial_wide_environment", True),
+                               ("_get_initial_narrow_environment", False)):
+                emulator.add_api_hook(self._initial_environment, module, name,
+                                      argc=0, call_conv=e_arch.CALL_CONV_CDECL)
+            for name in ("_o___p___argc", "_o___p___argv", "_o___p___wargv",
+                         "__p___argc", "__p___argv", "__p___wargv"):
+                emulator.add_api_hook(self._argument_global, module, name,
+                                      argc=0, call_conv=e_arch.CALL_CONV_CDECL)
+
+    def _argument_global(self, emu, api_name, _original, _params) -> int:
+        process = emu.get_current_process()
+        if process is None:
+            return 0
+        owner = id(process)
+        addresses = self._argument_globals_by_process.get(owner)
+        if addresses is None:
+            arguments = list(emu.get_argv())
+            if len(arguments) > MAX_ARGUMENTS:
+                self.unsupported.append(f"{api_name}: argument count exceeds limit")
+                return 0
+            width = emu.get_ptr_size()
+            encoded = (
+                [(str(arg) + "\0").encode("cp1252", errors="replace")
+                 for arg in arguments],
+                [(str(arg) + "\0").encode("utf-16le", errors="replace")
+                 for arg in arguments],
+            )
+            array_size = width * (len(arguments) + 1)
+            total = 3 * width + 2 * array_size + sum(
+                len(item) for group in encoded for item in group)
+            if total > MAX_STARTUP_BYTES:
+                self.unsupported.append(f"{api_name}: argument bytes exceed limit")
+                return 0
+            base = 0
+            try:
+                base = emu.mem_map(total, tag="api.ucrt.argument_globals",
+                                   perms=common.PERM_MEM_RW, process=process)
+                narrow_array = base + 3 * width
+                wide_array = narrow_array + array_size
+                cursor = wide_array + array_size
+                emu.mem_write(base, struct.pack('<I', len(arguments)))
+                emu.mem_write(base + width, narrow_array.to_bytes(width, 'little'))
+                emu.mem_write(base + 2 * width, wide_array.to_bytes(width, 'little'))
+                for array, strings in ((narrow_array, encoded[0]),
+                                       (wide_array, encoded[1])):
+                    for index, item in enumerate(strings):
+                        emu.mem_write(array + index * width,
+                                      cursor.to_bytes(width, 'little'))
+                        emu.mem_write(cursor, item)
+                        cursor += len(item)
+                    emu.mem_write(array + len(strings) * width, b'\0' * width)
+            except Exception:
+                if base:
+                    emu.mem_free(base)
+                self.unsupported.append(f"{api_name}: guest argument allocation failed")
+                return 0
+            addresses = (base, base + width, base + 2 * width)
+            self._argument_globals_by_process[owner] = addresses
+        if api_name.endswith('wargv'):
+            return addresses[2]
+        if api_name.endswith('argv'):
+            return addresses[1]
+        return addresses[0]
+
+    def _initial_environment(self, emu, api_name, _original, _params) -> int:
+        process = emu.get_current_process()
+        if process is None:
+            return 0
+        wide = "wide" in api_name
+        key = (id(process), wide)
+        if key in self._initial_env_by_process:
+            return self._initial_env_by_process[key]
+        environment = emu.get_env()
+        if len(environment) > MAX_ARGUMENTS:
+            self.unsupported.append(f"{api_name}: environment entry limit exceeded")
+            return 0
+        encoding = "utf-16le" if wide else "cp1252"
+        strings = [(f"{name}={value}\0").encode(encoding, errors="replace")
+                   for name, value in environment.items()]
+        width = emu.get_ptr_size()
+        array_size = width * (len(strings) + 1)
+        total = array_size + sum(map(len, strings))
+        if total > MAX_STARTUP_BYTES:
+            self.unsupported.append(f"{api_name}: environment byte limit exceeded")
+            return 0
+        address = 0
+        try:
+            address = emu.mem_map(max(total, width), tag="api.ucrt.initial_env",
+                                  perms=common.PERM_MEM_RW, process=process)
+            cursor = address + array_size
+            for index, value in enumerate(strings):
+                emu.mem_write(address + index * width,
+                              cursor.to_bytes(width, "little"))
+                emu.mem_write(cursor, value)
+                cursor += len(value)
+            emu.mem_write(address + len(strings) * width, b"\0" * width)
+        except Exception:
+            if address:
+                emu.mem_free(address)
+            self.unsupported.append(f"{api_name}: guest environment allocation failed")
+            return 0
+        self._initial_env_by_process[key] = address
+        self.events.append({"event": "crt_initial_environment",
+                            "encoding": encoding, "environment_count": len(strings)})
+        return address
+
+    def cleanup_process(self, process) -> None:
+        owner = id(process)
+        self._argument_globals_by_process.pop(owner, None)
+        for key in tuple(self._initial_env_by_process):
+            if key[0] == owner:
+                self._initial_env_by_process.pop(key, None)
 
     def attach(self, emu) -> None:
         if emu.get_ptr_size() != 4:

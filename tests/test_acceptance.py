@@ -1266,7 +1266,7 @@ class EmumeeAcceptance(unittest.TestCase):
         self.assertEqual(len(called), 2)
         self.assertEqual(len(stopped), 5)
 
-    def test_dispatch_guard_stops_unhooked_api_handler_foreign_read(self):
+    def test_dispatch_guard_stops_environment_handler_foreign_read(self):
         for arch in ("x86", "x64"):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
@@ -1309,7 +1309,8 @@ class EmumeeAcceptance(unittest.TestCase):
                 calls = [event for event in report["entry_points"][0]["events"]
                          if event.get("api_name") == "kernel32.GetEnvironmentVariableA"]
                 self.assertEqual(len(calls), 1)
-                self.assertEqual(calls[0]["ret_val"], "0x5")
+                # GetEnvironmentVariable returns copied characters without NUL.
+                self.assertEqual(calls[0]["ret_val"], "0x4")
                 self.assertFalse(any(event["event"] == "virtual_handler_memory_denied"
                                      for event in report["virtual_process_events"]))
                 if arch == "x64":

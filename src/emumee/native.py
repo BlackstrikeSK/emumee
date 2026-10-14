@@ -28,7 +28,7 @@ from .winenvironment import GuestEnvironmentBlocks
 from .heap_checks import GuestHeapChecks
 from .cpu import VirtualCPU
 from .identity import GuestIdentity
-from .guest_programs import hostname_exe
+from .guest_programs import hostname_exe, whoami_exe
 from .network import NetworkBridge
 from .pe import InvalidSample, SampleInfo, inspect_pe
 from .persona import make_speakeasy_config, materialize_virtual_files
@@ -665,14 +665,17 @@ def run_native(
         persona_sources[str(host_path)] = persona["virtual_files"][index]["text"].encode("utf-8")
     program_dir = run_dir / "persona-programs"
     program_dir.mkdir(parents=True, exist_ok=True)
-    hostname_path = program_dir / "hostname.exe"
-    hostname_bytes = hostname_exe(info.architecture == "x64")
-    hostname_path.write_bytes(hostname_bytes)
-    cfg["filesystem"]["files"].insert(0, {
-        "mode": "full_path", "emu_path": r"C:\Windows\System32\hostname.exe",
-        "path": str(hostname_path),
-    })
-    persona_sources[str(hostname_path)] = hostname_bytes
+    for name, payload in (
+            ("hostname.exe", hostname_exe(info.architecture == "x64")),
+            ("whoami.exe", whoami_exe(info.architecture == "x64",
+                                      persona["hostname"]))):
+        host_path = program_dir / name
+        host_path.write_bytes(payload)
+        cfg["filesystem"]["files"].insert(0, {
+            "mode": "full_path", "emu_path": r"C:\Windows\System32" + "\\" + name,
+            "path": str(host_path),
+        })
+        persona_sources[str(host_path)] = payload
     input_dir = run_dir / "inputs"
     input_dir.mkdir(parents=True, exist_ok=True)
     mapped_guest_paths: set[str] = set()

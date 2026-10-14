@@ -7,6 +7,21 @@ import struct
 
 def hostname_exe(is_x64: bool) -> bytes:
     """Build a PE that calls GetComputerNameA and writes it to guest stdout."""
+    return _identity_exe(is_x64, "hostname", "")
+
+
+def whoami_exe(is_x64: bool, hostname: str) -> bytes:
+    """Build a PE that prints the local computer and guest USERNAME."""
+    return _identity_exe(is_x64, "whoami", hostname)
+
+
+def _identity_exe(is_x64: bool, kind: str, hostname: str) -> bytes:
+    if kind not in ("hostname", "whoami"):
+        raise ValueError("unknown guest utility")
+    prefix = ((hostname + "\\").encode("cp437", errors="replace")
+              if kind == "whoami" else b"")
+    if len(prefix) > 80:
+        raise ValueError("guest identity prefix exceeds buffer")
     machine = 0x8664 if is_x64 else 0x14C
     base = 0x190000000 if is_x64 else 0x600000
     optional_size = 0xF0 if is_x64 else 0xE0
@@ -46,24 +61,39 @@ def hostname_exe(is_x64: bool) -> bytes:
     struct.pack_into("<IIIIIIHHI", buf, sh + 8,
                      0x400, 0x2000, 0x400, 0x400, 0, 0, 0, 0, 0xC0000040)
 
-    # One exact kernel32 import descriptor; no wildcard or host DLL lookup.
+    # Exact guest imports; whoami uses Advapi32's token-backed user name.
     struct.pack_into("<IIIII", buf, 0x400, 0x2040, 0, 0, 0x20C0, 0x2080)
     buf[0x4C0:0x4CD] = b"KERNEL32.dll\0"
     step = 8 if is_x64 else 4
     name_at = 0x500
-    for index, name in enumerate((b"GetComputerNameA", b"GetStdHandle",
-                                  b"WriteFile", b"ExitProcess")):
+    if kind == "hostname":
+        imports = ((b"GetComputerNameA", 0x2040, 0x2080),
+                   (b"GetStdHandle", 0x2040 + step, 0x2080 + step),
+                   (b"WriteFile", 0x2040 + 2 * step, 0x2080 + 2 * step),
+                   (b"ExitProcess", 0x2040 + 3 * step, 0x2080 + 3 * step))
+        iat_rvas = [0x2080 + index * step for index in range(4)]
+    else:
+        struct.pack_into("<IIIII", buf, 0x414, 0x2060, 0, 0, 0x20D0, 0x20A0)
+        buf[0x4D0:0x4DD] = b"ADVAPI32.dll\0"
+        imports = ((b"GetStdHandle", 0x2040, 0x2080),
+                   (b"WriteFile", 0x2040 + step, 0x2080 + step),
+                   (b"ExitProcess", 0x2040 + 2 * step, 0x2080 + 2 * step),
+                   (b"GetUserNameA", 0x2060, 0x20A0))
+        iat_rvas = [0x20A0, 0x2080, 0x2080 + step, 0x2080 + 2 * step]
+    for name, int_rva, iat_rva in imports:
         rva = 0x2000 + name_at - 0x400
-        struct.pack_into("<Q" if is_x64 else "<I", buf, 0x440 + index * step, rva)
-        struct.pack_into("<Q" if is_x64 else "<I", buf, 0x480 + index * step, rva)
+        struct.pack_into("<Q" if is_x64 else "<I", buf, 0x400 + int_rva - 0x2000, rva)
+        struct.pack_into("<Q" if is_x64 else "<I", buf, 0x400 + iat_rva - 0x2000, rva)
         entry = b"\0\0" + name + b"\0"
         buf[name_at:name_at + len(entry)] = entry
         name_at += (len(entry) + 1) & ~1
-    struct.pack_into("<I", buf, 0x700, 128)
+    struct.pack_into("<I", buf, 0x700, 128 - len(prefix))
+    if kind == "whoami":
+        buf[0x600:0x600 + len(prefix)] = prefix
 
     code = bytearray()
     def call(index: int) -> None:
-        iat = 0x2080 + index * step
+        iat = iat_rvas[index]
         if is_x64:
             code.extend(b"\xff\x15" + struct.pack("<i", iat - (0x1000 + len(code) + 6)))
         else:
@@ -71,11 +101,20 @@ def hostname_exe(is_x64: bool) -> bytes:
 
     if is_x64:
         code.extend(b"\x48\x83\xec\x38")
-        code.extend(b"\x48\xb9" + struct.pack("<Q", base + 0x2200))
-        code.extend(b"\x48\xba" + struct.pack("<Q", base + 0x2300))
+        if kind == "hostname":
+            code.extend(b"\x48\xb9" + struct.pack("<Q", base + 0x2200))
+            code.extend(b"\x48\xba" + struct.pack("<Q", base + 0x2300))
+        else:
+            code.extend(b"\x48\xb9" + struct.pack("<Q", base + 0x2200 + len(prefix)))
+            code.extend(b"\x48\xba" + struct.pack("<Q", base + 0x2300))
         call(0)
         code.extend(b"\x85\xc0\x0f\x84\0\0\0\0")
         fail_jump = len(code) - 4
+        if kind == "whoami":
+            code.extend(b"\x49\xba" + struct.pack("<Q", base + 0x2300) +
+                        b"\x41\x8b\x02")
+            code.extend(b"\x83\xc0" + bytes([len(prefix) - 1]))
+            code.extend(b"\x41\x89\x02")
         code.extend(b"\xb9\xf5\xff\xff\xff")
         call(1)
         code.extend(b"\x48\x89\xc1")
@@ -90,11 +129,19 @@ def hostname_exe(is_x64: bool) -> bytes:
         code.extend(b"\xb9\x01\0\0\0")
         call(3)
     else:
-        code.extend(b"\x68" + struct.pack("<I", base + 0x2300))
-        code.extend(b"\x68" + struct.pack("<I", base + 0x2200))
+        if kind == "hostname":
+            code.extend(b"\x68" + struct.pack("<I", base + 0x2300))
+            code.extend(b"\x68" + struct.pack("<I", base + 0x2200))
+        else:
+            code.extend(b"\x68" + struct.pack("<I", base + 0x2300))
+            code.extend(b"\x68" + struct.pack("<I", base + 0x2200 + len(prefix)))
         call(0)
         code.extend(b"\x85\xc0\x0f\x84\0\0\0\0")
         fail_jump = len(code) - 4
+        if kind == "whoami":
+            code.extend(b"\xa1" + struct.pack("<I", base + 0x2300))
+            code.extend(b"\x83\xc0" + bytes([len(prefix) - 1]))
+            code.extend(b"\xa3" + struct.pack("<I", base + 0x2300))
         code.extend(b"\x68\xf5\xff\xff\xff")
         call(1)
         code.extend(b"\x89\xc3\x6a\0")

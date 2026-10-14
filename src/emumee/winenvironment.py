@@ -18,6 +18,9 @@ class GuestEnvironmentBlocks:
     def install(self, emulator) -> None:
         emulator.add_api_hook(self._get, "kernel32", "GetEnvironmentStrings*", argc=0)
         emulator.add_api_hook(self._free, "kernel32", "FreeEnvironmentStrings*", argc=1)
+        for suffix in ("A", "W"):
+            emulator.add_api_hook(self._get_variable, "kernel32",
+                                  "GetEnvironmentVariable" + suffix, argc=3)
 
     @staticmethod
     def _wide(api_name: str) -> bool:
@@ -86,3 +89,44 @@ class GuestEnvironmentBlocks:
         self.events.append({"event": "environment_block_freed", "api": api_name,
                             "address": hex(address)})
         return 1
+
+    def _get_variable(self, emu, api_name, _original, params) -> int:
+        name_ptr, buffer, capacity = (int(value) for value in params)
+        if not name_ptr:
+            emu.set_last_error(87)
+            return 0
+        wide = self._wide(api_name)
+        try:
+            name = emu.read_mem_string(name_ptr, 2 if wide else 1)
+        except Exception:
+            emu.set_last_error(998)
+            return 0
+        if not name or len(name) > 32767 or "=" in name:
+            emu.set_last_error(87)
+            return 0
+        env = {str(key).casefold(): str(value) for key, value in emu.get_env().items()}
+        value = env.get(name.casefold())
+        if value is None:
+            emu.set_last_error(203)  # ERROR_ENVVAR_NOT_FOUND
+            return 0
+        if "\0" in value or len(value) > 32767:
+            emu.set_last_error(87)
+            return 0
+        encoding = "utf-16-le" if wide else "cp437"
+        encoded = value.encode(encoding, errors="replace")
+        width = 2 if wide else 1
+        copied = len(encoded) // width
+        needed = copied + 1
+        if capacity < needed:
+            emu.set_last_error(122)  # ERROR_INSUFFICIENT_BUFFER
+            return needed
+        if not buffer:
+            emu.set_last_error(87)
+            return 0
+        try:
+            emu.mem_write(buffer, encoded + b"\0" * width)
+        except Exception:
+            emu.set_last_error(998)
+            return 0
+        emu.set_last_error(0)
+        return copied

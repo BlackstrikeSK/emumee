@@ -15,7 +15,7 @@ from speakeasy.windows.regman import RegistryManager
 from speakeasy.windows.fileman import File as GuestFile
 
 from emumee.artifacts import ArtifactCatalog
-from emumee.guest_programs import hostname_exe
+from emumee.guest_programs import hostname_exe, whoami_exe
 from emumee.identity import GuestIdentity
 from emumee.native import run_native
 from emumee.pe import inspect_pe
@@ -23,6 +23,7 @@ from emumee.persona import load_persona, make_speakeasy_config, materialize_virt
 from emumee.persona_content import desktop_directories
 from emumee.virtualfs import VirtualFileBridge
 from emumee.virtualprocess import VirtualProcessBridge
+from emumee.winenvironment import GuestEnvironmentBlocks
 from tests.fixtures.build_native import (build as build_test_pe,
                                          build_host_process_probe,
                                          build_host_winexec_probe)
@@ -170,12 +171,93 @@ class PersonaContentTests(unittest.TestCase):
                 self.assertEqual(result["console_output"]["stdout"], persona["hostname"])
                 report = json.loads((root / result["engine_report"]).read_text())
                 self.assertEqual(len(report["entry_points"]), 2)
+
+    def test_default_whoami_program_executes_for_custom_persona(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                custom = root / "persona.json"
+                custom.write_text(json.dumps({"hostname": "DESKTOP-Q3R8V2A",
+                                              "user_name": "Morgan"}), encoding="utf-8")
+                persona = load_persona(custom)
+                utility = whoami_exe(arch == "x64", persona["hostname"])
+                self.assertEqual(inspect_pe(utility, "whoami.exe").architecture, arch)
+                parent = bytearray(build_host_process_probe(machine, "unused-marker"))
+                guest_path = r"C:\Windows\System32\whoami.exe"
+                encoded = (guest_path + "\0").encode("utf-16-le")
+                parent[0x500:0x700] = b"\0" * 0x200
+                parent[0x700:0x900] = b"\0" * 0x200
+                parent[0x500:0x500 + len(encoded)] = encoded
+                parent[0x700:0x700 + len(encoded)] = encoded
+                payload = bytes(parent)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"), persona,
+                                    root / "run", [], 10, 100_000,
+                                    guest_env={"USERNAME": "Eve"})
+                self.assertFalse(result["errors"])
+                self.assertEqual(result["console_output"]["stdout"],
+                                 r"DESKTOP-Q3R8V2A\Morgan")
+                report = json.loads(((root / "run") /
+                                     result["engine_report"]).read_text())
+                self.assertEqual(len(report["entry_points"]), 2)
+
+    def test_environment_variable_api_checks_size_and_missing_name(self):
+        bridge = GuestEnvironmentBlocks()
+        names = {0x1000: "USERNAME", 0x1100: "ABSENT"}
+        writes, errors = {}, []
+        emu = SimpleNamespace(
+            read_mem_string=lambda ptr, width: names[ptr],
+            get_env=lambda: {"username": "Morgan"},
+            mem_write=lambda ptr, data: writes.__setitem__(ptr, data),
+            set_last_error=errors.append,
+        )
+        self.assertEqual(bridge._get_variable(
+            emu, "kernel32.GetEnvironmentVariableW", None, [0x1000, 0x2000, 2]), 7)
+        self.assertEqual(errors[-1], 122)
+        self.assertEqual(writes, {})
+        self.assertEqual(bridge._get_variable(
+            emu, "kernel32.GetEnvironmentVariableW", None, [0x1000, 0x2000, 7]), 6)
+        self.assertEqual(writes[0x2000], "Morgan\0".encode("utf-16-le"))
+        self.assertEqual(bridge._get_variable(
+            emu, "kernel32.GetEnvironmentVariableA", None, [0x1100, 0x2000, 32]), 0)
+        self.assertEqual(errors[-1], 203)
+
+    def test_guest_pe_environment_variable_returns_required_length(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                base = 0x400000 if arch == "x86" else 0x140000000
+                image = bytearray(build_test_pe(machine))
+                image[0x470:0x490] = (b"\0\0GetEnvironmentVariableA\0").ljust(0x20, b"\0")
+                image[0x580:0x589] = b"USERNAME\0"
+                if arch == "x64":
+                    code = bytearray(b"\x48\x83\xec\x28\x48\xb9" +
+                                     struct.pack("<Q", base + 0x2180) + b"\x48\xba" +
+                                     struct.pack("<Q", base + 0x21A0) +
+                                     b"\x41\xb8\x02\0\0\0")
+                    code.extend(b"\xff\x15" + struct.pack(
+                        "<i", 0x2040 - (0x1000 + len(code) + 6)))
+                    code.extend(b"\x48\x83\xc4\x28\xc3")
+                else:
+                    code = (b"\x6a\x02\x68" + struct.pack("<I", base + 0x21A0) +
+                            b"\x68" + struct.pack("<I", base + 0x2180) +
+                            b"\xff\x15" + struct.pack("<I", base + 0x2040) + b"\xc3")
+                image[0x200:0x200 + len(code)] = code
+                payload = bytes(image)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "env.exe"),
+                                    load_persona(None), root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event.get("api_name") ==
+                                    "kernel32.GetEnvironmentVariableA" and
+                                    event.get("ret_val") == "0x5"
+                                    for entry in report["entry_points"]
+                                    for event in entry["events"]))
     def test_default_guest_has_coherent_files_registry_and_processes(self):
         persona = load_persona(None)
         config = make_speakeasy_config(persona, "sample.exe", 10, 1000)
         parsed = SpeakeasyConfig.model_validate(config)
         self.assertGreaterEqual(len(persona["virtual_files"]), 20)
-        self.assertGreaterEqual(len(persona["registry_keys"]), 40)
+        self.assertGreaterEqual(len(persona["registry_keys"]), 45)
         self.assertGreaterEqual(len(config["processes"]), 15)
         self.assertEqual(config["filesystem"]["files"], [])
         self.assertEqual([drive["root_path"] for drive in config["drives"]], ["C:\\"])
@@ -197,6 +279,13 @@ class PersonaContentTests(unittest.TestCase):
             self.assertIn(r"C:\Users\Alex\Documents\readme.txt", staged)
             self.assertIn(b"localhost", staged[
                 r"C:\Windows\System32\drivers\etc\hosts"].read_bytes())
+            self.assertIn("bookmark_bar", json.loads(staged[
+                r"C:\Users\Alex\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"].read_text())["roots"])
+            run_mru = next(item for item in persona["registry_keys"]
+                           if item["path"].endswith(r"\Explorer\RunMRU"))
+            self.assertIn(r"C:\Users\Alex\Documents\Work\meeting-notes.txt",
+                          next(value["data"] for value in run_mru["values"]
+                               if value["name"] == "a"))
 
     def test_overrides_refresh_dependent_guest_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -223,6 +312,11 @@ class PersonaContentTests(unittest.TestCase):
                                   if v["name"] == "RegisteredOwner"), "Morgan")
             self.assertTrue(any(item["path"].endswith("\\" + persona["user_sid"])
                                 for item in persona["registry_keys"]))
+            run_mru = next(item for item in persona["registry_keys"]
+                           if item["path"].endswith(r"\Explorer\RunMRU"))
+            self.assertIn(r"C:\Users\Morgan\Documents",
+                          next(value["data"] for value in run_mru["values"]
+                               if value["name"] == "a"))
 
     def test_custom_files_and_registry_are_preserved(self):
         with tempfile.TemporaryDirectory() as directory:

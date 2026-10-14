@@ -29,11 +29,12 @@ TYPE_NAMES = {"REG_SZ": REG_SZ, "REG_EXPAND_SZ": REG_EXPAND_SZ,
 
 
 class VirtualRegistryBridge:
-    def __init__(self, catalog: ArtifactCatalog):
+    def __init__(self, catalog: ArtifactCatalog, filetime_ticks: int = 0):
         self.catalog = catalog
+        self.filetime_ticks = filetime_ticks
         self.events: list[dict] = []
         self.unsupported: list[str] = []
-        self.written_values: dict[tuple[int, str], tuple[int, bytes]] = {}
+        self.written_values: dict[tuple[str, str], tuple[int, bytes, str, bool]] = {}
         self.handle_owners: dict[int, int] = {}
 
     def install(self, emulator) -> None:
@@ -41,6 +42,10 @@ class VirtualRegistryBridge:
             for module in ("advapi32", "api-ms-win-core-registry-l1-1-0"):
                 emulator.add_api_hook(self._set_value, module, "RegSetValueEx" + suffix, argc=6)
                 emulator.add_api_hook(self._query_value, module, "RegQueryValueEx" + suffix, argc=6)
+                emulator.add_api_hook(self._enum_value, module, "RegEnumValue" + suffix, argc=8)
+                emulator.add_api_hook(self._enum_key_ex, module, "RegEnumKeyEx" + suffix, argc=8)
+                emulator.add_api_hook(self._query_info_key, module, "RegQueryInfoKey" + suffix,
+                                      argc=12)
                 emulator.add_api_hook(self._get_value, module, "RegGetValue" + suffix, argc=7)
                 emulator.add_api_hook(self._create_key, module, "RegCreateKey" + suffix, argc=3)
                 emulator.add_api_hook(self._create_key_ex, module, "RegCreateKeyEx" + suffix, argc=9)
@@ -86,7 +91,36 @@ class VirtualRegistryBridge:
         if (handle not in PREDEFINED_HANDLES and
                 self.handle_owners.get(handle) != self._guest_owner(emu)):
             return None
-        return emu.reg_get_key(handle)
+        key = emu.reg_get_key(handle)
+        if key is not None:
+            self._merge_written_values(key)
+        return key
+
+    def _merge_written_values(self, key) -> None:
+        path = key.get_path().casefold()
+        for (written_path, _), (value_type, raw, name, wide) in self.written_values.items():
+            exists = any(value.get_name().casefold() == name.casefold() or
+                         (not name and value.get_name().casefold() == "default")
+                         for value in key.get_values())
+            if written_path == path and not exists:
+                if value_type in (REG_SZ, REG_EXPAND_SZ, REG_MULTI_SZ):
+                    data = raw.decode("utf-16le" if wide else "cp1252",
+                                      errors="replace").rstrip("\0")
+                elif value_type in (REG_DWORD, REG_QWORD):
+                    data = int.from_bytes(raw, "little")
+                else:
+                    data = raw
+                key.create_value(name, value_type, data)
+
+    def _written_value(self, key, name: str, wide: bool) -> tuple[int, bytes] | None:
+        stored = self.written_values.get((key.get_path().casefold(), name.casefold()))
+        if stored is None:
+            return None
+        value_type, raw, _, source_wide = stored
+        if value_type in (REG_SZ, REG_EXPAND_SZ, REG_MULTI_SZ) and source_wide != wide:
+            value = raw.decode("utf-16le" if source_wide else "cp1252", errors="replace")
+            raw = value.encode("utf-16le" if wide else "cp1252", errors="replace")
+        return value_type, raw
 
     def cleanup_process(self, emu, process) -> int:
         """Retire open handles issued to an exiting guest, preserving key data."""
@@ -137,6 +171,8 @@ class VirtualRegistryBridge:
         key = self._exact_key(manager, path)
         if key is None and self._preset_key(manager, path):
             key = manager.get_key_from_config(path)
+        if key is not None:
+            self._merge_written_values(key)
         if key is None and not create:
             descendants = (item.get_path() for item in manager.keys)
             preset_descendants = (item.path for item in
@@ -290,7 +326,8 @@ class VirtualRegistryBridge:
         status = int(original(params))
         event["status"] = status
         if status == 0:
-            self.written_values[(id(key), name.casefold())] = (value_type, raw)
+            self.written_values[(key.get_path().casefold(), name.casefold())] = (
+                value_type, raw, name, api_name.endswith("W"))
             if value_type == REG_BINARY and raw:
                 artifact = self.catalog.add(raw, "registry_value",
                                             guest_path=key.get_path() + "\\" + name)
@@ -360,6 +397,7 @@ class VirtualRegistryBridge:
                 self.events.append({"event": "virtual_registry_query", "api": api_name,
                                     "key": path or "", "status": 2})
                 return 2
+            self._merge_written_values(key)
         name = self._name(emu, api_name, name_ptr)
         value = key.get_value(name) if name else next(
             (item for item in key.get_values()
@@ -367,8 +405,8 @@ class VirtualRegistryBridge:
         override = None
         required_size = None
         if value is not None:
-            written = self.written_values.get((id(key), name.casefold()))
-            encoded = written or self._configured_value(value, api_name.endswith("W"))
+            encoded = (self._written_value(key, name, api_name.endswith("W")) or
+                       self._configured_value(value, api_name.endswith("W")))
             code = encoded[0] if encoded else None
             if code == REG_EXPAND_SZ and not flags & 0x10000000:
                 override = self._expanded_value(emu, encoded[1], api_name.endswith("W"))
@@ -422,7 +460,7 @@ class VirtualRegistryBridge:
         if value is None:
             event["status"] = 2  # ERROR_FILE_NOT_FOUND
             return 2
-        encoded = encoded_override or self.written_values.get((id(key), name.casefold()))
+        encoded = encoded_override or self._written_value(key, name, api_name.endswith("W"))
         if encoded is None:
             encoded = self._configured_value(value, api_name.endswith("W"))
         if encoded is None:
@@ -445,4 +483,183 @@ class VirtualRegistryBridge:
         if data_ptr and raw:
             emu.mem_write(data_ptr, raw)
         event.update({"type": value_type, "size": required_size, "status": 0})
+        return 0
+
+    @staticmethod
+    def _direct_subkeys(manager, parent_path: str) -> list[str]:
+        prefix = parent_path.rstrip("\\") + "\\"
+        names: dict[str, str] = {}
+        configured = getattr(getattr(manager, "config", None), "keys", [])
+        for path in (item.get_path() for item in manager.keys):
+            if path.casefold().startswith(prefix.casefold()):
+                child = path[len(prefix):].split("\\", 1)[0]
+                names.setdefault(child.casefold(), child)
+        for item in configured:
+            path = item.path
+            if path.casefold().startswith(prefix.casefold()):
+                child = path[len(prefix):].split("\\", 1)[0]
+                names.setdefault(child.casefold(), child)
+        return list(names.values())
+
+    def _enum_value(self, emu, api_name, original, params):
+        handle, index, name_ptr, name_size_ptr, reserved, type_ptr, data_ptr, data_size_ptr = map(int, params)
+        handle = self._canonical_handle(handle)
+        key = self._owned_key(emu, handle)
+        event = {"event": "virtual_registry_value_enum", "api": api_name,
+                 "key": key.get_path() if key else "", "index": index, "status": 0}
+        self.events.append(event)
+        if key is None:
+            event["status"] = 6
+            return 6
+        if not name_ptr or not name_size_ptr or reserved or (data_ptr and not data_size_ptr):
+            event["status"] = 87
+            return 87
+        values = key.get_values()
+        if index >= len(values):
+            event["status"] = 259  # ERROR_NO_MORE_ITEMS
+            return 259
+        value = values[index]
+        wide = api_name.endswith("W")
+        unit = 2 if wide else 1
+        name = value.get_name()
+        name_image = (name + "\0").encode("utf-16le" if wide else "cp1252",
+                                           errors="replace")
+        name_units = len(name_image) // unit - 1
+        encoded = self._written_value(key, name, wide)
+        if encoded is None:
+            encoded = self._configured_value(value, wide)
+        if encoded is None:
+            event["status"] = 50
+            self.unsupported.append(f"{api_name}: unsupported registry value {key.get_path()}\\{name}")
+            return 50
+        value_type, raw = encoded
+        try:
+            name_capacity = int.from_bytes(emu.mem_read(name_size_ptr, 4), "little")
+            data_capacity = (int.from_bytes(emu.mem_read(data_size_ptr, 4), "little")
+                             if data_ptr else 0)
+            if data_size_ptr:
+                emu.mem_write(data_size_ptr, struct.pack("<I", len(raw)))
+            if type_ptr:
+                emu.mem_write(type_ptr, struct.pack("<I", value_type))
+            if name_capacity <= name_units:
+                event.update({"name": name, "size": len(raw), "status": 234})
+                return 234
+            emu.mem_write(name_ptr, name_image)
+            emu.mem_write(name_size_ptr, struct.pack("<I", name_units))
+            if data_ptr and data_capacity < len(raw):
+                event.update({"name": name, "size": len(raw), "status": 234})
+                return 234
+            if data_ptr and raw:
+                emu.mem_write(data_ptr, raw)
+        except Exception:
+            event["status"] = 998  # ERROR_NOACCESS
+            return 998
+        event.update({"name": name, "type": value_type, "size": len(raw)})
+        return 0
+
+    def _enum_key_ex(self, emu, api_name, original, params):
+        handle, index, name_ptr, name_size_ptr, reserved, class_ptr, class_size_ptr, time_ptr = map(int, params)
+        handle = self._canonical_handle(handle)
+        key = self._owned_key(emu, handle)
+        event = {"event": "virtual_registry_key_enum", "api": api_name,
+                 "key": key.get_path() if key else "", "index": index, "status": 0}
+        self.events.append(event)
+        if key is None:
+            event["status"] = 6
+            return 6
+        if not name_ptr or not name_size_ptr or reserved or (class_ptr and not class_size_ptr):
+            event["status"] = 87
+            return 87
+        children = self._direct_subkeys(emu.regman, key.get_path())
+        if index >= len(children):
+            event["status"] = 259
+            return 259
+        name = children[index]
+        wide = api_name.endswith("W")
+        unit = 2 if wide else 1
+        image = (name + "\0").encode("utf-16le" if wide else "cp1252",
+                                      errors="replace")
+        name_units = len(image) // unit - 1
+        try:
+            name_capacity = int.from_bytes(emu.mem_read(name_size_ptr, 4), "little")
+            class_capacity = (int.from_bytes(emu.mem_read(class_size_ptr, 4), "little")
+                              if class_ptr else 0)
+            if name_capacity <= name_units or (class_ptr and not class_capacity):
+                event.update({"name": name, "status": 234})
+                return 234
+            emu.mem_write(name_ptr, image)
+            emu.mem_write(name_size_ptr, struct.pack("<I", name_units))
+            if class_ptr:
+                emu.mem_write(class_ptr, b"\0" * unit)
+                emu.mem_write(class_size_ptr, struct.pack("<I", 0))
+            if time_ptr:
+                emu.mem_write(time_ptr, struct.pack("<Q", self.filetime_ticks))
+        except Exception:
+            event["status"] = 998
+            return 998
+        event["name"] = name
+        return 0
+
+    def _query_info_key(self, emu, api_name, original, params):
+        (handle, class_ptr, class_size_ptr, reserved, subkeys_ptr, max_subkey_ptr,
+         max_class_ptr, values_ptr, max_value_name_ptr, max_value_data_ptr,
+         security_ptr, time_ptr) = map(int, params)
+        handle = self._canonical_handle(handle)
+        key = self._owned_key(emu, handle)
+        event = {"event": "virtual_registry_key_info", "api": api_name,
+                 "key": key.get_path() if key else "", "status": 0}
+        self.events.append(event)
+        if key is None:
+            event["status"] = 6
+            return 6
+        if reserved or (class_ptr and not class_size_ptr):
+            event["status"] = 87
+            return 87
+        wide = api_name.endswith("W")
+        codec = "utf-16le" if wide else "cp1252"
+        unit = 2 if wide else 1
+        subkeys = self._direct_subkeys(emu.regman, key.get_path())
+        values = key.get_values()
+        encoded = []
+        for value in values:
+            raw = self._written_value(key, value.get_name(), wide)
+            if raw is None:
+                raw = self._configured_value(value, wide)
+            if raw is None:
+                event["status"] = 50
+                self.unsupported.append(f"{api_name}: unsupported registry value "
+                                        f"{key.get_path()}\\{value.get_name()}")
+                return 50
+            encoded.append(raw)
+        try:
+            if class_ptr:
+                capacity = int.from_bytes(emu.mem_read(class_size_ptr, 4), "little")
+                if not capacity:
+                    emu.mem_write(class_size_ptr, struct.pack("<I", 0))
+                    event["status"] = 234
+                    return 234
+                emu.mem_write(class_ptr, b"\0" * unit)
+            if class_size_ptr:
+                emu.mem_write(class_size_ptr, struct.pack("<I", 0))
+            output = (
+                (subkeys_ptr, len(subkeys)),
+                (max_subkey_ptr, max((len(name.encode(codec, errors="replace")) // unit
+                                      for name in subkeys), default=0)),
+                (max_class_ptr, 0),
+                (values_ptr, len(values)),
+                (max_value_name_ptr,
+                 max((len(value.get_name().encode(codec, errors="replace")) // unit
+                      for value in values), default=0)),
+                (max_value_data_ptr, max((len(raw) for _, raw in encoded), default=0)),
+                (security_ptr, 0),
+            )
+            for pointer, number in output:
+                if pointer:
+                    emu.mem_write(pointer, struct.pack("<I", number))
+            if time_ptr:
+                emu.mem_write(time_ptr, struct.pack("<Q", self.filetime_ticks))
+        except Exception:
+            event["status"] = 998
+            return 998
+        event.update({"subkeys": len(subkeys), "values": len(values)})
         return 0

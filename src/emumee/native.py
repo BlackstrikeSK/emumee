@@ -741,7 +741,7 @@ def run_native(
                                     clock.filetime_ticks(),
                                     desktop_directories(persona["user_name"]))
     bridge = NetworkBridge(catalog, virtual_files)
-    virtual_registry = VirtualRegistryBridge(catalog)
+    virtual_registry = VirtualRegistryBridge(catalog, clock.filetime_ticks())
     virtual_process = VirtualProcessBridge(catalog, persona_sources)
     for observer in (bridge, virtual_files, virtual_registry, virtual_process):
         observer.events = _PositionedEvents(se, event_sequence)

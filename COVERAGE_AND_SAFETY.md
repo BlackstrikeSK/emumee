@@ -51,9 +51,10 @@ state. This is a setup snapshot, not a dynamic Service Control Manager.
 The included `reg.exe` is built from the repository's small guest C source
 without a C runtime. It calls guest `RegOpenKeyExW`, `RegEnumValueW`, and
 `RegEnumKeyExW`, and `RegQueryValueExW`, so local key queries read current guest
-registry values and immediate subkeys. Quoted paths, named `/v` queries,
-default `/ve` values, and custom persona keys worked on x86 and x64. `reg add`
-and `/s` exited 87, and missing keys or values returned error 2. It neither queries
+registry values and subkeys. Quoted paths, named `/v` queries, default `/ve`
+values, and recursive `/s` queries work on x86 and x64. Recursion is bounded
+to 24 levels, 512 keys, and 256 Ki characters of output. `reg add` and `/f`
+exit 87, and missing keys or values return error 2. It neither queries
 nor modifies the host registry. A locally staged Microsoft `reg.exe` remains
 a separate compatibility path with additional Windows command behavior.
 

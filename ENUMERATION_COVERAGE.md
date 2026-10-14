@@ -26,7 +26,7 @@ never change host state.
 | [`net.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user) | Yes | `user`, `user <persona user>`, `localgroup`, `localgroup administrators`, `localgroup users` |
 | `net1.exe` | Yes | Same modeled local account and group views as `net.exe` |
 | [`sc.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/sc-query) | Yes | `query`, `query state= all`, and named queries for up to three modeled services |
-| [`reg.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg-query) | Yes | `query <local key>`, `/v <value>`, `/ve` using guest registry APIs |
+| [`reg.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg-query) | Yes | `query <local key>`, `/v <value>`, `/ve`, `/s` using guest registry APIs |
 
 ## Tracked gaps
 
@@ -40,7 +40,7 @@ but it is not included by default unless the table above says so.
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | `-ano` | Guest socket, listener, and PID state that changes during the run. |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with service, device, and driver file probes. |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | `/query` | A virtual scheduled-task store and query semantics. |
-| `reg.exe` beyond the listed forms | `/s`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
+| `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
 | `sc.exe` beyond the listed forms | More query options and service changes | A dynamic Service Control Manager model and parser. |
 
 The included generated `arp.exe -a` uses the broadcast row from the guest
@@ -74,9 +74,10 @@ the first three services; the list forms cover all configured services.
 
 The included `reg.exe` is compiled from repository C source and calls guest
 registry APIs for any existing local key. It accepts quoted paths and displays
-current guest values and immediate subkeys; `/v` selects one named value and
-`/ve` selects the default value. `/s`, remote keys, and writes
-remain unmodeled. The packaged x86/x64 PEs import only guest Kernel32 and
+current guest values and immediate subkeys; `/v` selects one named value,
+`/ve` selects the default value, and `/s` traverses subkeys. Traversal is
+bounded to 24 levels, 512 keys, and 256 Ki characters of output. `/f`, remote
+keys, and writes remain unmodeled. The packaged x86/x64 PEs import only guest Kernel32 and
 Advapi32 APIs and do not invoke the host registry.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native

@@ -1,11 +1,21 @@
 /* Guest-only registry reader. Build with MSVC /NODEFAULTLIB; no host calls. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#pragma function(memcpy)
 
 static WCHAR arg[5][1024];
 static WCHAR name_buf[512];
 static BYTE data_buf[8192];
 static WCHAR line[2048];
+static DWORD emitted_chars;
+static DWORD visited_keys;
+
+void *__cdecl memcpy(void *destination, const void *source, size_t count) {
+    volatile BYTE *write = (volatile BYTE *)destination;
+    const volatile BYTE *read = (const volatile BYTE *)source;
+    for (size_t i = 0; i < count; ++i) write[i] = read[i];
+    return destination;
+}
 
 static DWORD length(const WCHAR *value) {
     DWORD count = 0;
@@ -39,7 +49,10 @@ static int root_prefix(const WCHAR *value, const WCHAR *prefix) {
 static void write_text(const WCHAR *value) {
     DWORD written = 0;
     DWORD size = length(value);
-    if (size) WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), value, size, &written, 0);
+    if (size > 262144 - emitted_chars) ExitProcess(ERROR_MORE_DATA);
+    emitted_chars += size;
+    if (size && !WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), value, size,
+                               &written, 0)) ExitProcess(GetLastError());
 }
 
 static void write_number(DWORD value) {
@@ -121,6 +134,48 @@ static void print_value(const WCHAR *name, DWORD kind, DWORD data_size) {
     write_text(L"\r\n");
 }
 
+static void query_tree(HKEY opened, const WCHAR *path, int recursive, DWORD depth) {
+    if (depth > 24 || ++visited_keys > 512) fail(ERROR_MORE_DATA);
+    write_text(L"\r\n");
+    write_text(path);
+    write_text(L"\r\n");
+    for (DWORD index = 0; index < 256; ++index) {
+        DWORD name_size = 511, data_size = sizeof(data_buf), kind = 0;
+        DWORD result = RegEnumValueW(opened, index, name_buf, &name_size, 0,
+                                     &kind, data_buf, &data_size);
+        if (result == ERROR_NO_MORE_ITEMS) break;
+        if (result != ERROR_SUCCESS) fail(result);
+        name_buf[name_size] = 0;
+        print_value(name_buf, kind, data_size);
+    }
+    for (DWORD index = 0; index < 256; ++index) {
+        DWORD name_size = 511;
+        DWORD result = RegEnumKeyExW(opened, index, name_buf, &name_size,
+                                     0, 0, 0, 0);
+        if (result == ERROR_NO_MORE_ITEMS) break;
+        if (result != ERROR_SUCCESS) fail(result);
+        name_buf[name_size] = 0;
+        DWORD path_size = length(path);
+        if (path_size + name_size + 2 > 1024) fail(ERROR_MORE_DATA);
+        WCHAR child_path[1024];
+        for (DWORD i = 0; i < path_size; ++i) child_path[i] = path[i];
+        child_path[path_size] = L'\\';
+        for (DWORD i = 0; i < name_size; ++i) child_path[path_size + 1 + i] = name_buf[i];
+        child_path[path_size + name_size + 1] = 0;
+        if (recursive) {
+            HKEY child = 0;
+            result = RegOpenKeyExW(opened, name_buf, 0, KEY_READ, &child);
+            if (result != ERROR_SUCCESS) fail(result);
+            query_tree(child, child_path, 1, depth + 1);
+            RegCloseKey(child);
+        } else {
+            write_text(L"\r\n");
+            write_text(child_path);
+            write_text(L"\r\n");
+        }
+    }
+}
+
 void WINAPI entry(void) {
     const WCHAR *cursor = GetCommandLineW();
     HKEY root = 0, opened = 0;
@@ -136,7 +191,8 @@ void WINAPI entry(void) {
         next_arg(&cursor, arg[4], 1024) != 0) fail(87);
     int named_value = has_option == 1 && equals(arg[2], L"/v") && has_value == 1;
     int default_value = has_option == 1 && equals(arg[2], L"/ve") && has_value == 0;
-    if (has_option && !named_value && !default_value) fail(87);
+    int recursive = has_option == 1 && equals(arg[2], L"/s") && has_value == 0;
+    if (has_option && !named_value && !default_value && !recursive) fail(87);
     subkey = arg[1];
     if (root_prefix(subkey, L"HKLM")) {
         root = HKEY_LOCAL_MACHINE; subkey += 5;
@@ -173,31 +229,7 @@ void WINAPI entry(void) {
         RegCloseKey(opened);
         fail(0);
     }
-    write_text(L"\r\n");
-    write_text(arg[1]);
-    write_text(L"\r\n");
-    for (DWORD index = 0; index < 256; ++index) {
-        DWORD name_size = 511, data_size = sizeof(data_buf), kind = 0;
-        result = RegEnumValueW(opened, index, name_buf, &name_size, 0,
-                               &kind, data_buf, &data_size);
-        if (result == ERROR_NO_MORE_ITEMS) break;
-        if (result != ERROR_SUCCESS) fail(result);
-        name_buf[name_size] = 0;
-        print_value(name_buf, kind, data_size);
-    }
-    for (DWORD index = 0; index < 256; ++index) {
-        DWORD name_size = 511;
-        result = RegEnumKeyExW(opened, index, name_buf, &name_size,
-                               0, 0, 0, 0);
-        if (result == ERROR_NO_MORE_ITEMS) break;
-        if (result != ERROR_SUCCESS) fail(result);
-        name_buf[name_size] = 0;
-        write_text(L"\r\n");
-        write_text(arg[1]);
-        write_text(L"\\");
-        write_text(name_buf);
-        write_text(L"\r\n");
-    }
+    query_tree(opened, arg[1], recursive, 0);
     RegCloseKey(opened);
     fail(0);
 }

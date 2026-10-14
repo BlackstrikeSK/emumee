@@ -473,7 +473,7 @@ class EnumerationProgramTests(unittest.TestCase):
                     r'query HKLM\SYSTEM\CurrentControlSet\Services\WinDefend',
                     r'add HKCU\Control Panel\Desktop',
                     r'query HKLM\Software\DefinitelyAbsent',
-                    r'query "HKCU\Control Panel\Desktop" /s',
+                    r'query "HKCU\Control Panel\Desktop" /f unsupported',
                 )
                 for index, command in enumerate(commands):
                     if command.startswith('query "'):
@@ -487,7 +487,7 @@ class EnumerationProgramTests(unittest.TestCase):
                                         guest_args=guest_args)
                     self.assertFalse(result["errors"])
                     if (command.startswith("add") or command.endswith("DefinitelyAbsent") or
-                            command.endswith("/s")):
+                            "/f " in command):
                         self.assertEqual(result["guest_exit_code"],
                                          2 if command.endswith("DefinitelyAbsent") else 87)
                         self.assertEqual(result["console_output"]["stdout"], "")
@@ -508,7 +508,11 @@ class EnumerationProgramTests(unittest.TestCase):
                     "path": r"HKEY_CURRENT_USER\Software\GuestProbe",
                     "values": [{"name": "Answer", "type": "REG_SZ", "data": "persona-only"},
                                {"name": "", "type": "REG_SZ", "data": "default-value"}]
-                }]}), encoding="utf-8")
+                }, {"path": r"HKEY_CURRENT_USER\Software\GuestProbe\Child",
+                    "values": [{"name": "ChildValue", "type": "REG_SZ", "data": "child-only"}]},
+                   {"path": r"HKEY_CURRENT_USER\Software\GuestProbe\Child\Leaf",
+                    "values": [{"name": "LeafValue", "type": "REG_SZ", "data": "leaf-only"}]}]}),
+                                  encoding="utf-8")
                 custom_persona = load_persona(custom)
                 custom_result = run_native(image, inspect_pe(image, "reg.exe"),
                                            custom_persona, root / "custom", [],
@@ -526,6 +530,33 @@ class EnumerationProgramTests(unittest.TestCase):
                 self.assertEqual(default_result["guest_exit_code"], 0)
                 self.assertIn("(Default)    REG_SZ    default-value",
                               default_result["console_output"]["stdout"])
+                recursive = run_native(image, inspect_pe(image, "reg.exe"),
+                                       custom_persona, root / "recursive", [],
+                                       10, 100_000,
+                                       guest_args=["query", r"HKCU\Software\GuestProbe", "/s"])
+                self.assertFalse(recursive["errors"])
+                self.assertEqual(recursive["guest_exit_code"], 0)
+                self.assertIn("ChildValue    REG_SZ    child-only",
+                              recursive["console_output"]["stdout"])
+                self.assertIn("LeafValue    REG_SZ    leaf-only",
+                              recursive["console_output"]["stdout"])
+                self.assertNotIn("LeafValue", custom_result["console_output"]["stdout"])
+
+    def test_reg_recursive_query_stops_at_guest_depth_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            custom = root / "persona.json"
+            base = r"HKEY_CURRENT_USER\Software\DepthProbe"
+            keys = [{"path": base + "\\X" * depth, "values": []}
+                    for depth in range(27)]
+            custom.write_text(json.dumps({"registry_keys": keys}), encoding="utf-8")
+            persona = load_persona(custom)
+            image = enumeration_programs(True, persona)["reg.exe"]
+            result = run_native(image, inspect_pe(image, "reg.exe"), persona,
+                                root / "run", [], 10, 200_000,
+                                guest_args=["query", r"HKCU\Software\DepthProbe", "/s"])
+            self.assertFalse(result["errors"])
+            self.assertEqual(result["guest_exit_code"], 234)
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

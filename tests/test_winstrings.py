@@ -126,6 +126,8 @@ class WinStringTests(unittest.TestCase):
     def test_report_does_not_treat_colon_text_as_signature(self):
         coverage = _api_coverage({'entry_points': [{'events': [
             {'event': 'api', 'api_name': 'kernel32.lstrlenW', 'args': ['ERROR: ']},
+            {'event': 'api', 'api_name': 'msvcrt.fprintf',
+             'args': ['INFO: Could not find files for the given pattern(s).']},
             {'event': 'api', 'api_name': 'advapi32.GetLengthSid',
              'args': ['pSid: 0x0']},
         ]}]})

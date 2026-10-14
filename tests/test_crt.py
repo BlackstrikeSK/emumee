@@ -30,6 +30,14 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_towupper_preserves_nonconvertible_code_units(self):
+        crt = LegacyCRTStreams()
+        call = lambda value: crt._towupper(None, 'msvcrt.towupper', None, [value])
+        self.assertEqual(call(ord('a')), ord('A'))
+        self.assertEqual(call(ord('Q')), ord('Q'))
+        self.assertEqual(call(ord('ß')), ord('ß'))
+        self.assertEqual(call(0xFFFF), 0xFFFF)
+
     def test_wcstok_splits_guest_buffer_and_scopes_continuation_to_thread(self):
         emu = _Emulator(8)
         memory = bytearray(0x4000)

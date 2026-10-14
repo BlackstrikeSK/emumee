@@ -47,7 +47,7 @@ from .tokens import GuestTokens
 from .lsa import GuestLSA
 
 
-SIGNATURE_ARGUMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*: \S")
+SIGNATURE_ARGUMENT = re.compile(r"^(?![A-Z][A-Z_0-9]*: )[A-Za-z_][A-Za-z_0-9]*: \S")
 MAX_GUEST_DLLS = 32
 STATUS_SUCCESS = 0
 STATUS_ACCESS_VIOLATION = 0xC0000005
@@ -803,6 +803,10 @@ def run_native(
     console_output.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     virtual_files.console_write_handler = console_output.observe_write_file
+    virtual_files.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    virtual_files.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
     def cleanup_guest_process(emu, process):
         guest_lsa.cleanup_process(emu, process)
         guest_identity.cleanup_process(process)

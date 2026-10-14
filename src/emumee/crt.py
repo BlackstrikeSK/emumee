@@ -109,6 +109,15 @@ class LegacyCRTStreams:
                                   call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._wcstok, "msvcrt", "wcstok", argc=2,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._towupper, "msvcrt", "towupper", argc=1,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+
+    def _towupper(self, emu, api_name, _original, params) -> int:
+        value = int(params[0])
+        if not 0 <= value <= 0xFFFF:
+            return value
+        converted = chr(value).upper()
+        return ord(converted) if len(converted) == 1 and ord(converted) <= 0xFFFF else value
 
     def _wcstok(self, emu, api_name, _original, params) -> int:
         """Legacy two-argument wcstok with guest-thread continuation state."""

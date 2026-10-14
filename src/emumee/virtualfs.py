@@ -118,6 +118,8 @@ class VirtualFileBridge:
         self.process_close_handler = None
         self.snapshot_close_handler = None
         self.api_memory_allowance = None
+        self.read_guard = None
+        self.write_guard = None
         self.console_write_handler = None
         self.captured_large_write_bytes = 0
         # Per-open sharing modes, independent of Speakeasy's cloned file data.
@@ -361,6 +363,10 @@ class VirtualFileBridge:
         return False
 
     def install(self, emulator) -> None:
+        for name in ("GetFullPathNameA", "GetFullPathNameW"):
+            emulator.add_api_hook(self._get_full_path_name, "kernel32", name, argc=4)
+        for name in ("GetLongPathNameA", "GetLongPathNameW"):
+            emulator.add_api_hook(self._get_long_path_name, "kernel32", name, argc=3)
         for name in ("MoveFileExA", "MoveFileExW"):
             emulator.add_api_hook(self._move_file_ex, "kernel32", name, argc=3)
         for name in ("DeleteFileA", "DeleteFileW"):
@@ -1895,6 +1901,122 @@ class VirtualFileBridge:
         event.update({"success": True, "attributes": attributes})
         emu.set_last_error(0)
         return 1
+
+    def _guest_pointer_access(self, emu, address: int, size: int, write: bool) -> bool:
+        if not address or size <= 0:
+            return False
+        mapping = emu.get_address_map(address)
+        permission = common.PERM_MEM_WRITE if write else common.PERM_MEM_READ
+        guard = self.write_guard if write else self.read_guard
+        return bool(mapping is not None and not mapping.free and
+                    address >= int(mapping.base) and
+                    address + size <= int(mapping.base) + int(mapping.size) and
+                    int(mapping.prot) & permission and
+                    (guard is None or guard(emu, address, size)))
+
+    def _read_guest_path(self, emu, source: int, width: int) -> str:
+        if not source:
+            raise ValueError("missing path")
+        raw = bytearray()
+        for index in range(32767):
+            pointer = source + index * width
+            if not self._guest_pointer_access(emu, pointer, width, False):
+                raise ValueError("unreadable path")
+            unit = emu.mem_read(pointer, width)
+            if unit == b"\0" * width:
+                name = raw.decode("utf-16le" if width == 2 else "cp1252")
+                if not name:
+                    raise ValueError("empty path")
+                return name
+            raw.extend(unit)
+        raise ValueError("unterminated path")
+
+    @staticmethod
+    def _full_guest_path(current_dir: str, name: str) -> str:
+        drive, tail = ntpath.splitdrive(name)
+        current_drive = ntpath.splitdrive(current_dir)[0]
+        if drive and not ntpath.isabs(name) and drive.casefold() != current_drive.casefold():
+            raise ValueError("current directory for another drive is unavailable")
+        if not drive and tail.startswith(("\\", "/")):
+            name = current_drive + tail
+        elif not ntpath.isabs(name):
+            name = ntpath.join(current_dir, name)
+        return ntpath.normpath(name)
+
+    def _get_full_path_name(self, emu, api_name, _original, params):
+        source, capacity, output, file_part = map(int, params)
+        width = 2 if api_name.endswith("W") else 1
+        if capacity < 0 or capacity > 32768:
+            emu.set_last_error(87)
+            return 0
+        try:
+            name = self._read_guest_path(emu, source, width)
+            current_dir = emu.get_cd() if hasattr(emu, "get_cd") else self.current_dir
+            full = self._full_guest_path(current_dir, name)
+            encoded = full.encode("utf-16le" if width == 2 else "cp1252")
+        except (ValueError, UnicodeError, OverflowError):
+            emu.set_last_error(87)
+            return 0
+        length = len(encoded) // width
+        if length + 1 > capacity:
+            return length + 1
+        image = encoded + b"\0" * width
+        pointer_size = emu.get_ptr_size()
+        if (not self._guest_pointer_access(emu, output, len(image), True) or
+                file_part and not self._guest_pointer_access(
+                    emu, file_part, pointer_size, True)):
+            emu.set_last_error(87)
+            return 0
+        final_name = ntpath.basename(full)
+        part = (output + (length - len(final_name)) * width
+                if file_part and final_name and not name.endswith(("\\", "/")) else 0)
+        try:
+            emu.mem_write(output, image)
+            if file_part:
+                emu.mem_write(file_part, part.to_bytes(pointer_size, "little"))
+        except Exception:
+            emu.set_last_error(87)
+            return 0
+        emu.set_last_error(0)
+        return length
+
+    def _get_long_path_name(self, emu, api_name, _original, params):
+        source, output, capacity = map(int, params)
+        width = 2 if api_name.endswith("W") else 1
+        if capacity < 0 or capacity > 32768:
+            emu.set_last_error(87)
+            return 0
+        try:
+            name = self._read_guest_path(emu, source, width)
+            current_dir = emu.get_cd() if hasattr(emu, "get_cd") else self.current_dir
+            path = self._full_guest_path(current_dir, name)
+            manager = emu.get_file_manager()
+            if (self._key(path) not in self._known_directories(manager) and
+                    not self._exact_exists(manager, path)):
+                emu.set_last_error(2)
+                return 0
+            if "~" in name:
+                self.unsupported.append(f"{api_name}: short-name expansion unavailable")
+                emu.set_last_error(50)
+                return 0
+            encoded = name.encode("utf-16le" if width == 2 else "cp1252")
+        except (ValueError, UnicodeError, OverflowError):
+            emu.set_last_error(87)
+            return 0
+        length = len(encoded) // width
+        if length + 1 > capacity:
+            return length + 1
+        image = encoded + b"\0" * width
+        if not self._guest_pointer_access(emu, output, len(image), True):
+            emu.set_last_error(87)
+            return 0
+        try:
+            emu.mem_write(output, image)
+        except Exception:
+            emu.set_last_error(87)
+            return 0
+        emu.set_last_error(0)
+        return length
 
     def _get_file_attributes(self, emu, api_name, original, params):
         path = self._directory_path(emu, api_name, params[0])

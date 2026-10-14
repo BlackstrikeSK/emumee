@@ -13,6 +13,7 @@ from importlib.resources import files
 
 from .clock import VirtualClock
 from .audit_policy import policy_text
+from .time_service import COMMANDS as TIME_COMMANDS, query_status as time_query_status, time_service_text
 from .kerberos import ENCRYPTION_TYPES, ticket_datetime
 from .persona_content import PROCESS_PATHS, oem_code_page
 from .tokens import GuestTokens, PRIVILEGE_DESCRIPTIONS, PRIVILEGE_NAMES
@@ -29,6 +30,8 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
     if name == "auditpol.exe":
         return policy_text(persona, arguments)
+    if name == "w32tm.exe":
+        return time_service_text(persona, arguments)
     if name == "wbadmin.exe":
         if not arguments:
             return "Usage: wbadmin get versions\r\n"
@@ -920,7 +923,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
                  "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
                  "vssadmin.exe", "cmdkey.exe", "manage-bde.exe", "klist.exe", "nltest.exe",
-                 "wbadmin.exe", "auditpol.exe"):
+                 "wbadmin.exe", "auditpol.exe", "w32tm.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -956,6 +959,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "cmdkey.exe": ("/list",),
                      "klist.exe": ("tickets",),
                      "wbadmin.exe": ("get versions",),
+                     "w32tm.exe": TIME_COMMANDS,
                      "auditpol.exe": ("/get /category:*", "/get /category:* /r",
                                       "/list /category", "/list /subcategory:*",
                                       "/list /subcategory:* /v"),
@@ -971,6 +975,9 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
         variants = {argument: enumeration_text(name, render_persona, argument)
                     for argument in commands}
         exit_codes = {}
+        if name == "w32tm.exe":
+            status, _ = time_query_status(persona)
+            exit_codes.update({argument: status for argument in commands})
         if (name == "auditpol.exe" and not
                 (persona["user_is_admin"] or persona["audit_policy"]["read_allowed"])):
             exit_codes.update({"/get /category:*": 5, "/get /category:* /r": 5})

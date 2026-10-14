@@ -16,6 +16,7 @@ from speakeasy.config import get_default_config_dict
 from .kerberos import ENCRYPTION_TYPES, ticket_datetime
 from .audit_policy import validate_policy
 from .dns_records import validate_records
+from .time_service import validate_time_service
 
 from .persona_content import (DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files,
                               driver_package_files, registry_keys)
@@ -87,6 +88,9 @@ DEFAULT_PERSONA = {
         "user": ["Local Group Policy"],
     },
     "audit_policy": {"read_allowed": False, "subcategories": {}},
+    "time_service": {"type": "NoSync", "source": "Local CMOS Clock", "reference_ipv4": None,
+                     "stratum": 0, "last_sync_utc": None, "poll_interval": 6, "precision": -23,
+                     "root_delay_ms": 0, "root_dispersion_ms": 10000, "peers": []},
     "device_registration": {
         "azure_ad_joined": False,
         "enterprise_joined": False,
@@ -111,6 +115,8 @@ DEFAULT_PERSONA = {
          "process": "MsMpEng.exe", "start": 2, "type": 16},
         {"name": "EventLog", "display_name": "Windows Event Log",
          "process": "svchost.exe", "start": 2, "type": 32},
+        {"name": "W32Time", "display_name": "Windows Time",
+         "process": "svchost.exe", "start": 3, "type": 32},
     ],
     "drivers": [
         {"name": "ACPI", "display_name": "Microsoft ACPI Driver",
@@ -230,6 +236,11 @@ def load_persona(path: Path | None) -> dict:
             if not isinstance(discovery, dict) or set(discovery) - set(persona["domain_discovery"]):
                 raise ValueError("Persona domain_discovery fields are invalid")
             persona["domain_discovery"].update(discovery)
+        if "time_service" in supplied:
+            time_service = supplied.pop("time_service")
+            if not isinstance(time_service, dict) or set(time_service) - set(persona["time_service"]):
+                raise ValueError("Persona time_service fields are invalid")
+            persona["time_service"].update(time_service)
         if "audit_policy" in supplied:
             audit = supplied.pop("audit_policy")
             if not isinstance(audit, dict) or set(audit) - set(persona["audit_policy"]):
@@ -760,6 +771,7 @@ def load_persona(path: Path | None) -> dict:
             raise ValueError(f"Persona cpu {name} must be between {minimum} and {maximum}")
     if cpu["max_mhz"] < cpu["base_mhz"]:
         raise ValueError("Persona cpu max_mhz must be at least base_mhz")
+    validate_time_service(persona)
     if refresh_registry:
         persona["registry_keys"] = registry_keys(persona)
     return persona

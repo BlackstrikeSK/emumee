@@ -1,0 +1,23 @@
+{
+  "user_is_admin": true,
+  "clock_utc": "2026-10-14T12:00:00Z",
+  "timezone": "South Africa Standard Time",
+  "utc_offset_minutes": 120,
+  "time_service": {
+    "type": "NTP",
+    "source": "clock.corp.example",
+    "reference_ipv4": "192.168.1.5",
+    "stratum": 2,
+    "last_sync_utc": "2026-10-14T10:00:00Z",
+    "poll_interval": 10,
+    "precision": -23,
+    "root_delay_ms": 12,
+    "root_dispersion_ms": 250,
+    "peers": [
+      {"name": "clock.corp.example", "state": "Active", "stratum": 1, "poll_interval": 6, "mode": 3}
+    ]
+  },
+  "dns_records": [
+    {"name": "clock.corp.example", "type": "A", "data": "192.168.1.5", "ttl": 60}
+  ]
+}

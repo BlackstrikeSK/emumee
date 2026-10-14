@@ -41,6 +41,7 @@ never change host state.
 | `route.exe` | Yes | `print`, `print -4` |
 | `netsh.exe` | Yes | `interface ipv4 show config`, `interface ipv4 show dnsservers` |
 | `tzutil.exe` | Yes | `/g` |
+| [`w32tm.exe`](https://learn.microsoft.com/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings) | Yes | `/query /source`, `/query /status`, `/query /status /verbose`, `/query /configuration`, and `/query /peers` from guest time metadata |
 | `query.exe` | Yes | `user`, `session` for the modeled console and services sessions |
 | [`quser.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/quser) | Yes | Default user session view |
 | [`qwinsta.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/qwinsta) | Yes | Default session view |
@@ -60,7 +61,7 @@ but it is not included by default unless the table above says so.
 | --- | --- | --- |
 | `wmic.exe` beyond the listed views | More aliases, properties, filters, and formats | WMI COM providers, remote targets, changes, and arbitrary WQL remain unmodeled. Unsupported requests exit 87. |
 | `auditpol.exe` beyond the listed forms | Named category/subcategory filters, per-user policy, options, ACLs, and changes | An effective-token permission check and dynamic policy changes remain unmodeled. Unsupported command forms exit 87. |
-| `w32tm.exe` | Time service configuration and peer status | Guest Windows Time service state and peer metadata. Not included by default. |
+| `w32tm.exe` beyond the listed forms | Remote status, other formats, monitoring, resync, and configuration changes | Dynamic Windows Time/RPC APIs, NTP packet exchange, clock discipline, effective-token checks, and complete configuration/status fields remain unmodeled. Unsupported forms exit 87. |
 | `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
 | `ping.exe`, `tracert.exe`, `pathping.exe` | Network reachability and route discovery | Guest ICMP and route-hop simulation, with attempted operations logged. Not included by default. |
 | `nslookup.exe` beyond the listed forms | Other record types, search suffixes, other servers, and interactive commands | SRV, MX, TXT, CNAME chains, recursive resolution, and interactive mode remain unmodeled; unsupported command forms exit 87. |
@@ -88,6 +89,35 @@ Generated `cmdkey.exe /list` reads only the persona's `stored_credentials`
 metadata: target, user, type, and persistence. The default guest has no stored
 credentials. The schema accepts no password field, and the utility never
 opens a host credential store. Add and delete operations exit 87.
+
+Generated `w32tm.exe` uses `time_service` metadata and the guest clock at setup.
+The default service snapshot includes W32Time in `svchost.exe`, with manual start,
+NoSync, no peers, and an unsynchronized local clock. This describes the chosen
+guest profile, rather than every Windows installation's default policy. Its
+service presence/state follows the same configured process and service list as
+`sc.exe` and `tasklist.exe /svc`. Matching W32Time Config, Parameters, and NtpClient/
+NtpServer provider keys are generated in the guest registry.
+
+The model supports NoSync, explicit NTP peers, and NT5DS for domain-joined
+profiles. The configured source, reference IPv4 address, stratum, selected active
+peer, and last synchronization time must agree. Known guest DNS A records must
+agree with that reference address. At most eight unique peers are accepted;
+each has name, Active/Pending state, stratum, poll exponent, and client (3) or
+symmetric-active (1) mode. Poll exponents are bounded to 4–17, timestamps cannot
+be later than the guest clock, and delays/dispersion use bounded milliseconds.
+Last-sync display applies the persona UTC offset; labels and date formatting
+are English. Precision and timing fields are configured snapshots, not measured
+network performance or a running clock-discipline algorithm.
+
+The local query permission view uses the persona admin flag. Denied queries
+return `0x80070005`; an admin query returns `0x80070424` for a missing service or
+`0x80070426` when it is disabled or its configured process is absent. This is a
+static access view, without Windows token elevation or RPC security evaluation.
+Read commands do not resolve names or contact NTP servers. `/resync`, `/config`,
+`/register`, `/unregister`, remote targets, and `/stripchart` return 87 without
+host or network effects. See [the time persona example](examples/time-persona.json).
+Configuration and verbose status output include only modeled fields. Other
+Windows Time APIs and changes remain separate coverage gaps.
 
 Guest `nslookup.exe` calls the emulated `DnsQuery_W` API. The same offline record
 catalog supplies `DnsQuery_A`, `DnsQuery_UTF8`, and known-name `gethostbyname`

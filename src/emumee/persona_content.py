@@ -9,6 +9,7 @@ import io
 import struct
 import uuid
 import zipfile
+from .time_service import configuration as time_configuration
 
 
 DISPLAY_VERSIONS = {
@@ -444,6 +445,11 @@ def registry_keys(persona: dict) -> list[dict]:
                           value("Start", service["start"], "REG_DWORD"),
                           value("Type", service["type"], "REG_DWORD"),
                           value("DisplayName", service["display_name"])))
+    if any(service["name"].casefold() == "w32time" for service in persona["services"]):
+        for suffix, settings in time_configuration(persona).items():
+            keys.append(entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\W32Time" + "\\" + suffix,
+                              *(value(name, data, "REG_SZ" if isinstance(data, str) else "REG_DWORD")
+                                for name, data in settings.items())))
     for driver in persona["drivers"]:
         keys.append(entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services" +
                           "\\" + driver["name"],

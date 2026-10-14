@@ -566,6 +566,32 @@ class PersonaContentTests(unittest.TestCase):
                         ValueError, "driver entries"):
                     load_persona(path)
 
+    def test_event_channel_inventory_refreshes_registry_and_validates_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            channel = {"name": "ExampleLog", "enabled": False,
+                       "max_size": 1048576, "retention": True}
+            path.write_text(json.dumps({"event_channels": [channel]}), encoding="utf-8")
+            persona = load_persona(path)
+            key = next(item for item in persona["registry_keys"]
+                       if item["path"].endswith(r"\Services\EventLog\ExampleLog"))
+            values = {item["name"]: item["data"] for item in key["values"]}
+            self.assertEqual(values["Enabled"], "0")
+            self.assertEqual(values["MaxSize"], "1048576")
+            self.assertEqual(values["Retention"], "1")
+            self.assertEqual(values["File"],
+                             r"C:\Windows\System32\winevt\Logs\ExampleLog.evtx")
+            self.assertFalse(any(item["path"].endswith(r"\Services\EventLog\System")
+                                 for item in persona["registry_keys"]))
+            for broken in ({**channel, "name": r"..\escape"},
+                           {**channel, "max_size": 1},
+                           {**channel, "max_size": True},
+                           {**channel, "enabled": "false"}):
+                path.write_text(json.dumps({"event_channels": [broken]}), encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaisesRegex(
+                        ValueError, "event channel entries"):
+                    load_persona(path)
+
     def test_scheduled_task_inventory_validates_names_and_schedule(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

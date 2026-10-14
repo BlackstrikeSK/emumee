@@ -16,6 +16,64 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_wevtutil_reads_configured_guest_channels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            channel = {"name": "ExampleLog", "enabled": False,
+                       "max_size": 1048576, "retention": True}
+            config.write_text(json.dumps({"event_channels": [channel]}), encoding="utf-8")
+            persona = load_persona(config)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["wevtutil.exe"]
+                    pe = inspect_pe(image, "wevtutil.exe")
+                    self.assertEqual(pe.architecture, "x64" if is_x64 else "x86")
+                    listed = run_native(image, pe, persona, root / f"{is_x64}-list",
+                                        [], 10, 100_000, guest_args=["el"])
+                    self.assertFalse(listed["errors"])
+                    self.assertEqual(listed["guest_exit_code"], 0)
+                    self.assertEqual(listed["console_output"]["stdout"],
+                                     "ExampleLog\r\n")
+                    queried = run_native(image, pe, persona, root / f"{is_x64}-query",
+                                         [], 10, 100_000,
+                                         guest_args=["gl", "ExampleLog"])
+                    self.assertFalse(queried["errors"])
+                    self.assertEqual(queried["guest_exit_code"], 0)
+                    output = queried["console_output"]["stdout"]
+                    for value in ("name: ExampleLog", "enabled: false",
+                                  "retention: true", "maxSize: 1048576",
+                                  r"C:\Windows\System32\winevt\Logs\ExampleLog.evtx"):
+                        self.assertIn(value, output)
+                    self.assertNotIn("Security", output)
+                    unsupported = run_native(image, pe, persona,
+                                             root / f"{is_x64}-unsupported", [],
+                                             10, 100_000,
+                                             guest_args=["qe", "Security"])
+                    self.assertFalse(unsupported["errors"])
+                    self.assertEqual(unsupported["guest_exit_code"], 87)
+                    self.assertEqual(unsupported["console_output"]["stdout"], "")
+
+    def test_winexec_launches_guest_wevtutil(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"wevtutil.exe el\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("System\r\n", result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\wevtutil.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_mountvol_uses_guest_volume_guid_and_rejects_other_mounts(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

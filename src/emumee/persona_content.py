@@ -438,6 +438,14 @@ def registry_keys(persona: dict) -> list[dict]:
                           value("Type", driver["type"], "REG_DWORD"),
                           value("DisplayName", driver["display_name"]),
                           value("ImagePath", driver["path"], "REG_EXPAND_SZ")))
+    for channel in persona["event_channels"]:
+        keys.append(entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\EventLog" +
+                          "\\" + channel["name"],
+                          value("Enabled", int(channel["enabled"]), "REG_DWORD"),
+                          value("MaxSize", channel["max_size"], "REG_DWORD"),
+                          value("Retention", int(channel["retention"]), "REG_DWORD"),
+                          value("File", "C:\\Windows\\System32\\winevt\\Logs\\" +
+                                channel["name"] + ".evtx", "REG_EXPAND_SZ")))
     seen = {item["path"].casefold() for item in keys}
     for item in tuple(keys):
         parts = item["path"].split("\\")

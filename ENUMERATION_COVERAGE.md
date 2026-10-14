@@ -19,6 +19,7 @@ never change host state.
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
+| [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | Yes | `el` and `gl <simple channel>` through guest registry APIs |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
 | `tasklist.exe` | Yes | Default persona process snapshot and `/svc` service to process view |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
@@ -48,7 +49,7 @@ but it is not included by default unless the table above says so.
 | `mountvol.exe` beyond the listed forms | Other volume mount points and changes | Multiple volumes and mount mutations remain unmodeled. |
 | [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | `/enum-drivers`, `/enum-devices` | A guest driver package store and PnP device inventory; `driverquery` records alone do not describe installed packages or devices. |
 | [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Filter, instance, and volume enumeration | Guest minifilter records, altitudes, and attachment state. |
-| [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | `el`, `gl`, `qe` | A guest event channel catalog and bounded event records. |
+| `wevtutil.exe` beyond the listed forms | `qe`, `gli`, publishers, remote queries, and changes | A guest event record store and live status model; only channel names and configuration are modeled. |
 | [`bcdedit.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/bcdedit) | Default or `/enum` | A guest Boot Configuration Data store and boot entry identities. |
 | [`gpresult.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult) | `/r` | Guest applied policy and RSoP data for the persona user and computer. |
 | `driverquery.exe` beyond the listed forms | `/si`, combined flags, and remote queries | Signed driver data, more output modes, and `.sys` guest files remain unmodeled; driver images are not executed. |
@@ -116,6 +117,14 @@ Generated `mountvol.exe` lists the single guest `C:` mount and supports
 `C:\ /L`. Its volume GUID comes from the persona and matches the guest
 `GetVolumeNameForVolumeMountPointA/W` response. Other mounts and mutation
 commands exit 87 without changing guest or host volumes.
+
+The included `wevtutil.exe` is compiled from repository C source. `el`
+enumerates guest EventLog registry subkeys and `gl <channel>` reads their
+enabled state, maximum size, retention flag, and log path at runtime. These
+keys derive from the persona's `event_channels` list unless the caller
+provides a custom registry. Channel names are simple and bounded; event
+records and `.evtx` files are not modeled. Unsupported forms exit 87 and no
+host Event Log APIs or files are accessed.
 
 Generated `driverquery.exe` reads only the persona's `drivers` list. Each
 configured driver also creates a guest Services registry key with its type,

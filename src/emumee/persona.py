@@ -78,6 +78,14 @@ DEFAULT_PERSONA = {
          "path": r"System32\drivers\Wdf01000.sys", "start": 3,
          "type": 1, "running": True},
     ],
+    "event_channels": [
+        {"name": "Application", "enabled": True, "max_size": 20971520,
+         "retention": False},
+        {"name": "Security", "enabled": True, "max_size": 20971520,
+         "retention": False},
+        {"name": "System", "enabled": True, "max_size": 20971520,
+         "retention": False},
+    ],
     "scheduled_tasks": [
         {"name": r"\Microsoft\Windows\Defender\Windows Defender Scheduled Scan",
          "status": "Ready", "next_run_minutes": 480},
@@ -265,6 +273,24 @@ def load_persona(path: Path | None) -> dict:
                 (driver["start"] == 4 and driver["running"])):
             raise ValueError("Persona driver entries are invalid")
         service_names.add(driver["name"].casefold())
+    channels = persona["event_channels"]
+    if not isinstance(channels, list) or len(channels) > 32:
+        raise ValueError("Persona event_channels must have at most 32 entries")
+    channel_names: set[str] = set()
+    for channel in channels:
+        if (not isinstance(channel, dict) or
+                set(channel) != {"name", "enabled", "max_size", "retention"} or
+                not isinstance(channel["name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", channel["name"]) or
+                channel["name"].casefold() in channel_names or
+                not isinstance(channel["enabled"], bool) or
+                not isinstance(channel["retention"], bool) or
+                not isinstance(channel["max_size"], int) or
+                isinstance(channel["max_size"], bool) or
+                not 1_048_576 <= channel["max_size"] <= 268_435_456 or
+                channel["max_size"] % 65536):
+            raise ValueError("Persona event channel entries are invalid")
+        channel_names.add(channel["name"].casefold())
     tasks = persona["scheduled_tasks"]
     if not isinstance(tasks, list) or len(tasks) > 32:
         raise ValueError("Persona scheduled_tasks must have at most 32 entries")

@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -86,6 +86,14 @@ Generated `mountvol.exe` lists the single guest `C:` mount and supports
 `C:\ /L`. Its GUID is a configurable persona field and matches the guest
 `GetVolumeNameForVolumeMountPointA/W` hook. Other mounts and mutation commands
 exit 87 without reading or modifying host volume state.
+
+The included `wevtutil.exe` uses guest registry APIs to enumerate configured
+event channel names (`el`) and read each channel's enabled state, maximum
+size, retention flag, and log path (`gl <channel>`). The persona's
+`event_channels` list generates those guest keys unless a custom registry
+replaces them. The packaged x86/x64 PEs import only Kernel32 and Advapi32;
+they do not query the host Event Log. Event records and `.evtx` files remain
+unmodeled, and `qe` exits 87.
 
 Generated `driverquery.exe` reports bounded persona `drivers` records through
 its default, `/v`, `/fo list`, `/fo csv`, and `/nh` views. The same records

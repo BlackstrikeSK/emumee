@@ -521,6 +521,26 @@ class PersonaContentTests(unittest.TestCase):
             self.assertEqual(len(persona["virtual_files"]), 1)
             self.assertEqual(persona["virtual_files"][0]["text"], "hello")
 
+    def test_service_inventory_refreshes_registry_and_rejects_invalid_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            service = {"name": "ExampleSvc", "display_name": "Example Service",
+                       "process": "svchost.exe", "start": 3, "type": 32}
+            path.write_text(json.dumps({"services": [service]}), encoding="utf-8")
+            persona = load_persona(path)
+            service_key = next(item for item in persona["registry_keys"]
+                               if item["path"].endswith(r"\Services\ExampleSvc"))
+            values = {item["name"]: item["data"] for item in service_key["values"]}
+            self.assertEqual(values["Start"], "3")
+            self.assertEqual(values["Type"], "32")
+            self.assertEqual(values["DisplayName"], "Example Service")
+            self.assertFalse(any(item["path"].endswith(r"\Services\WinDefend")
+                                 for item in persona["registry_keys"]))
+            service["name"] = r"..\escape"
+            path.write_text(json.dumps({"services": [service]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "service entries"):
+                load_persona(path)
+
     def test_binary_virtual_files_are_bounded_and_decoded_exactly(self):
         payload = b"\0\xffPK\x03\x04\0"
         guest_path = r"C:\Users\Alex\Downloads\probe.zip"

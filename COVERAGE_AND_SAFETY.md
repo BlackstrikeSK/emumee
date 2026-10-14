@@ -3,9 +3,9 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, and `net1.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, and `sc.exe` files
 in guest System32, alongside the
-existing generated `hostname.exe` and `whoami.exe`. The thirteen newer PE instructions call
+existing generated `hostname.exe` and `whoami.exe`. The fourteen newer PE instructions call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; the
 argument dispatchers also call guest `lstrcmpiA`. Their
 output bytes are derived only from the selected persona. Direct guest child
@@ -39,6 +39,14 @@ Administrator and Guest accounts. Their local Users and Administrators views
 use the guest token's admin membership; account mutation forms such as
 `net user Morgan /add` exit 87 with no output. This is a bounded snapshot,
 not a general SAM or domain account implementation.
+
+Generated `sc.exe` reads the configurable persona service list and prints
+active, all, or named service queries. A service's running state follows its
+named process in the persona process snapshot, and the same list generates
+guest service registry keys. The default list has WinDefend and EventLog.
+Only the first three configured services have named query variants; list
+queries include all. Unsupported `stop` exits 87 without changing service
+state. This is a setup snapshot, not a dynamic Service Control Manager.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`

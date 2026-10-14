@@ -248,6 +248,38 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
             return (" USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME\r\n"
                     f">{persona['user_name']:<21} console             1  Active      none   {stamp}\r\n")
         raise ValueError("unsupported query arguments")
+    if name == "sc.exe":
+        if not arguments:
+            return "DESCRIPTION:\r\n        SC is a command line program used for communicating with the Service Control Manager.\r\n"
+        running_processes = {process.casefold() for process in persona["processes"]}
+        argument = arguments.casefold()
+        if argument == "query":
+            services = [service for service in persona["services"]
+                        if service["process"].casefold() in running_processes and
+                        service["start"] != 4]
+        elif argument == "query state= all":
+            services = persona["services"]
+        elif argument.startswith("query "):
+            services = [service for service in persona["services"]
+                        if service["name"].casefold() == argument[6:]]
+            if not services:
+                raise ValueError("unknown guest service")
+        else:
+            raise ValueError("unsupported sc arguments")
+        rows = []
+        for service in services:
+            running = (service["process"].casefold() in running_processes and
+                       service["start"] != 4)
+            service_type = ("WIN32_OWN_PROCESS" if service["type"] == 16 else
+                            "WIN32_SHARE_PROCESS")
+            rows.append(
+                f"SERVICE_NAME: {service['name']}\r\n"
+                f"DISPLAY_NAME: {service['display_name']}\r\n"
+                f"        TYPE               : {service['type']:2X}  {service_type}\r\n"
+                f"        STATE              : {4 if running else 1}  {'RUNNING' if running else 'STOPPED'}\r\n"
+                "        WIN32_EXIT_CODE    : 0  (0x0)\r\n"
+                "        SERVICE_EXIT_CODE  : 0  (0x0)\r\n\r\n")
+        return "".join(rows) or "Enum: no matching services.\r\n"
     raise ValueError(f"unknown guest enumeration program: {name}")
 
 
@@ -459,7 +491,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     result = {}
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
-                 "quser.exe", "qwinsta.exe", "net.exe", "net1.exe"):
+                 "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "arp.exe": ("-a",),
@@ -473,6 +505,9 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "net1.exe": ("user", f"user {persona['user_name']}",
                                   "localgroup", "localgroup administrators",
                                   "localgroup users"),
+                     "sc.exe": ("query", "query state= all",
+                                *(f"query {service['name']}"
+                                  for service in persona["services"][:3])),
                      "tzutil.exe": ("/g",)}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, persona, argument)

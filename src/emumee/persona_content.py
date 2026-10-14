@@ -339,9 +339,6 @@ def registry_keys(persona: dict) -> list[dict]:
         entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"),
         entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection",
               value("DisableRealtimeMonitoring", 0, "REG_DWORD")),
-        entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WinDefend",
-              value("Start", 2, "REG_DWORD"),
-              value("DisplayName", "Microsoft Defender Antivirus Service")),
         entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList",
               value("Default", r"%SystemDrive%\Users\Default", "REG_EXPAND_SZ"),
               value("ProfilesDirectory", r"%SystemDrive%\Users", "REG_EXPAND_SZ"),
@@ -428,6 +425,12 @@ def registry_keys(persona: dict) -> list[dict]:
               value("ConsentPromptBehaviorAdmin", 5, "REG_DWORD"),
               value("PromptOnSecureDesktop", 1, "REG_DWORD")),
     ]
+    for service in persona["services"]:
+        keys.append(entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services" +
+                          "\\" + service["name"],
+                          value("Start", service["start"], "REG_DWORD"),
+                          value("Type", service["type"], "REG_DWORD"),
+                          value("DisplayName", service["display_name"])))
     seen = {item["path"].casefold() for item in keys}
     for item in tuple(keys):
         parts = item["path"].split("\\")

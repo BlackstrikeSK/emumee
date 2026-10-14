@@ -62,6 +62,12 @@ DEFAULT_PERSONA = {
         "StartMenuExperienceHost.exe", "RuntimeBroker.exe", "MsMpEng.exe",
         "SecurityHealthSystray.exe", "OneDrive.exe",
     ],
+    "services": [
+        {"name": "WinDefend", "display_name": "Microsoft Defender Antivirus Service",
+         "process": "MsMpEng.exe", "start": 2, "type": 16},
+        {"name": "EventLog", "display_name": "Windows Event Log",
+         "process": "svchost.exe", "start": 2, "type": 32},
+    ],
     "registry_keys": [],
     "virtual_files": [],
 }
@@ -181,8 +187,6 @@ def load_persona(path: Path | None) -> dict:
             ipaddress.IPv4Address(item)
     except (ValueError, TypeError, ipaddress.AddressValueError) as exc:
         raise ValueError("Persona network_adapter IPv4 settings are invalid") from exc
-    if refresh_registry:
-        persona["registry_keys"] = registry_keys(persona)
     build = persona["windows_build"]
     if not isinstance(build, int) or isinstance(build, bool) or not 22000 <= build <= 65535:
         raise ValueError("Persona windows_build must be a Windows 11 build between 22000 and 65535")
@@ -195,6 +199,29 @@ def load_persona(path: Path | None) -> dict:
     if any(not isinstance(name, str) or not name or len(name) > 128 or
            any(char in name for char in "\\/:\0") for name in persona["processes"]):
         raise ValueError("Persona process names must be simple filenames")
+    services = persona["services"]
+    if not isinstance(services, list) or len(services) > 128:
+        raise ValueError("Persona services must be an array of at most 128 entries")
+    service_names: set[str] = set()
+    for service in services:
+        if (not isinstance(service, dict) or
+                set(service) != {"name", "display_name", "process", "start", "type"} or
+                not isinstance(service["name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", service["name"]) or
+                service["name"].casefold() in service_names or
+                not isinstance(service["display_name"], str) or
+                not 1 <= len(service["display_name"]) <= 128 or
+                "\0" in service["display_name"] or
+                not isinstance(service["process"], str) or
+                not 1 <= len(service["process"]) <= 128 or
+                any(char in service["process"] for char in "\\/:\0") or
+                not isinstance(service["start"], int) or
+                isinstance(service["start"], bool) or
+                service["start"] not in (2, 3, 4) or
+                not isinstance(service["type"], int) or
+                service["type"] not in (16, 32)):
+            raise ValueError("Persona service entries are invalid")
+        service_names.add(service["name"].casefold())
     file_names: set[str] = set()
     total_file_bytes = 0
     for item in persona["virtual_files"]:
@@ -226,6 +253,8 @@ def load_persona(path: Path | None) -> dict:
             raise ValueError(f"Persona cpu {name} must be between {minimum} and {maximum}")
     if cpu["max_mhz"] < cpu["base_mhz"]:
         raise ValueError("Persona cpu max_mhz must be at least base_mhz")
+    if refresh_registry:
+        persona["registry_keys"] = registry_keys(persona)
     return persona
 
 

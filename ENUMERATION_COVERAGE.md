@@ -25,6 +25,7 @@ never change host state.
 | [`qwinsta.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/qwinsta) | Yes | Default session view |
 | [`net.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user) | Yes | `user`, `user <persona user>`, `localgroup`, `localgroup administrators`, `localgroup users` |
 | `net1.exe` | Yes | Same modeled local account and group views as `net.exe` |
+| [`sc.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/sc-query) | Yes | `query`, `query state= all`, and named queries for up to three modeled services |
 
 ## Tracked gaps
 
@@ -39,7 +40,7 @@ but it is not included by default unless the table above says so.
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with services and device state. |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | `/query` | A virtual scheduled-task store and query semantics. |
 | `reg.exe` | `query` | General guest registry command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
-| `sc.exe` | `query` | A guest service-control database rather than process names alone. |
+| `sc.exe` beyond the listed forms | More query options and service changes | A dynamic Service Control Manager model and parser. |
 
 The included generated `arp.exe -a` uses the broadcast row from the guest
 `GetIpNetTable` model; it does not invent a gateway hardware address. A locally
@@ -63,6 +64,12 @@ match the guest token's admin flag. The named user query requires an ASCII
 persona user name; [other account commands](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user),
 remote domains, account changes, and a general guest SAM database remain
 unmodeled.
+
+Generated `sc.exe` reads the persona's configurable service list. A service is
+reported as running when its named process appears in the persona process
+snapshot and it is not disabled. The same entries generate guest service
+registry keys unless a custom registry replaces them. Named `sc query` covers
+the first three services; the list forms cover all configured services.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
 utility inventory. No entry in this file authorizes a guest command to execute

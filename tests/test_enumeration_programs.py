@@ -64,7 +64,8 @@ class EnumerationProgramTests(unittest.TestCase):
                                     ("quser.exe", ""),
                                     ("qwinsta.exe", ""),
                                     ("net.exe", "localgroup administrators"),
-                                    ("net1.exe", "user")):
+                                    ("net1.exe", "user"),
+                                    ("sc.exe", "query WinDefend")):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -92,7 +93,7 @@ class EnumerationProgramTests(unittest.TestCase):
             for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
                          "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
                          "tzutil.exe", "query.exe", "quser.exe", "qwinsta.exe",
-                         "net.exe", "net1.exe"):
+                         "net.exe", "net1.exe", "sc.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -407,6 +408,46 @@ class EnumerationProgramTests(unittest.TestCase):
         administrators = enumeration_text("net.exe", persona,
                                           "localgroup administrators")
         self.assertNotIn("\r\nAdministrator\r\n", administrators)
+
+    def test_sc_service_views_match_registry_and_process_snapshot(self):
+        for arch in ("x86", "x64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                custom = root / "persona.json"
+                custom.write_text(json.dumps({
+                    "processes": ["System", "svchost.exe", "explorer.exe"],
+                    "services": [
+                        {"name": "WinDefend", "display_name": "Microsoft Defender Antivirus Service",
+                         "process": "MsMpEng.exe", "start": 2, "type": 16},
+                        {"name": "EventLog", "display_name": "Windows Event Log",
+                         "process": "svchost.exe", "start": 2, "type": 32},
+                    ],
+                }), encoding="utf-8")
+                persona = load_persona(custom)
+                registry = {item["path"].casefold(): item for item in persona["registry_keys"]}
+                self.assertIn(r"hkey_local_machine\system\currentcontrolset\services\eventlog",
+                              registry)
+                image = enumeration_programs(arch == "x64", persona)["sc.exe"]
+                for index, argument in enumerate(("query", "query state= all",
+                                                  "query WinDefend", "query EventLog",
+                                                  "stop WinDefend")):
+                    result = run_native(image, inspect_pe(image, "sc.exe"), persona,
+                                        root / str(index), [], 10, 100_000,
+                                        guest_args=argument.split())
+                    self.assertFalse(result["errors"])
+                    if argument.startswith("stop"):
+                        self.assertEqual(result["guest_exit_code"], 87)
+                        self.assertEqual(result["console_output"]["stdout"], "")
+                    else:
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text("sc.exe", persona, argument))
+                active = enumeration_text("sc.exe", persona, "query")
+                self.assertIn("EventLog", active)
+                self.assertNotIn("WinDefend", active)
+                self.assertIn("STATE              : 1  STOPPED",
+                              enumeration_text("sc.exe", persona,
+                                               "query WinDefend"))
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

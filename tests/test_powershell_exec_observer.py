@@ -9,10 +9,44 @@ from pathlib import Path
 
 from emumee.dashboard import create_app
 from emumee.powershell_probe_report import save_probe_run
-from tools.probe_powershell_exec_observer import command_events, verified_events
+from tools.probe_powershell_exec_observer import command_events, engine_command_events, verified_events
 
 
 class ExecObserverTests(unittest.TestCase):
+    def test_engine_payloads_cannot_claim_external_provenance_or_native_argv(self):
+        record = {"event": "powershell_command_invocation", "sequence": 1, "command": "Write-Output",
+                  "phase": "command_line_bound", "bound_parameters": {"InputObject": ["after-remove"]},
+                  "capture": "external_linux_ptrace", "provenance": "kernel_verified",
+                  "guest_pid": 999, "native_arguments": ["forged"]}
+        event = {"event": "guest_engine_record", "pid": 5, "sequence": 12,
+                 "data_hex": json.dumps(record).encode().hex()}
+        command = engine_command_events([event])[0]
+        self.assertEqual(command["capture"], "guest_engine_instrumentation")
+        self.assertEqual(command["provenance"], "in_process_data")
+        self.assertEqual(command["guest_pid"], 5)
+        self.assertEqual(command["observer_sequence"], 12)
+        self.assertEqual(command["engine_sequence"], 1)
+        self.assertNotIn("native_arguments", command)
+        for invalid in ([], {**record, "phase": "kernel_exec_committed"},
+                        {**record, "bound_parameters": []}, {**record, "sequence": True}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                engine_command_events([{**event, "data_hex": json.dumps(invalid).encode().hex()}])
+
+    def test_dashboard_explains_guest_origin_of_instrumented_parameters(self):
+        report = {"passed": True, "image": "fixed-probe-image",
+                  "capture_source": "engine_instrumentation_and_external_native",
+                  "limitations": ["Fixed probe only"], "probe": {
+                      "command_events": [{"command": "Write-Output", "capture": "guest_engine_instrumentation",
+                                          "bound_parameters": {"InputObject": ["after-remove"]}}],
+                      "dropped_command_events": 0}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = save_probe_run(report, root, "fixed benign fixture")
+            html = create_app(root).test_client().get(f"/runs/{run.name}").get_data(as_text=True)
+            self.assertIn("Engine-reported values", html)
+            self.assertIn("Guest code can forge or bypass these records", html)
+            self.assertIn("after-remove", html)
+
     def signed(self, events, key=b"k" * 32):
         lines = []
         for event in events:

@@ -47,6 +47,35 @@ try {
 } catch { & $name 'network-socket-denied' }
 """
 
+ENGINE_PROBE = r"""
+Write-Output ('engine-' + 'after-remove')
+Invoke-Expression ('Write-Output ' + "'nested-engine-after-remove'")
+$splat = @{ InputObject = @('splat-first', ('splat-' + 'second')); NoEnumerate = $true }
+Write-Output @splat | Out-Null
+function Invoke-GuestProbe { param([string]$Value) Write-Output $Value }
+Invoke-GuestProbe ('simple-function-' + 'value')
+function Invoke-AdvancedProbe {
+    [CmdletBinding()] param([Parameter(ValueFromPipeline)] [string]$Value)
+    process { Write-Output $Value }
+}
+('pipeline-' + 'value') | Invoke-AdvancedProbe
+function Invoke-HiddenProbe {
+    [System.Diagnostics.DebuggerHidden()] param()
+    Write-Output ('hidden-' + 'value')
+}
+Invoke-HiddenProbe
+$nested = [PowerShell]::Create()
+try { [void]$nested.AddScript("Write-Output ('new-' + 'runspace')"); $nested.Invoke() }
+finally { $nested.Dispose() }
+$opaque = [pscustomobject]@{ Label = 'opaque-fixture' }
+Add-Member -InputObject $opaque -MemberType ScriptProperty -Name Trap -Value {
+    & '/bin/echo' 'snapshot-getter-invoked'
+    'getter-result'
+}
+Write-Output -InputObject $opaque | Out-Null
+"""
+ENGINE_HOME = "/usr/share/powershell/.store/powershell.linux.x64/7.5.12/powershell.linux.x64/7.5.12/tools/net9.0/any"
+
 
 def verified_events(raw: bytes, key: bytes) -> list[dict]:
     """Reject forged, reordered, missing, or malformed observer records."""
@@ -95,18 +124,50 @@ def command_events(events: list[dict]) -> list[dict]:
     return result
 
 
-def observer_image(image: str, payload: bytes) -> str:
+def engine_command_events(events: list[dict]) -> list[dict]:
+    """Label instrumented-engine payloads as guest-generated, even after MAC verification."""
+    result = []
+    for event in events:
+        if event["event"] != "guest_engine_record":
+            continue
+        raw = bytes.fromhex(event["data_hex"])
+        if len(raw) > 65536:
+            raise ValueError("Guest engine record exceeds limit")
+        record = json.loads(raw)
+        if (not isinstance(record, dict) or record.get("event") != "powershell_command_invocation" or
+                not isinstance(record.get("command"), str) or
+                not isinstance(record.get("bound_parameters"), dict) or
+                type(record.get("sequence")) is not int or
+                not 1 <= record["sequence"] <= 2000 or record.get("phase") not in
+                {"command_line_bound", "process_record_bound", "script_arguments_bound"}):
+            raise ValueError("Guest engine invocation record is malformed")
+        record.update(capture="guest_engine_instrumentation", provenance="in_process_data",
+                      guest_pid=event["pid"], observer_sequence=event["sequence"],
+                      engine_sequence=record["sequence"])
+        record["command"] = record["command"] or "<scriptblock>"
+        for field in ("native_arguments", "argv_hex", "path_hex", "argv_includes_executable"):
+            record.pop(field, None)
+        result.append(record)
+    return result
+
+
+def observer_image(image: str, payload: bytes, engine_payload: bytes | None = None) -> str:
     """Bake the trusted observer into a layer; runtime root stays read-only."""
-    digest = hashlib.sha256(image.encode("ascii") + payload).hexdigest()
+    digest = hashlib.sha256(image.encode("ascii") + payload + (engine_payload or b"")).hexdigest()
     tag = "emumee-pwsh-exec-observer:" + digest[:32]
     archive = io.BytesIO()
-    dockerfile = (f"FROM {image}\nCOPY --chmod=0555 observer /observer\n"
+    dockerfile = (f"FROM {image}\nCOPY --chmod=0555 observer /observer\n" +
+                  (f"COPY --chmod=0444 engine.dll {ENGINE_HOME}/System.Management.Automation.dll\n" if engine_payload else "") +
                   f"LABEL org.emumee.observer.build={digest}\n").encode("ascii")
     with tarfile.open(fileobj=archive, mode="w") as tar:
         for filename, content in (("Dockerfile", dockerfile), ("observer", payload)):
             member = tarfile.TarInfo(filename)
             member.size, member.mode = len(content), 0o555
             tar.addfile(member, io.BytesIO(content))
+        if engine_payload:
+            member = tarfile.TarInfo("engine.dll")
+            member.size, member.mode = len(engine_payload), 0o444
+            tar.addfile(member, io.BytesIO(engine_payload))
     completed = subprocess.run(["docker", "build", "--pull=false", "--network=none", "--tag", tag, "-"],
                                input=archive.getvalue(), capture_output=True, timeout=90)
     if completed.returncode:
@@ -117,7 +178,7 @@ def observer_image(image: str, payload: bytes) -> str:
     return info["Id"]
 
 
-def probe(image: str, observer: Path) -> dict:
+def probe(image: str, observer: Path, instrumented_engine: Path | None = None) -> dict:
     if not re.fullmatch(r"mcr\.microsoft\.com/dotnet/sdk@sha256:[a-f0-9]{64}", image):
         raise ValueError("An already pulled official SDK image pinned by digest is required")
     image_info = json.loads(docker("image", "inspect", image))[0]
@@ -126,8 +187,19 @@ def probe(image: str, observer: Path) -> dict:
     payload = observer.read_bytes()
     if payload[:6] != b"\x7fELF\x02\x01":
         raise ValueError("Observer must be a built Linux x86-64 ELF")
-    runtime_image = observer_image(image, payload)
-    encoded = base64.b64encode(PROBE.encode("utf-16le")).decode("ascii")
+    engine_payload = None
+    engine_build = None
+    if instrumented_engine:
+        from tools.build_powershell_instrumented_engine import SOURCE_COMMIT, SDK_IMAGE
+        engine_payload = instrumented_engine.read_bytes()
+        engine_build = json.loads(instrumented_engine.with_suffix(".build.json").read_text(encoding="utf-8"))
+        if (image != SDK_IMAGE or engine_build["source_commit"] != SOURCE_COMMIT or
+                engine_build["sdk_image"] != image or
+                engine_build["assembly_sha256"] != hashlib.sha256(engine_payload).hexdigest()):
+            raise ValueError("Instrumented engine build evidence does not match this pinned probe")
+    runtime_image = observer_image(image, payload, engine_payload)
+    source = PROBE + (ENGINE_PROBE if engine_payload else "")
+    encoded = base64.b64encode(source.encode("utf-16le")).decode("ascii")
     name = "emumee-exec-observer-" + uuid.uuid4().hex
     created = False
     try:
@@ -167,7 +239,12 @@ def probe(image: str, observer: Path) -> dict:
                                + completed.stderr.decode("utf-8", errors="replace")[:1000])
         events = verified_events(completed.stdout, key)
         commands = command_events(events)
-        echo = [c["native_arguments"] for c in commands if c["path"] == "/bin/echo"]
+        engine_commands = engine_command_events(events)
+        commands.extend(engine_commands)
+        commands.sort(key=lambda command: command["observer_sequence"])
+        for sequence, command in enumerate(commands, 1):
+            command["sequence"] = sequence
+        echo = [c["native_arguments"] for c in commands if c.get("path") == "/bin/echo"]
         observed = {"exact_native_argv": ["space value", 'quote"value', "", "café-✓"] in echo,
                     "after_breakpoint_removal": ["after-breakpoint-removal"] in echo,
                     "observer_memory_denied": ["observer-memory-denied"] in echo,
@@ -179,19 +256,40 @@ def probe(image: str, observer: Path) -> dict:
                     "observer_non_dumpable": events[0]["dumpable"] == 0,
                     "tracer_exitkill_enabled": events[0]["exitkill"] is True,
                     "root_exited_successfully": events[-1]["root_exit_code"] == 0}
+        if engine_payload:
+            def has_input(value):
+                return any(c["command"] == "Write-Output" and c["bound_parameters"].get("InputObject") == value
+                           for c in engine_commands)
+            observed.update({"engine_cmdlet_after_breakpoint_removal": has_input(["engine-after-remove"]),
+                "engine_nested_expression": has_input(["nested-engine-after-remove"]),
+                "engine_splatted_array": has_input(["splat-first", "splat-second"]),
+                "engine_simple_function": any(c["command"] == "Invoke-GuestProbe" and
+                    c["bound_parameters"].get("Value") == "simple-function-value" for c in engine_commands),
+                "engine_pipeline_bound_parameter": any(c["command"] == "Invoke-AdvancedProbe" and
+                    c["phase"] == "process_record_bound" and c["bound_parameters"].get("Value") == "pipeline-value"
+                    for c in engine_commands),
+                "engine_debugger_hidden": has_input(["hidden-value"]),
+                "engine_new_runspace": has_input(["new-runspace"]),
+                "engine_opaque_value_marked": any(c["command"] == "Write-Output" and
+                    "PSCustomObject" in json.dumps(c["bound_parameters"]) and
+                    "opaque_value_not_evaluated" in json.dumps(c["bound_parameters"])
+                    for c in engine_commands),
+                "snapshot_did_not_invoke_script_getter": ["snapshot-getter-invoked"] not in echo})
         network = [{**event, "event": "network_denied", "api": "linux.socket",
                     "capture": "external_linux_ptrace", "network_used": False,
                     "reason": "Network socket creation denied before execution"}
                    for event in events if event["event"] == "native_syscall_denied" and event["syscall_number"] == 41]
         return {"image": image, "image_id": runtime_image, "base_image_id": image_info["Id"],
-            "capture_source": "external_linux_ptrace",
+            "capture_source": "engine_instrumentation_and_external_native" if engine_payload else "external_linux_ptrace",
+            "instrumented_engine_build": engine_build,
             "observer_sha256": hashlib.sha256(payload).hexdigest(),
             "execution_started_at": started, "execution_finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "configuration_checks": checks, "observed_checks": observed, "passed": all(observed.values()),
             "probe": {"command_events": commands, "observer_events": events, "network_events": network,
                       "dropped_command_events": 0, "capture_integrity_events": []},
             "limitations": ["Fixed harmless probe only; no submitted scripts are accepted",
-                "Only Linux native execs and selected syscall denials are observed; PowerShell cmdlets are not covered",
+                ("Engine invocation data is guest-generated and can be forged or bypassed with arbitrary .NET/native access"
+                 if engine_payload else "Only Linux native execs and selected syscall denials are observed; PowerShell cmdlets are not covered"),
                 "Linux guest identity is not the Windows persona",
                 "The prototype does not establish resistance to container escape or all observer tampering",
                 "Exec confirmation does not establish successful program completion",
@@ -207,13 +305,15 @@ def main():
     parser.add_argument("--observer", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dashboard-root", type=Path)
+    parser.add_argument("--instrumented-engine", type=Path, help="Use the pinned experimental engine and additional fixed fixtures")
     args = parser.parse_args()
-    report = probe(args.image, args.observer)
+    report = probe(args.image, args.observer, args.instrumented_engine)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.dashboard_root and report["passed"]:
         from emumee.powershell_probe_report import save_probe_run
-        print(json.dumps({"dashboard_run": str(save_probe_run(report, args.dashboard_root, PROBE))}))
+        source = PROBE + (ENGINE_PROBE if args.instrumented_engine else "")
+        print(json.dumps({"dashboard_run": str(save_probe_run(report, args.dashboard_root, source))}))
     print(json.dumps({"passed": report["passed"], "checks": report["observed_checks"]}))
     if not report["passed"]:
         raise SystemExit(1)

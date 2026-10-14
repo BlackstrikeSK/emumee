@@ -70,18 +70,22 @@ static unsigned long peek(pid_t pid, unsigned long address) {
     if (value == -1 && errno) fail("tracee_memory_unreadable");
     return (unsigned long)value;
 }
-static void hex_string(pid_t pid, unsigned long address) {
+static void hex_memory(pid_t pid, unsigned long address, size_t limit, int terminated) {
     add("\"");
-    for (size_t i = 0; i < 16384; i += sizeof(unsigned long)) {
-        unsigned long word = peek(pid, address + i);
-        for (size_t j = 0; j < sizeof(word); ++j) {
+    size_t i = 0;
+    while (i < limit) {
+        unsigned long current = address + i;
+        unsigned long word = peek(pid, current & ~(sizeof(unsigned long) - 1));
+        for (size_t j = current & (sizeof(unsigned long) - 1); j < sizeof(word) && i < limit; ++j, ++i) {
             unsigned int c = (word >> (j * 8)) & 255;
-            if (!c) { add("\""); return; }
+            if (terminated && !c) { add("\""); return; }
             add("%02x", c);
         }
     }
-    fail("argument_limit");
+    if (terminated) fail("argument_limit");
+    add("\"");
 }
+static void hex_string(pid_t pid, unsigned long address) { hex_memory(pid, address, 16384, 1); }
 static void exec_event(pid_t pid, const struct ptrace_syscall_info *info) {
     int at = info->entry.nr == SYS_execveat;
     unsigned long file = info->entry.args[at ? 1 : 0];
@@ -127,7 +131,7 @@ int main(int argc, char **argv) {
     if (!root_pid) {
         OPENSSL_cleanse(key, sizeof(key));
         int fd = open("/dev/null", O_RDWR);
-        if (fd < 0 || dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0) _exit(94);
+        if (fd < 0 || dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0 || dup2(fd, 198) < 0) _exit(94);
         if (fd > 2) close(fd);
         if (prctl(PR_SET_DUMPABLE, 1) || ptrace(PTRACE_TRACEME, 0, 0, 0)) _exit(94);
         raise(SIGSTOP);
@@ -176,6 +180,12 @@ int main(int argc, char **argv) {
                 fail("unsupported_tracee_architecture");
             if (info.op == PTRACE_SYSCALL_INFO_ENTRY) {
                 if (info.entry.nr == SYS_execve || info.entry.nr == SYS_execveat) exec_event(pid, &info);
+                if (info.entry.nr == SYS_write && info.entry.args[0] == 198) {
+                    unsigned long length = info.entry.args[2];
+                    if (!length || length > 65536) fail("engine_record_limit");
+                    begin(); add("{\"event\":\"guest_engine_record\",\"pid\":%d,\"data_hex\":", pid);
+                    hex_memory(pid, info.entry.args[1], length, 0); add("}"); emit();
+                }
                 int error = denied(&info);
                 if (error) {
                     struct user_regs_struct registers;

@@ -23,11 +23,12 @@ def save_probe_run(report: dict, root: Path, source: str) -> Path:
                       for event in integrity_events)
     engine = {"command_events": probe["command_events"],
               "command_capture": {"complete": False,
-                                  "source": "engine_debugger_command_processor",
+                                  "source": report.get("capture_source", "engine_debugger_command_processor"),
                                   "dropped_events": probe["dropped_command_events"],
                                   "observer_state": "interrupted" if interrupted else "no_interruption_observed",
                                   "integrity_events": integrity_events,
                                   "limitations": limitations},
+              "network_events": probe.get("network_events", []),
               "fixed_probe_source": source, "probe_evidence": report}
     payload = json.dumps(engine, indent=2).encode("utf-8")
     if len(payload) > MAX_ENGINE_BYTES:
@@ -42,8 +43,10 @@ def save_probe_run(report: dict, root: Path, source: str) -> Path:
                "guest_trace_complete": False, "errors": [], "artifacts": [],
                "engine_report": "engine-report.json", "engine_report_size": len(payload),
                "engine_report_sha256": hashlib.sha256(payload).hexdigest(),
-               "console_output": {"stdout": "\n".join(probe["values"]), "stderr": "",
-                                  "stdout_truncated": False, "stderr_truncated": False},
+               "console_output": ({"stdout": "\n".join(probe["values"]), "stderr": "",
+                                   "stdout_truncated": False, "stderr_truncated": False}
+                                  if "values" in probe else None),
+               "network_attempts": probe.get("network_events", [])[:1000],
                "run_manifest": {"probe_only": True, "execution_boundary": "docker-linux-vm",
                                 "image": report["image"],
                                 "engine_report_integrity": ENGINE_INTEGRITY}}

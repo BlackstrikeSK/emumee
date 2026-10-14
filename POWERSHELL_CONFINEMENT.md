@@ -98,6 +98,63 @@ Microsoft documents runtime parameter tracing in
 and script block invocation logging in
 [PowerShell Group Policy settings](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_group_policy_settings).
 
+## Separate native-process observer prototype
+
+`tools/probe_powershell_exec_observer.py` runs a second fixed benign probe with
+a separate Linux x86-64 observer process. It captures `execve`/`execveat` argument
+bytes at syscall entry and projects only kernel-confirmed execs into the
+dashboard's Commands section. Spaces, quotes, empty arguments, and UTF-8 bytes
+are preserved; full argument bytes remain available as hexadecimal data. A
+successful exec does not establish successful program completion.
+
+The observer traces process/thread descendants, requests `PTRACE_O_EXITKILL`,
+rejects other syscall architectures and untraced clone requests, and blocks
+selected network and observer-access syscalls. It runs with no capabilities
+inside the existing no-network, read-only, unprivileged container boundary.
+Neither ptrace privileges nor a host filesystem mount are added. The helper is
+baked into a local derived image from the pinned SDK image before runtime;
+Docker does not allow copying it into an already read-only container root.
+The local image/cache and compiled helper remain available for repeat probes.
+
+The observer makes itself non-dumpable. A fresh host-generated HMAC key arrives
+over stdin, is erased from the forked child's key buffer before exec, and is
+never placed in command arguments, environment, or reports. Host verification
+rejects unsigned, changed, missing, or reordered records and requires a complete
+observer lifecycle. This protects the tested record channel from ordinary
+script output; it is not proof against every possible observer attack. Child
+stdout/stderr are discarded in this prototype and the report says no console
+capture is available. Linux documents the underlying
+[ptrace controls](https://man7.org/linux/man-pages/man2/ptrace.2.html) and
+[dumpable attribute](https://man7.org/linux/man-pages/man2/pr_set_dumpable.2const.html).
+
+On 2026-10-14 the fixed probe passed all ten observed checks. It captured the
+argument array `['space value', 'quote"value', '', 'café-✓']`, a native call
+after breakpoint removal, an access-denied exception when opening observer
+memory, and a blocked IPv4 socket syscall. Evidence is
+`output/powershell-exec-observer/probe.json`; the dashboard run is
+`output/powershell-dashboard-probe/20261014T210945Z-358cad7c`.
+No observer probe container remained after execution.
+
+Build with an existing Linux x86-64 WSL distribution containing GCC, libc
+development files, and `libssl-dev`, then run the fixed probe:
+
+```powershell
+.\tools\build_powershell_exec_observer.ps1
+.venv\Scripts\python.exe -m tools.probe_powershell_exec_observer `
+  --image mcr.microsoft.com/dotnet/sdk@sha256:2f5eb32870b4c0074a3d5b5191a03553bcab7b74463a76a7c0a5f3ef65c90fe5 `
+  --observer output\powershell-exec-observer\observer `
+  --output output\powershell-exec-observer\probe.json `
+  --dashboard-root output\powershell-dashboard-probe
+```
+
+This prototype still accepts no submitted script. It captures native execs,
+not PowerShell cmdlet/function calls or arbitrary .NET method invocations.
+Linux identity still differs from the Windows persona. `execveat` descriptor
+paths, all multithreaded exec edge cases, broader syscall coverage, complete
+network intent, hostile observer tampering, and container escape resistance
+remain unverified. Engine-level evaluated-parameter logging and a Windows
+persona execution boundary remain required before enabling general scripts.
+
 Show these invocation records in a dedicated dashboard section and keep the
 raw event list in the integrity-checked engine report. Verify it with benign
 scripts that construct a command name and arguments at runtime, invoke a

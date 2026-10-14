@@ -8,7 +8,7 @@ from unittest import mock
 from emumee.crt_startup import CRTStartup, process_argv
 from emumee.native import run_native
 from emumee.pe import inspect_pe
-from emumee.persona import load_persona
+from emumee.persona import load_persona, make_speakeasy_config
 from tests.fixtures.build_native import build_crt_args
 
 
@@ -49,6 +49,18 @@ class _Emu:
 
 
 class CRTStartupTests(unittest.TestCase):
+    def test_explicit_raw_argument_quotes_leave_crt_value_plain(self):
+        persona = load_persona(None)
+        guest_args = ['Coffee', r'C:\Users\Alex\Documents\shopping-list.txt']
+        config = make_speakeasy_config(
+            persona, 'find.exe', 10, 100_000, guest_args,
+            quoted_arg_indices=[0])
+        self.assertIn('find.exe "Coffee" C:\\Users\\Alex', config['command_line'])
+        self.assertEqual(guest_args[0], 'Coffee')
+        with self.assertRaises(ValueError):
+            make_speakeasy_config(persona, 'find.exe', 10, 100_000,
+                                  guest_args, quoted_arg_indices=[2])
+
     def test_active_guest_image_is_argv_zero_on_both_architectures(self):
         original = CRTStartup._mainargs
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):

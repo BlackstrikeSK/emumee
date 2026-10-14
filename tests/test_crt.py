@@ -74,6 +74,24 @@ class LegacyCRTStreamsTests(unittest.TestCase):
         self.assertEqual(observed, [('stderr', 'Host: DESKTOP-7F4M2Q9\n')])
         self.assertFalse(crt.unsupported)
 
+    def test_mbtowc_converts_one_ascii_byte_and_checks_write_guard(self):
+        emu = _Emulator(8)
+        memory = {0x1000: ord('C'), 0x1001: 0}
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._mbtowc(
+            emu, 'msvcrt.mbtowc', None, [0x2000, 0x1000, 14]), 1)
+        self.assertEqual(bytes(memory[0x2000 + index] for index in range(2)),
+                         b'C\0')
+        self.assertEqual(crt._mbtowc(
+            emu, 'msvcrt.mbtowc', None, [0x2000, 0x1001, 1]), 0)
+        crt.write_guard = lambda *_args: False
+        self.assertEqual(crt._mbtowc(
+            emu, 'msvcrt.mbtowc', None, [0x2000, 0x1000, 1]), -1)
+
     def test_wcsupr_uppercases_guest_buffer_in_place_with_write_guard(self):
         emu = _Emulator(8)
         memory = {}

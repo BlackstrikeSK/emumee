@@ -90,6 +90,8 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._wprintf, "msvcrt", "wprintf", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._mbtowc, "msvcrt", "mbtowc", argc=3,
+                              call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fwprintf, "msvcrt", "fwprintf", argc=2,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fflush, "msvcrt", "fflush", argc=1,
@@ -686,6 +688,28 @@ class LegacyCRTStreams:
     def _wprintf(self, emu, api_name, _original, params) -> int:
         """Bounded wide console output for literal text and %s/%S strings."""
         return self._wide_printf(emu, api_name, params, 0)
+
+    def _mbtowc(self, emu, api_name, _original, params) -> int:
+        destination, source, count = map(int, params)
+        if not source:
+            return 0
+        count &= (1 << (emu.get_ptr_size() * 8)) - 1
+        if count == 0:
+            return -1
+        try:
+            value = self._read(emu, source, 1)[0]
+            if value > 127:
+                self.unsupported.append(f"{api_name}: non-ASCII CRT locale conversion")
+                return -1
+            if destination:
+                if self.write_guard is not None and not self.write_guard(
+                        emu, destination, 2):
+                    raise ValueError("guest CRT write denied")
+                emu.mem_write(destination, bytes((value, 0)))
+            return 0 if value == 0 else 1
+        except Exception as exc:
+            self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
+            return -1
 
     def _fwprintf(self, emu, api_name, _original, params) -> int:
         """Render a bounded wide format to a modeled standard FILE stream."""

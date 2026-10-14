@@ -158,7 +158,8 @@ def execute(run_dir: Path, expected_request_sha256: str | None = None) -> dict:
                                     bundle_files=bundle_files,
                                     bundle_guest_root=guest_root,
                                     companion_guest_paths=companion_guest_paths,
-                                    emulate_exports=emulate_exports)
+                                    emulate_exports=emulate_exports,
+                                    quoted_arg_indices=request.get("quoted_arg_indices"))
                 (run_dir / "worker-stage.txt").write_text("native runner returned", encoding="utf-8")
         summary.update(result)
         summary["status"], completion_error = _result_status(result)

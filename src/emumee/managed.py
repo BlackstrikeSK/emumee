@@ -28,6 +28,7 @@ from dncil.cil.body.reader import read_method_body_from_bytes
 from .artifacts import ArtifactCatalog, MAX_ARTIFACT, MAX_MEMORY_SCAN
 from .console_output import ConsoleOutput
 from .persona_content import oem_code_page
+from .persona import virtual_file_bytes
 from .network import MAX_HEADER_CHARS, MAX_TRANSFER, NetworkBridge, NetworkDenied
 from .pe import SampleInfo
 
@@ -203,7 +204,7 @@ class ManagedRunner:
                 raise UnsupportedManaged("Managed persona file mapping exceeds limit")
             self._seed_directory(ntpath.dirname(self._guest_path(entry["path"])))
             key = self._file_key(entry["path"])
-            self.files[key] = entry["text"].encode("utf-8")
+            self.files[key] = virtual_file_bytes(entry)
             self.file_display_paths[key] = self._guest_path(entry["path"])
         for relative, payload in bundle_files or []:
             guest_path = ntpath.normpath(ntpath.join(

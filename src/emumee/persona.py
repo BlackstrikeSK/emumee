@@ -234,7 +234,8 @@ MAX_NATIVE_API_CALLS = 100_000
 
 def make_speakeasy_config(persona: dict, sample_name: str, timeout: int,
                           max_instructions: int, guest_args: list[str] | None = None,
-                          guest_env: dict[str, str] | None = None) -> dict:
+                          guest_env: dict[str, str] | None = None,
+                          quoted_arg_indices: list[int] | None = None) -> dict:
     import subprocess
     cfg = get_default_config_dict()
     cfg["os_ver"].update({"major": 10, "minor": 0, "build": int(persona["windows_build"])})
@@ -246,8 +247,18 @@ def make_speakeasy_config(persona: dict, sample_name: str, timeout: int,
         "sid": persona["user_sid"],
     }
     cfg["current_dir"] = persona["current_dir"]
-    cfg["command_line"] = subprocess.list2cmdline(
-        [f'{persona["current_dir"]}\\{sample_name}', *(guest_args or [])])
+    args = list(guest_args or [])
+    quoted = set(quoted_arg_indices or [])
+    if (any(not isinstance(index, int) or isinstance(index, bool) or
+            index < 0 or index >= len(args) for index in quoted) or
+            any('"' in args[index] for index in quoted)):
+        raise ValueError('Quoted guest argument index or value is invalid')
+    rendered = [subprocess.list2cmdline([f'{persona["current_dir"]}\\{sample_name}'])]
+    for index, value in enumerate(args):
+        part = subprocess.list2cmdline([value])
+        rendered.append('"' + part + '"' if index in quoted and
+                        not (part.startswith('"') and part.endswith('"')) else part)
+    cfg["command_line"] = ' '.join(rendered)
     cfg["env"].update({
         "userprofile": f'C:\\Users\\{persona["user_name"]}',
         "username": persona["user_name"],

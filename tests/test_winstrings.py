@@ -116,6 +116,43 @@ class WinStringTests(unittest.TestCase):
         self.api.write_guard = lambda _emu, _address, _size: False
         self.assertEqual(call(6), 0xC000000D)
 
+    def test_rtl_is_text_unicode_distinguishes_ascii_and_utf16(self):
+        ascii_text = b'Milk\nCoffee\nBread\n'
+        self.emu.mem_write(0x500, ascii_text)
+        self.emu.mem_write(0x700, (0xffffffff).to_bytes(4, 'little'))
+        call = lambda size: self.api._is_text_unicode(
+            self.emu, 'ntdll.RtlIsTextUnicode', None,
+            [0x500, size, 0x700])
+        self.assertEqual(call(len(ascii_text)), 0)
+        self.assertEqual(self.emu.mem_read(0x700, 4), b'\0' * 4)
+        wide_text = 'Coffee'.encode('utf-16le')
+        self.emu.mem_write(0x500, wide_text)
+        self.emu.mem_write(0x700, (0xffffffff).to_bytes(4, 'little'))
+        self.assertEqual(call(len(wide_text)), 1)
+        self.assertEqual(int.from_bytes(self.emu.mem_read(0x700, 4), 'little'),
+                         0x1003)
+        self.emu.mem_write(0x500, b'\xff\xfeA\0')
+        self.emu.mem_write(0x700, (0xffffffff).to_bytes(4, 'little'))
+        self.assertEqual(call(4), 1)
+        self.assertTrue(int.from_bytes(self.emu.mem_read(0x700, 4), 'little') & 8)
+        self.emu.mem_write(0x700, (0xffffffff).to_bytes(4, 'little'))
+        self.assertEqual(call(3), 0)
+        self.assertEqual(self.emu.mem_read(0x700, 4), (0x200).to_bytes(4, 'little'))
+
+    def test_wide_char_to_multi_byte_returns_real_byte_count(self):
+        self.emu.mem_write(0x500, 'Coffee'.encode('utf-16le'))
+        call = lambda capacity: self.api._wide_char_to_multi_byte(
+            self.emu, 'api-ms-win-core-string-l1-1-0.WideCharToMultiByte',
+            None, [437, 0, 0x500, 6, 0x600, capacity, 0, 0])
+        self.assertEqual(call(0), 6)
+        self.assertEqual(call(0x100000006), 6)
+        self.assertEqual(self.emu.mem_read(0x600, 6), b'Coffee')
+        self.assertEqual(call(2), 0)
+        self.assertEqual(self.emu.last_error, 122)
+        self.api.write_guard = lambda *_args: False
+        self.assertEqual(call(6), 0)
+        self.assertEqual(self.emu.last_error, 998)
+
     def test_api_set_presence_reads_counted_guest_namespace(self):
         name = 'ext-ms-win-fsutilext-ulib-l1-1-0'.encode('utf-16le')
         self.emu.mem_write(0x500, name)

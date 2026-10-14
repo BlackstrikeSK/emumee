@@ -662,9 +662,10 @@ def run_native(
     bundle_guest_root: str | None = None,
     companion_guest_paths: dict[str, str] | None = None,
     emulate_exports: bool = False,
+    quoted_arg_indices: list[int] | None = None,
 ) -> dict:
     cfg = make_speakeasy_config(persona, info.name, timeout, max_instructions,
-                                guest_args, guest_env)
+                                guest_args, guest_env, quoted_arg_indices)
     persona_sources = {}
     for guest_path, host_path in materialize_virtual_files(
             persona, run_dir / "persona-files"):
@@ -750,7 +751,7 @@ def run_native(
     guest_environment = GuestEnvironmentBlocks()
     ui_language = ThreadUILanguage(persona)
     win_messages = WinMessages(persona["locale"])
-    guest_strings = GuestStrings()
+    guest_strings = GuestStrings(oem_code_page(persona["locale"]))
     guest_delay_imports = GuestDelayImports()
     guest_tokens = GuestTokens(persona)
     guest_lsa = GuestLSA()

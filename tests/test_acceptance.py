@@ -9539,6 +9539,10 @@ class EmumeeAcceptance(unittest.TestCase):
         data = assembly.read_bytes()
         runner = ManagedRunner(data, inspect_pe(data, assembly.name), self.persona,
                                self.root, 100_000)
+        self.assertTrue(runner.files[runner._file_key(
+            r'C:\Users\Alex\Documents\Receipts\train-apr-2026.pdf')].startswith(b'%PDF-'))
+        self.assertTrue(runner.files[runner._file_key(
+            r'C:\Users\Alex\Downloads\trip-documents.zip')].startswith(b'PK\x03\x04'))
         result = runner.run(self.root)
         self.assertFalse(result["errors"])
         recovered = [(item["guest_path"], (self.root / "artifacts" / item["file"]).read_bytes())

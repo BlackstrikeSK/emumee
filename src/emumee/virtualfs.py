@@ -123,6 +123,7 @@ class VirtualFileBridge:
         self.console_write_handler = None
         self.console_open_handler = None
         self.console_close_handler = None
+        self.find_search_dirs: dict[int, str] = {}
         self.captured_large_write_bytes = 0
         # Per-open sharing modes, independent of Speakeasy's cloned file data.
         # A None path denotes an unlinked file that still has a live handle.
@@ -415,6 +416,74 @@ class VirtualFileBridge:
         for name in ("ReadFile", "WriteFile"):
             emulator.add_api_hook(self._closed_file_operation,
                                   "api-ms-win-core-file-l1-1-0", name, argc=5)
+        for module in ("kernel32", "api-ms-win-core-file-l1-1-0"):
+            for suffix in ("A", "W"):
+                emulator.add_api_hook(self._find_first_file, module,
+                                      "FindFirstFile" + suffix, argc=2)
+                emulator.add_api_hook(self._find_next_file, module,
+                                      "FindNextFile" + suffix, argc=2)
+            emulator.add_api_hook(self._find_close, module, "FindClose", argc=1)
+
+    def _find_data_name(self, emu, output: int, width: int) -> str | None:
+        try:
+            raw = emu.mem_read(output + 44, 260 * width)
+            if width == 2:
+                end = next((i for i in range(0, len(raw), 2)
+                            if raw[i:i + 2] == b"\0\0"), len(raw))
+                return raw[:end].decode("utf-16le")
+            return raw.split(b"\0", 1)[0].decode("cp1252")
+        except Exception:
+            return None
+
+    def _populate_find_data(self, emu, search_dir: str, output: int,
+                            width: int) -> None:
+        if not output or not self._guest_pointer_access(emu, output, 44 + 260 * width, False):
+            return
+        name = self._find_data_name(emu, output, width)
+        if not name or name in (".", ".."):
+            return
+        path = ntpath.join(search_dir, name)
+        manager = emu.get_file_manager()
+        source = self._file(manager, path)
+        configured = self._config(manager, path)
+        if source is None and configured is None:
+            return
+        data = self._copy_source_data(source, configured)
+        if data is None:
+            return
+        attributes = self._attributes_for(source) if source is not None else 0x80
+        timestamps = getattr(source, "virtual_times", (self.filetime_ticks,) * 4)
+        image = struct.pack("<IQQQII", attributes, *timestamps[:3],
+                            len(data) >> 32, len(data) & 0xffffffff)
+        if self._guest_pointer_access(emu, output, len(image), True):
+            emu.mem_write(output, image)
+
+    def _find_first_file(self, emu, api_name, original, params):
+        pointer, output = map(int, params)
+        width = 2 if api_name.endswith("W") else 1
+        search = emu.read_mem_string(pointer, width) if pointer else ""
+        handle = int(original(params))
+        if handle not in (0, 0xffffffff, 0xffffffffffffffff):
+            if len(self.find_search_dirs) < 2048:
+                search_dir = self._path(ntpath.dirname(search))
+                self.find_search_dirs[handle] = search_dir
+                self._populate_find_data(emu, search_dir, output, width)
+        return handle
+
+    def _find_next_file(self, emu, api_name, original, params):
+        handle, output = map(int, params)
+        result = int(original(params))
+        if result and handle in self.find_search_dirs:
+            self._populate_find_data(emu, self.find_search_dirs[handle],
+                                     output, 2 if api_name.endswith("W") else 1)
+        return result
+
+    def _find_close(self, emu, api_name, original, params):
+        handle = int(params[0])
+        result = int(original(params))
+        if result:
+            self.find_search_dirs.pop(handle, None)
+        return result
 
     def _get_volume_information(self, emu, api_name, original, params):
         root_ptr, label_ptr, label_size, serial_ptr, component_ptr, flags_ptr, fs_ptr, fs_size = (

@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+import struct
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,6 +29,14 @@ class _Guest:
     def mem_write(self, address, data):
         self.memory[address:address + len(data)] = data
 
+    def read_mem_string(self, address, width):
+        chars = bytearray()
+        while True:
+            unit = self.mem_read(address + len(chars), width)
+            if unit == b'\0' * width:
+                return chars.decode('utf-16le' if width == 2 else 'cp1252')
+            chars.extend(unit)
+
     def get_ptr_size(self):
         return 8
 
@@ -42,6 +51,41 @@ class _Guest:
 
 
 class FullPathTests(unittest.TestCase):
+    def test_find_data_uses_guest_file_size_for_first_and_next(self):
+        path = r'C:\Users\Alex\Documents\shopping-list.txt'
+        next_path = r'C:\Users\Alex\Documents\notes.txt'
+        entries = [SimpleNamespace(mode='full_path', emu_path=path,
+                                   path='guest-shopping'),
+                   SimpleNamespace(mode='full_path', emu_path=next_path,
+                                   path='guest-notes')]
+        bridge = VirtualFileBridge(r'C:\Users\Alex\Downloads', None,
+                                   {'guest-shopping': b'Milk\nCoffee\nBread\n',
+                                    'guest-notes': b'Notes\n'},
+                                   filetime_ticks=123)
+        emu = _Guest()
+        emu.get_file_manager = lambda: SimpleNamespace(
+            files=[], file_config=SimpleNamespace(files=entries))
+        emu.mem_write(0x100, (r'C:\Users\Alex\Documents\*.txt' + '\0').encode('utf-16le'))
+        def write_find_name(name):
+            emu.mem_write(0x400, b'\0' * 592)
+            emu.mem_write(0x400 + 44, (name + '\0').encode('utf-16le'))
+        def first(_params):
+            write_find_name('shopping-list.txt')
+            return 0x1808
+        self.assertEqual(bridge._find_first_file(
+            emu, 'kernel32.FindFirstFileW', first, [0x100, 0x400]), 0x1808)
+        self.assertEqual(struct.unpack('<IQQQII', emu.mem_read(0x400, 36)),
+                         (0x80, 123, 123, 123, 0, 18))
+        def next_file(_params):
+            write_find_name('notes.txt')
+            return 1
+        self.assertEqual(bridge._find_next_file(
+            emu, 'kernel32.FindNextFileW', next_file, [0x1808, 0x400]), 1)
+        self.assertEqual(struct.unpack_from('<I', emu.mem_read(0x400, 36), 32)[0], 6)
+        self.assertEqual(bridge._find_close(
+            emu, 'kernel32.FindClose', lambda _params: 1, [0x1808]), 1)
+        self.assertFalse(bridge.find_search_dirs)
+
     def test_api_set_full_path_import_uses_guest_directory(self):
         with tempfile.TemporaryDirectory() as folder:
             bridge = VirtualFileBridge(r"C:\Users\Alex\Downloads",

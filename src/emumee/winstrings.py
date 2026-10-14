@@ -23,7 +23,8 @@ PRESENT_API_SETS = frozenset({
 
 
 class GuestStrings:
-    def __init__(self):
+    def __init__(self, oem_code_page: int = 437):
+        self.oem_code_page = oem_code_page
         self.read_guard = None
         self.write_guard = None
         self.unsupported: list[str] = []
@@ -46,6 +47,11 @@ class GuestStrings:
         emulator.add_api_hook(self._trim, 'shlwapi', 'StrTrimW', argc=2)
         emulator.add_api_hook(self._oem_to_unicode, 'ntdll',
                               'RtlOemToUnicodeN', argc=5)
+        emulator.add_api_hook(self._is_text_unicode, 'ntdll',
+                              'RtlIsTextUnicode', argc=3)
+        for module in ('kernel32', 'api-ms-win-core-string-l1-1-0'):
+            emulator.add_api_hook(self._wide_char_to_multi_byte, module,
+                                  'WideCharToMultiByte', argc=8)
         emulator.add_api_hook(self._api_set_presence,
                               'api-ms-win-core-apiquery-l1-1-0',
                               'ApiSetQueryApiSetPresence', argc=2)
@@ -142,6 +148,133 @@ class GuestStrings:
         except Exception:
             return invalid
         return 0x80000005 if truncated else 0  # STATUS_BUFFER_OVERFLOW or SUCCESS
+
+    def _is_text_unicode(self, emu, api_name, _original, params) -> int:
+        pointer, size, result_pointer = map(int, params)
+        size &= 0xffffffff
+        if size & 0x80000000 or size > 1024 * 1024 or (size and not self._access(
+                emu, pointer, size)):
+            self.unsupported.append(f'{api_name}: invalid or oversized text buffer')
+            return 0
+        if result_pointer and (not self._access(emu, result_pointer, 4) or
+                               not self._writable(emu, result_pointer, 4)):
+            self.unsupported.append(f'{api_name}: inaccessible result flags')
+            return 0
+        try:
+            raw = emu.mem_read(pointer, size) if size else b''
+            requested = (int.from_bytes(emu.mem_read(result_pointer, 4), 'little')
+                         if result_pointer else 0xffffffff)
+            flags = 0
+            if size & 1:
+                flags |= 0x200  # IS_TEXT_UNICODE_ODD_LENGTH
+            elif raw.startswith(b'\xff\xfe'):
+                flags |= 0x8  # IS_TEXT_UNICODE_SIGNATURE
+            elif raw.startswith(b'\xfe\xff'):
+                flags |= 0x80  # IS_TEXT_UNICODE_REVERSE_SIGNATURE
+            elif size >= 4:
+                high = raw[1::2]
+                low = raw[::2]
+                zero_high = sum(value == 0 for value in high)
+                printable_low = sum(value in (9, 10, 13) or 32 <= value < 127
+                                    or 160 <= value <= 255
+                                    for value in low)
+                if zero_high * 4 >= len(high) * 3 and (
+                        printable_low * 4 >= len(low) * 3):
+                    flags |= 0x2  # IS_TEXT_UNICODE_STATISTICS
+                    if zero_high == len(high):
+                        flags |= 0x1000  # IS_TEXT_UNICODE_NULL_BYTES
+                        flags |= (0x4 if any(value in (9, 10, 13, 32)
+                                             for value in low) else 0x1)
+            selected = flags & requested
+            if result_pointer:
+                emu.mem_write(result_pointer, selected.to_bytes(4, 'little'))
+            return int(bool(selected & (0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20 |
+                                        0x40 | 0x80 | 0x1000)))
+        except Exception:
+            self.unsupported.append(f'{api_name}: inaccessible text buffer')
+            return 0
+
+    def _wide_char_to_multi_byte(self, emu, api_name, _original, params) -> int:
+        page, flags, source, count, output, capacity, default, used = map(int, params)
+        page &= 0xffffffff
+        flags &= 0xffffffff
+        count &= 0xffffffff
+        capacity &= 0xffffffff
+        if count == 0xffffffff:
+            count = -1
+        elif count & 0x80000000:
+            emu.set_last_error(87)
+            return 0
+        if capacity & 0x80000000 or not source or count == 0 or capacity > MAX_CHARS * 4:
+            emu.set_last_error(87)
+            return 0
+        if flags:
+            self.unsupported.append(f'{api_name}: unsupported conversion flags 0x{flags:x}')
+            emu.set_last_error(ERROR_INVALID_FLAGS)
+            return 0
+        if page == 0:
+            page = 1252
+        elif page == 1:
+            page = self.oem_code_page
+        if page not in (437, 850, 1252, 65001):
+            self.unsupported.append(f'{api_name}: unsupported code page {page}')
+            emu.set_last_error(87)
+            return 0
+        if page == 65001 and (default or used):
+            emu.set_last_error(87)
+            return 0
+        if (default and not self._access(emu, default, 1) or
+                used and not self._writable(emu, used, 4)):
+            emu.set_last_error(87)
+            return 0
+        try:
+            if count == -1:
+                raw = bytearray()
+                for index in range(MAX_CHARS):
+                    if not self._access(emu, source + index * 2, 2):
+                        raise ValueError('wide input unavailable')
+                    unit = emu.mem_read(source + index * 2, 2)
+                    raw.extend(unit)
+                    if unit == b'\0\0':
+                        break
+                else:
+                    raise ValueError('unterminated wide input')
+            else:
+                if count > MAX_CHARS or not self._access(emu, source, count * 2):
+                    raise ValueError('wide input unavailable')
+                raw = emu.mem_read(source, count * 2)
+            value = bytes(raw).decode('utf-16le')
+            replacement = (emu.mem_read(default, 1).decode(f'cp{page}')
+                           if default else '?')
+            encoded = value.encode(f'cp{page}', errors='replace')
+            used_default = any(char.encode(f'cp{page}', errors='replace') == b'?'
+                               and char != '?' for char in value)
+            if replacement != '?' and used_default:
+                encoded = b''.join(char.encode(f'cp{page}', errors='replace')
+                                   if char.encode(f'cp{page}', errors='replace') != b'?'
+                                   or char == '?' else replacement.encode(f'cp{page}')
+                                   for char in value)
+            if capacity:
+                if output and output < source + len(raw) and source < output + len(encoded):
+                    emu.set_last_error(87)
+                    return 0
+                if not output or len(encoded) > capacity:
+                    emu.set_last_error(122)
+                    return 0
+                if not self._writable(emu, output, len(encoded)):
+                    emu.set_last_error(998)
+                    return 0
+                emu.mem_write(output, encoded)
+            if used:
+                emu.mem_write(used, int(used_default).to_bytes(4, 'little'))
+            emu.set_last_error(0)
+            return len(encoded)
+        except (ValueError, UnicodeError, LookupError):
+            emu.set_last_error(87)
+            return 0
+        except Exception:
+            emu.set_last_error(998)
+            return 0
 
     def _trim(self, emu, api_name, _original, params) -> int:
         target, trim_chars = map(int, params)

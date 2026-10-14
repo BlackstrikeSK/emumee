@@ -328,10 +328,15 @@ def run(args: argparse.Namespace) -> int:
         if emulate_exports and (execution_info.kind != "dll" or execution_info.managed):
             raise ValueError("--all-exports requires a native DLL-style PE input")
         guest_args = list(getattr(args, "guest_arg", []) or [])
+        quoted_arg_indices = list(getattr(args, "guest_quote_arg", []) or [])
         if (len(guest_args) > 64 or any(not isinstance(arg, str) or "\0" in arg
                                         for arg in guest_args) or
                 sum(len(arg) for arg in guest_args) > 8192):
             raise ValueError("Guest arguments exceed the 64 argument / 8192 character limit")
+        if (any(index < 0 or index >= len(guest_args) or '"' in guest_args[index]
+                for index in quoted_arg_indices) or
+                quoted_arg_indices and execution_info.managed):
+            raise ValueError("--guest-quote-arg requires a valid native --guest-arg index without quote characters")
         guest_env: dict[str, str] = {}
         for assignment in getattr(args, "guest_env", []) or []:
             name, separator, value = assignment.partition("=")
@@ -443,6 +448,7 @@ def run(args: argparse.Namespace) -> int:
     request = {"sample_name": execution_info.name, "persona": persona, "dlls": companions,
                "timeout": args.timeout, "max_instructions": args.max_instructions,
                "guest_args": guest_args, "guest_env": guest_env,
+               "quoted_arg_indices": quoted_arg_indices,
                "all_exports": emulate_exports,
                "network_mode": network_mode,
                "input_sha256": hashlib.sha256(execution_data).hexdigest(),
@@ -466,6 +472,7 @@ def run(args: argparse.Namespace) -> int:
         "bundle_launch": launch_relative if bundled else None,
         "request_sha256": hashlib.sha256(request_raw).hexdigest(),
         "guest_args": guest_args,
+        "quoted_arg_indices": quoted_arg_indices,
         "guest_env": guest_env,
         "all_exports": emulate_exports,
         "network_mode": network_mode,
@@ -775,6 +782,8 @@ def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--offline-replay", action="store_true",
                         help="Use exact HTTP fixtures only; deny and log every unmatched or raw network request")
     parser.add_argument("--guest-arg", action="append", default=[], help="Guest command-line argument; repeatable")
+    parser.add_argument("--guest-quote-arg", action="append", type=int, default=[],
+                        help="Quote a zero-based --guest-arg index in the raw native Windows command line")
     parser.add_argument("--guest-env", action="append", default=[], help="Guest process KEY=VALUE; repeatable")
     parser.add_argument("--output", help="Report directory (default: ./output)")
     parser.add_argument("--timeout", type=int, default=60,

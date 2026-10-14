@@ -46,6 +46,60 @@ class _Emu:
 
 
 class TokenTests(unittest.TestCase):
+    def test_privilege_lookup_has_real_strings_and_buffer_contract(self):
+        api = GuestTokens({'user_sid': 'S-1-5-21-11-22-33-1001',
+                           'user_is_admin': True, 'user_name': 'Alex',
+                           'hostname': 'DESKTOP-Q1'})
+        self.assertIn((23, 3), api.privileges)
+        self.assertIn((29, 3), api.privileges)
+        self.assertIn((30, 3), api.privileges)
+        self.assertIn((22, 0), api.privileges)
+        self.assertGreater(len(api.privileges), 20)
+        for suffix, encoding, unit in (('W', 'utf-16le', 2), ('A', 'cp1252', 1)):
+            with self.subTest(suffix=suffix):
+                emu = _Emu(8)
+                emu.mem_write(0x100, struct.pack('<II', 20, 0))
+                emu.mem_write(0x200, struct.pack('<I', 0))
+                name_args = [0, 0x100, 0x300, 0x200]
+                self.assertEqual(api._lookup_privilege_name(
+                    emu, 'advapi32.LookupPrivilegeName' + suffix, None,
+                    name_args), 0)
+                self.assertEqual(emu.last_error, 122)
+                name = 'SeDebugPrivilege'
+                self.assertEqual(struct.unpack('<I', emu.mem_read(0x200, 4))[0],
+                                 len(name) + 1)
+                self.assertEqual(api._lookup_privilege_name(
+                    emu, 'advapi32.LookupPrivilegeName' + suffix, None,
+                    name_args), 1)
+                self.assertEqual(emu.mem_read(0x300, (len(name) + 1) * unit),
+                                 (name + '\0').encode(encoding))
+                self.assertEqual(struct.unpack('<I', emu.mem_read(0x200, 4))[0],
+                                 len(name))
+                emu.mem_write(0x400, struct.pack('<I', 0))
+                display_args = [0, 0x300, 0x500, 0x400, 0x600]
+                self.assertEqual(api._lookup_privilege_display_name(
+                    emu, 'advapi32.LookupPrivilegeDisplayName' + suffix,
+                    None, display_args), 0)
+                self.assertEqual(emu.last_error, 122)
+                self.assertEqual(api._lookup_privilege_display_name(
+                    emu, 'advapi32.LookupPrivilegeDisplayName' + suffix,
+                    None, display_args), 1)
+                display = 'Debug programs'
+                self.assertEqual(emu.mem_read(0x500, (len(display) + 1) * unit),
+                                 (display + '\0').encode(encoding))
+                self.assertEqual(struct.unpack('<I', emu.mem_read(0x600, 4))[0],
+                                 0x409)
+                self.assertEqual(api._lookup_privilege_value(
+                    emu, 'advapi32.LookupPrivilegeValue' + suffix,
+                    None, [0, 0x300, 0x700]), 1)
+                self.assertEqual(emu.mem_read(0x700, 8),
+                                 struct.pack('<II', 20, 0))
+                emu.mem_write(0x100, struct.pack('<II', 99, 0))
+                self.assertEqual(api._lookup_privilege_name(
+                    emu, 'advapi32.LookupPrivilegeName' + suffix, None,
+                    name_args), 0)
+                self.assertEqual(emu.last_error, 1313)
+
     def test_token_user_layout_and_sid_length(self):
         persona = {'user_sid': 'S-1-5-21-11-22-33-1001',
                    'user_is_admin': False, 'user_name': 'Alex',
@@ -109,7 +163,9 @@ class TokenTests(unittest.TestCase):
                 self.assertEqual(struct.unpack('<I', emu.mem_read(0xB00, 4))[0],
                                  len(api.privileges))
                 self.assertEqual(struct.unpack('<III', emu.mem_read(0xB04, 12)),
-                                 (22, 0, 3))
+                                 (19, 0, 0))
+                self.assertIn((23, 3), api.privileges)
+                self.assertNotIn((22, 3), api.privileges)
                 for info_class in (33, 34):
                     claim_params = [0x220, info_class, 0, 0, 0x300]
                     self.assertEqual(api._token_info(emu, '', None, claim_params), 0)
@@ -132,6 +188,22 @@ class TokenTests(unittest.TestCase):
         self.assertEqual(api._token_info(
             emu, '', None, [0x221, 1, 0x500, 64, 0x300]), 0)
         self.assertEqual(emu.last_error, 6)
+
+    def test_initialize_sid_writes_exact_authority_and_zero_subauthorities(self):
+        api = GuestTokens({'user_sid': 'S-1-5-21-11-22-33-1001',
+                           'user_is_admin': False, 'user_name': 'Alex',
+                           'hostname': 'DESKTOP-Q1'})
+        emu = _Emu(8)
+        emu.mem_write(0x100, b'\0\0\0\0\0\x05')
+        emu.mem_write(0x200, b'X' * 20)
+        self.assertEqual(api._initialize_sid(emu, '', None,
+                                              [0x200, 0x100, 2]), 1)
+        self.assertEqual(emu.mem_read(0x200, 16),
+                         b'\x01\x02\0\0\0\0\0\x05' + b'\0' * 8)
+        self.assertEqual(emu.mem_read(0x210, 4), b'XXXX')
+        self.assertEqual(api._initialize_sid(emu, '', None,
+                                              [0x200, 0x100, 16]), 0)
+        self.assertEqual(emu.last_error, 87)
 
 
 if __name__ == '__main__':

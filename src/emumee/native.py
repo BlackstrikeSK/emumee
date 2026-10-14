@@ -42,6 +42,7 @@ from .winmessages import WinMessages
 from .version_info import GuestVersionInfo
 from .winstrings import GuestStrings
 from .tokens import GuestTokens
+from .lsa import GuestLSA
 
 
 SIGNATURE_ARGUMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*: \S")
@@ -743,6 +744,7 @@ def run_native(
     win_messages = WinMessages(persona["locale"])
     guest_strings = GuestStrings()
     guest_tokens = GuestTokens(persona)
+    guest_lsa = GuestLSA()
     win_messages.guest_images = version_info.images
     win_messages.current_dir = persona["current_dir"]
     version_info.read_guard = lambda emu, address, size: virtual_process._cpu_access(
@@ -754,6 +756,10 @@ def run_native(
     guest_tokens.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
     guest_tokens.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
+    guest_lsa.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    guest_lsa.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     heap_checks = GuestHeapChecks()
     crt_streams.read_guard = lambda emu, address, size: virtual_process._cpu_access(
@@ -778,7 +784,11 @@ def run_native(
     console_output.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     virtual_files.console_write_handler = console_output.observe_write_file
-    virtual_process.process_cleanup_handler = virtual_files.cleanup_process
+    def cleanup_guest_process(emu, process):
+        guest_lsa.cleanup_process(emu, process)
+        return virtual_files.cleanup_process(emu, process)
+
+    virtual_process.process_cleanup_handler = cleanup_guest_process
     virtual_process.registry_cleanup_handler = virtual_registry.cleanup_process
     virtual_files.process_close_handler = virtual_process.close_process_handle
     virtual_files.api_memory_allowance = virtual_process._allow_api_memory
@@ -804,6 +814,7 @@ def run_native(
         version_info.install(se)
         guest_strings.install(se)
         guest_tokens.install(se)
+        guest_lsa.install(se)
         # Speakeasy models the x86 MSVC operator delete decoration, while
         # modern x64 binaries import this different decoration.
         se.add_api_hook(
@@ -2322,6 +2333,7 @@ def run_native(
         errors.extend(ui_language.unsupported)
         errors.extend(win_messages.unsupported)
         errors.extend(guest_strings.unsupported)
+        errors.extend(guest_lsa.unsupported)
         if limit_reached:
             errors.append(f"Native instruction budget exhausted at {max_instructions} instructions")
         if timeout_reached:

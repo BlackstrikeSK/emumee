@@ -66,6 +66,35 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fflush, "msvcrt", "fflush", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._ultow, "msvcrt", "_ultow", argc=3,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+
+    def _ultow(self, emu, api_name, _original, params) -> int:
+        """Format one unsigned 32-bit long in a guest wide-character buffer."""
+        value, output, radix = map(int, params)
+        if not 2 <= radix <= 36 or not output:
+            self.unsupported.append(f"{api_name}: invalid destination or radix")
+            return 0
+        alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+        number = value & 0xFFFFFFFF
+        digits = []
+        while number:
+            number, remainder = divmod(number, radix)
+            digits.append(alphabet[remainder])
+        encoded = ("".join(reversed(digits)) if digits else "0").encode("utf-16le") + b"\0\0"
+        try:
+            mapping = emu.get_address_map(output)
+            if (mapping is None or mapping.free or
+                    output + len(encoded) > int(mapping.base) + int(mapping.size) or
+                    not (int(mapping.prot) & common.PERM_MEM_WRITE) or
+                    self.write_guard is not None and
+                    not self.write_guard(emu, output, len(encoded))):
+                raise ValueError("guest destination is not writable")
+            emu.mem_write(output, encoded)
+        except Exception:
+            self.unsupported.append(f"{api_name}: guest destination is not writable")
+            return 0
+        return output
 
     def _iob_func(self, emu, _api_name, _original, _params) -> int:
         process = emu.get_current_process()

@@ -2,6 +2,7 @@
 
 import struct
 import unittest
+from types import SimpleNamespace
 
 from emumee.crt import LegacyCRTStreams, _legacy_iob_image
 from emumee.virtualprocess import VirtualProcessBridge
@@ -29,6 +30,24 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_ultow_bounded_guest_destination_and_radix(self):
+        emu = _Emulator(8)
+        emu.get_address_map = lambda address: SimpleNamespace(
+            base=0x1000, size=0x100, prot=6, free=False) if 0x1000 <= address < 0x1100 else None
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._ultow(emu, "msvcrt._ultow", None,
+                                    [0xFFFFFFFF, 0x1000, 10]), 0x1000)
+        self.assertEqual(emu.writes[-1], (0x1000, "4294967295\0".encode("utf-16le")))
+        self.assertEqual(crt._ultow(emu, "msvcrt._ultow", None,
+                                    [255, 0x1080, 16]), 0x1080)
+        self.assertEqual(emu.writes[-1], (0x1080, "ff\0".encode("utf-16le")))
+        count = len(emu.writes)
+        self.assertEqual(crt._ultow(emu, "msvcrt._ultow", None,
+                                    [0xFFFFFFFF, 0x10f0, 2]), 0)
+        self.assertEqual(crt._ultow(emu, "msvcrt._ultow", None,
+                                    [5, 0x1000, 1]), 0)
+        self.assertEqual(len(emu.writes), count)
+
     def test_stream_layout_and_process_ownership(self):
         for width, stride, flag_offset, file_offset in ((4, 32, 12, 16),
                                                         (8, 48, 24, 28)):

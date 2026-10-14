@@ -10,6 +10,8 @@ class GuestHeapChecks:
     def install(self, emulator) -> None:
         emulator.add_api_hook(self.validate, "kernel32", "HeapValidate", argc=3)
         emulator.add_api_hook(self.validate, "kernelbase", "HeapValidate", argc=3)
+        emulator.add_api_hook(self.validate, "api-ms-win-core-heap-l1-1-0",
+                              "HeapValidate", argc=3)
 
     def validate(self, emu, _api_name, _original, params) -> int:
         heap, flags, pointer = map(int, params)

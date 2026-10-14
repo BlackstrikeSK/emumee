@@ -716,7 +716,10 @@ def run_native(
         parsed.close()
     catalog = ArtifactCatalog(run_dir / "artifacts", checkpoint=True)
     catalog.carve_pe(data, "embedded_input", skip_offset_zero=True)
-    se = speakeasy.Speakeasy(config=cfg)
+    # Speakeasy's command-line fallback uses shlex(posix=False), which keeps
+    # quotes around Windows arguments containing spaces. Supply the parsed
+    # guest arguments separately while retaining the Win32 command-line text.
+    se = speakeasy.Speakeasy(config=cfg, argv=list(guest_args or []))
     version_images = {ntpath.join(persona["current_dir"], info.name): data}
     for mapped in cfg["filesystem"]["files"]:
         source_bytes = persona_sources.get(str(mapped.get("path", "")))

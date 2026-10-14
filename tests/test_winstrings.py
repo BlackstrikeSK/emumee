@@ -45,6 +45,10 @@ class WinStringTests(unittest.TestCase):
             self.emu, 'kernel32.FindStringOrdinal', None,
             [FIND_FROMSTART, 0x100, -1, 0x200, -1, 1]), 5)
         self.assertEqual(self.api._find_ordinal(
+            self.emu, 'api-ms-win-core-libraryloader-l1-2-0.FindStringOrdinal',
+            None, [FIND_FROMSTART, 0x100, 0xffffffff, 0x200, 4,
+                   0x100000001]), 5)
+        self.assertEqual(self.api._find_ordinal(
             self.emu, 'kernel32.FindStringOrdinal', None,
             [FIND_FROMEND, 0x100, -1, 0x200, -1, 0]), -1)
         self.assertEqual(self.emu.last_error, 0)

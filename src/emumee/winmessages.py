@@ -144,6 +144,9 @@ class WinMessages:
     def install(self, emulator) -> None:
         emulator.add_api_hook(self._format_w, "kernel32", "FormatMessageW", argc=7)
         emulator.add_api_hook(self._format_w, "kernelbase", "FormatMessageW", argc=7)
+        emulator.add_api_hook(self._format_w,
+                              "api-ms-win-core-localization-l1-2-0",
+                              "FormatMessageW", argc=7)
         emulator.add_api_hook(self._load_string_w, "user32", "LoadStringW", argc=4)
         emulator.add_api_hook(self._load_string_w,
                               "api-ms-win-core-libraryloader-l1-2-0",

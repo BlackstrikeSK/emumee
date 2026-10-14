@@ -9,6 +9,15 @@ from emumee.heap_checks import GuestHeapChecks
 
 
 class HeapCheckTests(unittest.TestCase):
+    def test_heap_api_set_uses_checked_handler(self):
+        hooks = {}
+        class Registrar:
+            def add_api_hook(self, callback, module, name, **kwargs):
+                hooks[(module, name)] = (callback.__name__, kwargs["argc"])
+        GuestHeapChecks().install(Registrar())
+        self.assertEqual(hooks[("api-ms-win-core-heap-l1-1-0", "HeapValidate")],
+                         hooks[("kernel32", "HeapValidate")])
+
     def test_owned_live_block_and_heap_wide_validation(self):
         region = SimpleNamespace(base=0x5000, tag="api.heap.HeapAlloc.0x5000", free=False)
         handler = SimpleNamespace(heaps=[0x4000])

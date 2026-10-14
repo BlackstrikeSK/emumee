@@ -40,6 +40,7 @@ class VirtualRegistryBridge:
             for module in ("advapi32", "api-ms-win-core-registry-l1-1-0"):
                 emulator.add_api_hook(self._set_value, module, "RegSetValueEx" + suffix, argc=6)
                 emulator.add_api_hook(self._query_value, module, "RegQueryValueEx" + suffix, argc=6)
+                emulator.add_api_hook(self._get_value, module, "RegGetValue" + suffix, argc=7)
                 emulator.add_api_hook(self._create_key, module, "RegCreateKey" + suffix, argc=3)
                 emulator.add_api_hook(self._create_key_ex, module, "RegCreateKeyEx" + suffix, argc=9)
                 emulator.add_api_hook(self._open_key, module, "RegOpenKey" + suffix, argc=3)
@@ -326,11 +327,45 @@ class VirtualRegistryBridge:
             return None
         return (code, raw) if len(raw) <= MAX_REG_VALUE else None
 
-    def _query_value(self, emu, api_name, original, params):
+    def _get_value(self, emu, api_name, original, params):
+        handle, subkey_ptr, name_ptr, flags, type_ptr, data_ptr, size_ptr = map(int, params)
+        handle = self._canonical_handle(handle)
+        flags &= 0xffffffff
+        if flags & ~0x1000ffff or (flags & 0x0000ffff) not in (0, 0x0000ffff):
+            self.unsupported.append(f"{api_name}: registry type or expansion flags unsupported")
+            return 50
+        key = self._owned_key(emu, handle)
+        if key is None:
+            self.events.append({"event": "virtual_registry_query", "api": api_name,
+                                "key": "", "status": 6})
+            return 6
+        if key and subkey_ptr:
+            path = self._subkey_path(key, self._name(emu, api_name, subkey_ptr))
+            key = (self._exact_key(emu.regman, path) or
+                   emu.regman.get_key_from_config(path)) if path else None
+            if key is None:
+                self.events.append({"event": "virtual_registry_query", "api": api_name,
+                                    "key": path or "", "status": 2})
+                return 2
+        name = self._name(emu, api_name, name_ptr)
+        value = key.get_value(name) if name else next(
+            (item for item in key.get_values()
+             if item.get_name() in ("", "default")), None)
+        if value is not None:
+            written = self.written_values.get((id(key), name.casefold()))
+            code = written[0] if written else self._type_code(value.get_type())
+            if code == REG_EXPAND_SZ and not flags & 0x10000000:
+                self.unsupported.append(f"{api_name}: REG_EXPAND_SZ expansion unsupported")
+                return 50
+        return self._query_value(emu, api_name, original,
+                                 [handle, name_ptr, 0, type_ptr, data_ptr, size_ptr],
+                                 key_override=key)
+
+    def _query_value(self, emu, api_name, original, params, *, key_override=None):
         handle, name_ptr, reserved, type_ptr, data_ptr, size_ptr = map(int, params)
         handle = self._canonical_handle(handle)
         name = self._name(emu, api_name, name_ptr)
-        key = self._owned_key(emu, handle)
+        key = key_override or self._owned_key(emu, handle)
         event = {"event": "virtual_registry_query", "api": api_name,
                  "key": key.get_path() if key else "", "value": name, "status": 0}
         self.events.append(event)

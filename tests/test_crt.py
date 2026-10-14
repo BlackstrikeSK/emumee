@@ -30,6 +30,37 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_private_crt_exit_records_guest_status_and_stops(self):
+        process = SimpleNamespace(pid=1234)
+        stopped = []
+        emu = SimpleNamespace(get_current_process=lambda: process,
+                              get_current_thread=lambda: None,
+                              exit_process=lambda: stopped.append(True))
+        bridge = VirtualProcessBridge(None)
+        cleaned = []
+        bridge._cleanup_process = lambda _emu, candidate: cleaned.append(candidate)
+        bridge._crt_exit(emu, "api-ms-win-crt-private-l1-1-0._o_exit", None, [7])
+        self.assertEqual(bridge.process_exit_codes[id(process)], 7)
+        self.assertEqual(cleaned, [process])
+        self.assertEqual(stopped, [True])
+
+    def test_errno_storage_is_stable_per_guest_thread_and_process(self):
+        emu = _Emulator(8)
+        first_thread, second_thread = object(), object()
+        emu.get_current_thread = lambda: first_thread
+        crt = LegacyCRTStreams()
+        name = 'api-ms-win-crt-private-l1-1-0._o__errno'
+        first = crt._errno(emu, name, None, [])
+        self.assertEqual(crt._errno(emu, name, None, []), first)
+        self.assertEqual(emu.writes[-1], (first, b'\0' * 4))
+        emu.get_current_thread = lambda: second_thread
+        self.assertNotEqual(crt._errno(emu, name, None, []), first)
+        previous = emu.process
+        emu.process = object()
+        self.assertNotEqual(crt._errno(emu, name, None, []), first)
+        crt.cleanup_process(previous)
+        self.assertTrue(all(key[0] != id(previous) for key in crt._errno_by_thread))
+
     def test_ultow_bounded_guest_destination_and_radix(self):
         emu = _Emulator(8)
         emu.get_address_map = lambda address: SimpleNamespace(
@@ -236,6 +267,13 @@ class LegacyCRTStreamsTests(unittest.TestCase):
                     emu, "api-ms-win-crt-private-l1-1-0._o___stdio_common_vswprintf",
                     None, [0, 0x6000, 16, 0x1000, 0, 0x3000]), 7)
                 self.assertEqual(read(0x6000, 16).decode("utf-16le"), "Test 42\0")
+                put(0x1000, "%*s".encode("utf-16le") + b"\0\0")
+                put(0x3000, (6).to_bytes(width, "little") +
+                    (0x2000).to_bytes(width, "little"))
+                self.assertEqual(crt._vsnwprintf(
+                    emu, "msvcrt._vsnwprintf", None,
+                    [0x7000, 10, 0x1000, 0x3000]), 6)
+                self.assertEqual(read(0x7000, 14).decode("utf-16le"), "  Test\0")
                 self.assertFalse(crt.unsupported)
 
     def test_private_ucrt_stream_alias_is_registered(self):
@@ -250,6 +288,83 @@ class LegacyCRTStreamsTests(unittest.TestCase):
                                 "_o__fileno")], "_fileno")
         self.assertEqual(hooks[("api-ms-win-crt-private-l1-1-0",
                                 "_o__write")], "_write_descriptor")
+        self.assertEqual(hooks[("api-ms-win-crt-private-l1-1-0",
+                                "_o_fflush")], "_fflush")
+        self.assertEqual(hooks[("api-ms-win-crt-private-l1-1-0",
+                                "_o___stdio_common_vfprintf")],
+                         "_stdio_common_vfprintf")
+
+    def test_ucrt_vfprintf_formats_bounded_guest_ascii(self):
+        emu = _Emulator(8)
+        memory = {}
+        def put(address, data):
+            for index, byte in enumerate(data):
+                memory[address + index] = byte
+        emu.mem_read = lambda address, size: bytes(memory[address + i]
+                                                    for i in range(size))
+        original_write = emu.mem_write
+        def write(address, data):
+            original_write(address, data)
+            put(address, data)
+        emu.mem_write = write
+        put(0x1000, b'%s %d\n\0')
+        put(0x2000, b'value\0')
+        put(0x3000, (0x2000).to_bytes(8, 'little') +
+            (42).to_bytes(8, 'little'))
+        output = []
+        crt = LegacyCRTStreams()
+        crt.console_write = lambda stream, text: output.append((stream, text))
+        stderr = crt._acrt_iob_func(emu, 'ucrtbase.__acrt_iob_func', None, [2])
+        self.assertEqual(crt._stdio_common_vfprintf(
+            emu, 'api-ms-win-crt-private-l1-1-0._o___stdio_common_vfprintf',
+            None, [0, stderr, 0x1000, 0, 0x3000]), 9)
+        self.assertEqual(output, [('stderr', 'value 42\n')])
+        put(0x1000, b'%*s|%-*s\0')
+        put(0x3000, (7).to_bytes(8, 'little') +
+            (0x2000).to_bytes(8, 'little') +
+            (7).to_bytes(8, 'little') +
+            (0x2000).to_bytes(8, 'little'))
+        self.assertEqual(crt._stdio_common_vfprintf(
+            emu, 'ucrtbase.__stdio_common_vfprintf', None,
+            [0, stderr, 0x1000, 0, 0x3000]), 15)
+        self.assertEqual(output[-1], ('stderr', '  value|value  '))
+        put(0x1000, b'%n\0')
+        self.assertEqual(crt._stdio_common_vfprintf(
+            emu, 'ucrtbase.__stdio_common_vfprintf', None,
+            [0, stderr, 0x1000, 0, 0x3000]), -1)
+        self.assertEqual(len(output), 2)
+
+    def test_x86_ucrt_formatters_read_split_64_bit_options(self):
+        emu = _Emulator(4)
+        memory = {}
+        def put(address, data):
+            for index, byte in enumerate(data):
+                memory[address + index] = byte
+        emu.mem_read = lambda address, size: bytes(memory[address + i]
+                                                    for i in range(size))
+        emu.mem_write = put
+        put(0x1000, "%s".encode("utf-16le") + b"\0\0")
+        put(0x1100, b'%s\0')
+        put(0x2000, "Test".encode("utf-16le") + b"\0\0")
+        put(0x2100, b'Test\0')
+        put(0x3000, (0x2000).to_bytes(4, 'little'))
+        put(0x3100, (0x2100).to_bytes(4, 'little'))
+        crt = LegacyCRTStreams()
+        emu.get_func_argv = lambda _conv, count: (
+            [1, 0, 0x4000, 8, 0x1000, 0, 0x3000] if count == 7
+            else [0, 0, crt._acrt_iob_func(emu, 'ucrtbase.__acrt_iob_func',
+                                           None, [1]), 0x1100, 0, 0x3100])
+        self.assertEqual(crt._stdio_common_vswprintf(
+            emu, 'api-ms-win-crt-private-l1-1-0._o___stdio_common_vswprintf',
+            None, [1, 0, 0x4000, 8, 0x1000, 0]), 4)
+        self.assertEqual(bytes(memory[0x4000 + i] for i in range(10)),
+                         "Test\0".encode("utf-16le"))
+        written = []
+        crt.console_write = lambda stream, text: written.append((stream, text))
+        self.assertEqual(crt._stdio_common_vfprintf(
+            emu, 'api-ms-win-crt-private-l1-1-0._o___stdio_common_vfprintf',
+            None, [0, 0, 0, 0x1100, 0]), 4)
+        self.assertEqual(written, [('stdout', 'Test')])
 
     def test_vsnwprintf_rejects_unmodeled_format(self):
         emu = _Emulator(4)

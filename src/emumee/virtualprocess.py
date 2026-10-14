@@ -143,6 +143,8 @@ class VirtualProcessBridge:
         emulator.add_api_hook(self._terminate_process, "kernel32", "TerminateProcess", argc=2)
         emulator.add_api_hook(self._get_exit_code_process, "kernel32", "GetExitCodeProcess", argc=2)
         emulator.add_api_hook(self._exit_process, "kernel32", "ExitProcess", argc=1)
+        emulator.add_api_hook(self._crt_exit, "api-ms-win-crt-private-l1-1-0",
+                              "_o_exit", argc=1)
         emulator.add_api_hook(self._open_thread, "kernel32", "OpenThread", argc=3)
         emulator.add_api_hook(self._create_thread, "kernel32", "CreateThread", argc=6)
         emulator.add_api_hook(self._terminate_thread, "kernel32", "TerminateThread", argc=2)
@@ -1228,6 +1230,9 @@ class VirtualProcessBridge:
                                 "success": True})
             self._cleanup_process(emu, process)
         return original(params)
+
+    def _crt_exit(self, emu, api_name, _original, params):
+        return self._exit_process(emu, api_name, lambda _args: emu.exit_process(), params)
 
     def _terminate_process(self, emu, api_name, original, params):
         handle, exit_code = (int(value) for value in params)

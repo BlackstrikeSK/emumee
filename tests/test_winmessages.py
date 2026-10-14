@@ -100,6 +100,9 @@ class WinMessageTests(unittest.TestCase):
         self.messages.install(Registrar())
         self.assertEqual(hooks[("api-ms-win-core-libraryloader-l1-2-0",
                                 "LoadStringW")], hooks[("user32", "LoadStringW")])
+        self.assertEqual(hooks[("api-ms-win-core-localization-l1-2-0",
+                                "FormatMessageW")],
+                         hooks[("kernel32", "FormatMessageW")])
 
     def format(self, flags, source=0, message_id=0, language=0,
                output=0x1000, capacity=256, arguments=0):

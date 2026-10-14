@@ -130,6 +130,8 @@ class GuestStrings:
 
     def _find_ordinal(self, emu, api_name, _original, params) -> int:
         flags, source, source_count, value, value_count, ignore_case = map(int, params)
+        flags &= 0xffffffff
+        ignore_case &= 0xffffffff
         if flags not in (FIND_STARTSWITH, FIND_ENDSWITH,
                          FIND_FROMSTART, FIND_FROMEND):
             emu.set_last_error(ERROR_INVALID_FLAGS)

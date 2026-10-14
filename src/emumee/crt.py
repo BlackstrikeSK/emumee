@@ -17,7 +17,7 @@ _STREAM_MODES = frozenset((0x4000, 0x8000, 0x10000, 0x20000, 0x40000))
 _MAX_FORMAT_CHARS = 8192
 _MAX_OUTPUT_CHARS = 65536
 _FORMAT_SPEC = re.compile(
-    r"%([-+ #0]*)(\d{0,5})(?:\.(\d{0,5}))?(hh|h|ll|l|I64|I32|z|t|w)?([diuoxXpcCsS%])")
+    r"%([-+ #0]*)(\d{0,5}|\*)(?:\.(\d{0,5}|\*))?(hh|h|ll|l|I64|I32|z|t|w)?([diuoxXpcCsS%])")
 
 
 def _legacy_iob_image(pointer_size: int) -> bytes:
@@ -48,6 +48,7 @@ class LegacyCRTStreams:
         self._iob_by_process: dict[int, int] = {}
         self._ucrt_iob_by_process: dict[int, tuple[int, int]] = {}
         self._mode_by_process: dict[tuple[int, int], int] = {}
+        self._errno_by_thread: dict[tuple[int, int], int] = {}
         self.read_guard = None
         self.write_guard = None
         self.console_write = None
@@ -68,6 +69,9 @@ class LegacyCRTStreams:
             for name in ("__stdio_common_vswprintf", "_o___stdio_common_vswprintf"):
                 emulator.add_api_hook(self._stdio_common_vswprintf, module, name,
                                       argc=6, call_conv=e_arch.CALL_CONV_CDECL)
+            for name in ("__stdio_common_vfprintf", "_o___stdio_common_vfprintf"):
+                emulator.add_api_hook(self._stdio_common_vfprintf, module, name,
+                                      argc=5, call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fileno, "msvcrt", "_fileno", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._get_osfhandle, "msvcrt", "_get_osfhandle",
@@ -76,6 +80,8 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fflush, "msvcrt", "fflush", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._fflush, "api-ms-win-crt-private-l1-1-0",
+                              "_o_fflush", argc=1, call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._ultow, "msvcrt", "_ultow", argc=3,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._setmode, "msvcrt", "_setmode", argc=2,
@@ -88,6 +94,10 @@ class LegacyCRTStreams:
                                      ("_o__write", self._write_descriptor, 3)):
             emulator.add_api_hook(callback, "api-ms-win-crt-private-l1-1-0",
                                   name, argc=argc, call_conv=e_arch.CALL_CONV_CDECL)
+        for module, name in (("msvcrt", "_errno"), ("ucrtbase", "_errno"),
+                             ("api-ms-win-crt-private-l1-1-0", "_o__errno")):
+            emulator.add_api_hook(self._errno, module, name, argc=0,
+                                  call_conv=e_arch.CALL_CONV_CDECL)
         for name in ("strchr", "strrchr", "wcschr", "wcsrchr"):
             emulator.add_api_hook(self._find_character, "msvcrt", name, argc=2,
                                   call_conv=e_arch.CALL_CONV_CDECL)
@@ -159,6 +169,32 @@ class LegacyCRTStreams:
         for key in tuple(self._mode_by_process):
             if key[0] == owner:
                 self._mode_by_process.pop(key, None)
+        for key in tuple(self._errno_by_thread):
+            if key[0] == owner:
+                self._errno_by_thread.pop(key, None)
+
+    def _errno(self, emu, api_name, _original, _params) -> int:
+        """Return stable, guest-writable CRT errno storage for this guest thread."""
+        process = emu.get_current_process()
+        if process is None:
+            return 0
+        thread = emu.get_current_thread() if hasattr(emu, "get_current_thread") else None
+        key = (id(process), id(thread) if thread is not None else id(process))
+        address = self._errno_by_thread.get(key)
+        if address is not None:
+            return address
+        address = 0
+        try:
+            address = emu.mem_map(4, perms=common.PERM_MEM_RW,
+                                  tag="api.ucrt.errno", process=process)
+            emu.mem_write(address, b"\0" * 4)
+        except Exception:
+            if address:
+                emu.mem_free(address)
+            self.unsupported.append(f"{api_name}: guest errno allocation failed")
+            return 0
+        self._errno_by_thread[key] = address
+        return address
 
     def _write_descriptor(self, emu, api_name, _original, params) -> int:
         descriptor, address, count = map(int, params)
@@ -321,6 +357,14 @@ class LegacyCRTStreams:
             fmt = self._string(emu, format_ptr, 2)
             pointer_size = emu.get_ptr_size()
             arg_index = 0
+            def next_arg():
+                nonlocal arg_index
+                if arg_index >= 64:
+                    raise ValueError("_vsnwprintf argument limit exceeded")
+                value = int.from_bytes(self._read(
+                    emu, arg_ptr + arg_index * pointer_size, pointer_size), "little")
+                arg_index += 1
+                return value
             parts = []
             cursor = 0
             while cursor < len(fmt):
@@ -339,16 +383,18 @@ class LegacyCRTStreams:
                 if kind == "%":
                     parts.append("%")
                     continue
-                width = int(width_text or 0)
-                precision = int(precision_text) if precision_text is not None else None
+                width = self._signed32(next_arg()) if width_text == "*" else int(width_text or 0)
+                precision = (self._signed32(next_arg()) if precision_text == "*"
+                             else int(precision_text) if precision_text is not None else None)
+                if width < 0:
+                    flags += "-"
+                    width = -width
+                if precision is not None and precision < 0:
+                    precision = None
                 if width > _MAX_FORMAT_CHARS or (precision is not None and
                                                  precision > _MAX_FORMAT_CHARS):
                     raise ValueError("_vsnwprintf field exceeds format limit")
-                if arg_index >= 64:
-                    raise ValueError("_vsnwprintf argument limit exceeded")
-                value = int.from_bytes(self._read(
-                    emu, arg_ptr + arg_index * pointer_size, pointer_size), "little")
-                arg_index += 1
+                value = next_arg()
                 if kind in "sS":
                     string_width = (2 if kind == "s" and length not in ("h", "hh")
                                     or kind == "S" and length in ("l", "w") else 1)
@@ -400,9 +446,114 @@ class LegacyCRTStreams:
 
     def _stdio_common_vswprintf(self, emu, api_name, _original, params) -> int:
         """UCRT wide formatting wrapper over the bounded guest vararg reader."""
+        if emu.get_ptr_size() == 4 and hasattr(emu, "get_func_argv"):
+            raw = list(emu.get_func_argv(e_arch.CALL_CONV_CDECL, 7))
+            params = [raw[0] | (raw[1] << 32), *raw[2:]]
         options, buffer, count, format_ptr, locale, arg_ptr = map(int, params)
         if locale or options & ~0x3:
             self.unsupported.append(f"{api_name}: unsupported locale or formatting options")
             return -1
         return self._vsnwprintf(emu, api_name, _original,
                                [buffer, count, format_ptr, arg_ptr])
+
+    @staticmethod
+    def _signed32(value: int) -> int:
+        value &= 0xffffffff
+        return value - 0x100000000 if value & 0x80000000 else value
+
+    def _stdio_common_vfprintf(self, emu, api_name, _original, params) -> int:
+        """Format bounded UCRT narrow output into a modeled standard stream."""
+        try:
+            if emu.get_ptr_size() == 4 and hasattr(emu, "get_func_argv"):
+                raw = list(emu.get_func_argv(e_arch.CALL_CONV_CDECL, 6))
+                params = [raw[0] | (raw[1] << 32), *raw[2:]]
+            options, stream, format_ptr, locale, arg_ptr = map(int, params)
+            if locale or options & ~0x3 or not format_ptr or not arg_ptr:
+                raise ValueError("unsupported locale, options, or null format arguments")
+            index = self._standard_index(emu, stream)
+            if index not in (1, 2) or self.console_write is None:
+                raise ValueError("nonstandard output stream is not modeled")
+            fmt = self._string(emu, format_ptr, 1)
+            width = emu.get_ptr_size()
+            parts = []
+            arg_index = 0
+            def next_arg():
+                nonlocal arg_index
+                if arg_index >= 64:
+                    raise ValueError("argument count exceeds limit")
+                value = int.from_bytes(self._read(
+                    emu, arg_ptr + arg_index * width, width), "little")
+                arg_index += 1
+                return value
+            cursor = 0
+            while cursor < len(fmt):
+                if fmt[cursor] != "%":
+                    end = fmt.find("%", cursor)
+                    if end < 0:
+                        end = len(fmt)
+                    parts.append(fmt[cursor:end])
+                    cursor = end
+                    continue
+                match = _FORMAT_SPEC.match(fmt, cursor)
+                if match is None:
+                    raise ValueError("unsupported format specifier")
+                flags, field_text, precision_text, length, kind = match.groups()
+                cursor = match.end()
+                if kind == "%":
+                    parts.append("%")
+                    continue
+                field = self._signed32(next_arg()) if field_text == "*" else int(field_text or 0)
+                precision = (self._signed32(next_arg()) if precision_text == "*"
+                             else int(precision_text) if precision_text is not None else None)
+                if field < 0:
+                    flags += "-"
+                    field = -field
+                if precision is not None and precision < 0:
+                    precision = None
+                if field > _MAX_FORMAT_CHARS or (precision is not None and
+                                                precision > _MAX_FORMAT_CHARS):
+                    raise ValueError("format field exceeds limit")
+                value = next_arg()
+                if kind in "sS":
+                    string_width = (2 if kind == "S" or length in ("l", "w") else 1)
+                    rendered = self._string(emu, value, string_width)
+                    if precision is not None:
+                        rendered = rendered[:precision]
+                elif kind in "cC":
+                    rendered = chr(value & (0xffff if kind == "C" else 0xff))
+                else:
+                    bits = 64 if length in ("ll", "I64") or kind == "p" else 32
+                    number = value & ((1 << bits) - 1)
+                    if kind in "di" and number & (1 << (bits - 1)):
+                        number -= 1 << bits
+                    if kind in "diu":
+                        rendered = str(number)
+                    elif kind in "xXp":
+                        rendered = format(number, "X" if kind == "X" else "x")
+                        if kind == "p":
+                            rendered = rendered.rjust(width * 2, "0")
+                        elif "#" in flags and number:
+                            rendered = ("0X" if kind == "X" else "0x") + rendered
+                    else:
+                        rendered = format(number, "o")
+                    if precision is not None and kind != "p":
+                        sign = "-" if rendered.startswith("-") else ""
+                        rendered = sign + rendered[len(sign):].rjust(precision, "0")
+                    if number >= 0 and kind in "di" and "+" in flags:
+                        rendered = "+" + rendered
+                if field:
+                    pad = "0" if "0" in flags and "-" not in flags and kind not in "sScC" else " "
+                    rendered = (rendered.ljust(field) if "-" in flags
+                                else rendered.rjust(field, pad))
+                parts.append(rendered)
+                if sum(len(part) for part in parts) > _MAX_OUTPUT_CHARS:
+                    raise ValueError("formatted output exceeds limit")
+            output = "".join(parts)
+            # Invariant ASCII is shared by Windows console code pages. Other
+            # code pages require a modeled locale before output can be exact.
+            output.encode("ascii")
+            self.console_write("stdout" if index == 1 else "stderr", output)
+            return len(output)
+        except Exception as exc:
+            self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
+            return -1

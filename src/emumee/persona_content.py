@@ -113,6 +113,8 @@ def desktop_files(user_name: str, hostname: str) -> list[dict[str, str]]:
          "2026-09-14,Bicycle,Checked tires\n"),
         (home + r"\Documents\Household\pantry-inventory.csv",
          "Item,Quantity,Unit\nMilk,0,carton\nCoffee,0,bag\nBread,1,loaf\n"),
+        (home + r"\Documents\Household\pantry-inventory-updated.csv",
+         "Item,Quantity,Unit\nMilk,1,carton\nCoffee,0,bag\nBread,1,loaf\n"),
         (home + r"\Documents\Receipts\train-apr-2026.txt",
          "2026-04-12 Train 24.50\n"),
         (home + r"\Documents\Receipts\expense-summary.csv",

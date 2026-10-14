@@ -48,6 +48,8 @@ class GuestStrings:
                        'api-ms-win-crt-string-l1-1-0'):
             emulator.add_api_hook(self._wcsncmp, module, 'wcsncmp', argc=3,
                                   call_conv=e_arch.CALL_CONV_CDECL)
+            emulator.add_api_hook(self._wcslwr, module, '_wcslwr', argc=1,
+                                  call_conv=e_arch.CALL_CONV_CDECL)
         for module in ('user32', 'kernel32', 'api-ms-win-core-string-l2-1-0'):
             emulator.add_api_hook(self._char_upper_w, module, 'CharUpperW', argc=1)
         emulator.add_api_hook(self._trim, 'shlwapi', 'StrTrimW', argc=2)
@@ -363,6 +365,22 @@ class GuestStrings:
             self.unsupported.append(f'{api_name}: inaccessible or non-ASCII string')
             return address
         image = (value.upper() + '\0').encode('utf-16le')
+        if not self._writable(emu, address, len(image)):
+            self.unsupported.append(f'{api_name}: guest string is not writable')
+            return address
+        try:
+            emu.mem_write(address, image)
+        except Exception:
+            self.unsupported.append(f'{api_name}: guest string is not writable')
+        return address
+
+    def _wcslwr(self, emu, api_name, _original, params) -> int:
+        address = int(params[0])
+        value = self._read(emu, address, -1, True)
+        if value is None or not value.isascii():
+            self.unsupported.append(f'{api_name}: inaccessible or non-ASCII string')
+            return address
+        image = (value.lower() + '\0').encode('utf-16le')
         if not self._writable(emu, address, len(image)):
             self.unsupported.append(f'{api_name}: guest string is not writable')
             return address

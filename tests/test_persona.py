@@ -383,7 +383,7 @@ class PersonaContentTests(unittest.TestCase):
                 'utc_offset_minutes': 60,
             }), encoding='utf-8')
             persona = load_persona(override)
-            self.assertEqual(len(persona['virtual_files']), 53)
+            self.assertEqual(len(persona['virtual_files']), 54)
             staged = dict(materialize_virtual_files(persona, root / 'staged'))
             draft = staged[r'C:\Users\Morgan\Documents\Work\project-brief-draft.txt'].read_text()
             final = staged[r'C:\Users\Morgan\Documents\Work\project-brief-final.txt'].read_text()
@@ -392,6 +392,9 @@ class PersonaContentTests(unittest.TestCase):
             self.assertNotEqual(draft, final)
             pantry = staged[r'C:\Users\Morgan\Documents\Household\pantry-inventory.csv'].read_text()
             self.assertIn('Coffee,0,bag', pantry)
+            updated = staged[r'C:\Users\Morgan\Documents\Household\pantry-inventory-updated.csv'].read_text()
+            self.assertEqual(len(updated), len(pantry))
+            self.assertIn('Milk,1,carton', updated)
             receipt = staged[r'C:\Users\Morgan\Documents\Receipts\train-apr-2026.txt']
             self.assertIn(b'24.50', receipt.read_bytes())
             pdf = staged[r'C:\Users\Morgan\Documents\Receipts\train-apr-2026.pdf'].read_bytes()

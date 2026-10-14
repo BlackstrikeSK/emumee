@@ -205,6 +205,7 @@ class WinStringTests(unittest.TestCase):
         self.assertIn(('api-ms-win-core-libraryloader-l1-2-0',
                        'FindStringOrdinal', 6), hooks)
         self.assertIn(('msvcrt', 'wcsncmp', 3), hooks)
+        self.assertIn(('msvcrt', '_wcslwr', 1), hooks)
         self.assertIn(('api-ms-win-core-string-l2-1-0', 'CharUpperW', 1), hooks)
 
     def test_wcschr_returns_guest_pointer_including_terminator(self):
@@ -245,6 +246,19 @@ class WinStringTests(unittest.TestCase):
         self.emu.mem_write(address, 'more\0'.encode('utf-16le'))
         self.assertEqual(call(), address)
         self.assertEqual(self.api._read(self.emu, address, -1, True), 'more')
+        self.assertTrue(self.api.unsupported)
+
+    def test_wcslwr_changes_guest_ascii_buffer_in_place(self):
+        self.emu.mem_write(0x500, 'Work\\DRAFT.TXT\0'.encode('utf-16le'))
+        self.assertEqual(self.api._wcslwr(
+            self.emu, 'msvcrt._wcslwr', None, [0x500]), 0x500)
+        self.assertEqual(self.api._read(self.emu, 0x500, -1, True),
+                         'work\\draft.txt')
+        self.api.write_guard = lambda *_args: False
+        self.emu.mem_write(0x500, 'UPPER\0'.encode('utf-16le'))
+        self.assertEqual(self.api._wcslwr(
+            self.emu, 'msvcrt._wcslwr', None, [0x500]), 0x500)
+        self.assertEqual(self.api._read(self.emu, 0x500, -1, True), 'UPPER')
         self.assertTrue(self.api.unsupported)
 
     def test_report_does_not_treat_colon_text_as_signature(self):

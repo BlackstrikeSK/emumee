@@ -16,6 +16,15 @@ class _Emulator:
 
 
 class ThreadUILanguageTests(unittest.TestCase):
+    def test_api_set_alias_registers_persona_language_hooks(self):
+        hooks = []
+        class Registrar:
+            def add_api_hook(self, handler, module, name, argc):
+                hooks.append((module, name, argc))
+        ThreadUILanguage({'locale': 'en-US'}).install(Registrar())
+        self.assertIn(('api-ms-win-core-localization-l1-2-0',
+                       'SetThreadUILanguage', 1), hooks)
+
     def test_zero_selects_persona_language_and_state_is_per_thread(self):
         model = ThreadUILanguage({"locale": "de-DE"})
         emu = _Emulator()

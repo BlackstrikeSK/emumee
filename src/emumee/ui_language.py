@@ -25,9 +25,10 @@ class ThreadUILanguage:
         self._by_thread: dict[int, int] = {}
 
     def install(self, emulator) -> None:
-        emulator.add_api_hook(self._set, "kernel32", "SetThreadUILanguage", argc=1)
-        emulator.add_api_hook(self._get, "kernel32", "GetThreadUILanguage", argc=0)
-        emulator.add_api_hook(self._user, "kernel32", "GetUserDefaultUILanguage", argc=0)
+        for module in ("kernel32", "api-ms-win-core-localization-l1-2-0"):
+            emulator.add_api_hook(self._set, module, "SetThreadUILanguage", argc=1)
+            emulator.add_api_hook(self._get, module, "GetThreadUILanguage", argc=0)
+            emulator.add_api_hook(self._user, module, "GetUserDefaultUILanguage", argc=0)
 
     def _set(self, emu, api_name, _original, params) -> int:
         requested = int(params[0])

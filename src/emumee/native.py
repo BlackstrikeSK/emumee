@@ -761,6 +761,10 @@ def run_native(
         emu, address, size, "read")
     guest_lsa.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
+    guest_identity.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
+    guest_identity.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
     heap_checks = GuestHeapChecks()
     crt_streams.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
@@ -786,6 +790,8 @@ def run_native(
     virtual_files.console_write_handler = console_output.observe_write_file
     def cleanup_guest_process(emu, process):
         guest_lsa.cleanup_process(emu, process)
+        guest_identity.cleanup_process(process)
+        crt_streams.cleanup_process(process)
         return virtual_files.cleanup_process(emu, process)
 
     virtual_process.process_cleanup_handler = cleanup_guest_process

@@ -12,6 +12,8 @@ from speakeasy.winenv import arch as e_arch
 _IOB_ENTRIES = 20
 _IOREAD = 0x0001
 _IOWRT = 0x0002
+_O_TEXT = 0x4000
+_STREAM_MODES = frozenset((0x4000, 0x8000, 0x10000, 0x20000, 0x40000))
 _MAX_FORMAT_CHARS = 8192
 _MAX_OUTPUT_CHARS = 65536
 _FORMAT_SPEC = re.compile(
@@ -45,6 +47,7 @@ class LegacyCRTStreams:
     def __init__(self):
         self._iob_by_process: dict[int, int] = {}
         self._ucrt_iob_by_process: dict[int, tuple[int, int]] = {}
+        self._mode_by_process: dict[tuple[int, int], int] = {}
         self.read_guard = None
         self.write_guard = None
         self.console_write = None
@@ -68,6 +71,35 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._ultow, "msvcrt", "_ultow", argc=3,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._setmode, "msvcrt", "_setmode", argc=2,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._write_descriptor, "msvcrt", "_write", argc=3,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        for name in ("strchr", "strrchr", "wcschr", "wcsrchr"):
+            emulator.add_api_hook(self._find_character, "msvcrt", name, argc=2,
+                                  call_conv=e_arch.CALL_CONV_CDECL)
+
+    def _find_character(self, emu, api_name, _original, params) -> int:
+        address, value = map(int, params)
+        function = api_name.rsplit('.', 1)[-1]
+        width = 2 if function.startswith('wcs') else 1
+        target = (value & (0xFFFF if width == 2 else 0xFF)).to_bytes(width, 'little')
+        last = 0
+        try:
+            for index in range(_MAX_FORMAT_CHARS):
+                pointer = address + index * width
+                unit = self._read(emu, pointer, width)
+                if unit == target:
+                    if function not in ('strrchr', 'wcsrchr'):
+                        return pointer
+                    last = pointer
+                if unit == b'\0' * width:
+                    return last
+        except Exception:
+            self.unsupported.append(f"{api_name}: unreadable guest string")
+            return 0
+        self.unsupported.append(f"{api_name}: unterminated guest string")
+        return 0
 
     def _ultow(self, emu, api_name, _original, params) -> int:
         """Format one unsigned 32-bit long in a guest wide-character buffer."""
@@ -95,6 +127,55 @@ class LegacyCRTStreams:
             self.unsupported.append(f"{api_name}: guest destination is not writable")
             return 0
         return output
+
+    def _setmode(self, emu, api_name, _original, params) -> int:
+        descriptor, mode = map(int, params)
+        process = emu.get_current_process()
+        if process is None or descriptor not in (0, 1, 2) or mode not in _STREAM_MODES:
+            self.unsupported.append(f"{api_name}: descriptor or text mode is not modeled")
+            return -1
+        key = (id(process), descriptor)
+        previous = self._mode_by_process.get(key, _O_TEXT)
+        self._mode_by_process[key] = mode
+        return previous
+
+    def cleanup_process(self, process) -> None:
+        owner = id(process)
+        self._iob_by_process.pop(owner, None)
+        self._ucrt_iob_by_process.pop(owner, None)
+        for key in tuple(self._mode_by_process):
+            if key[0] == owner:
+                self._mode_by_process.pop(key, None)
+
+    def _write_descriptor(self, emu, api_name, _original, params) -> int:
+        descriptor, address, count = map(int, params)
+        if (descriptor not in (1, 2) or count < 0 or count > _MAX_OUTPUT_CHARS * 2 or
+                emu.get_current_process() is None or self.console_write is None):
+            self.unsupported.append(f"{api_name}: descriptor or count is not modeled")
+            return -1
+        if count == 0:
+            return 0
+        try:
+            data = self._read(emu, address, count)
+        except Exception:
+            self.unsupported.append(f"{api_name}: guest buffer is unreadable")
+            return -1
+        mode = self._mode_by_process.get((id(emu.get_current_process()), descriptor),
+                                         _O_TEXT)
+        try:
+            if mode == 0x20000:
+                rendered = data.decode('utf-16le')
+            elif mode == 0x40000:
+                rendered = data.decode('utf-8')
+            else:
+                # An ANSI/OEM code page is not yet selected for arbitrary
+                # guest bytes. ASCII is identical in the common code pages.
+                rendered = data.decode('ascii')
+        except UnicodeError:
+            self.unsupported.append(f"{api_name}: stream encoding could not be decoded")
+            return -1
+        self.console_write('stdout' if descriptor == 1 else 'stderr', rendered)
+        return count
 
     def _iob_func(self, emu, _api_name, _original, _params) -> int:
         process = emu.get_current_process()

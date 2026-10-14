@@ -48,6 +48,69 @@ class LegacyCRTStreamsTests(unittest.TestCase):
                                     [5, 0x1000, 1]), 0)
         self.assertEqual(len(emu.writes), count)
 
+    def test_character_search_returns_guest_pointer_or_null(self):
+        emu = _Emulator(8)
+        memory = {}
+        for offset, byte in enumerate('ab.ba\0'.encode('utf-16le')):
+            memory[0x1000 + offset] = byte
+        emu.mem_read = lambda address, size: bytes(memory[address + i]
+                                                    for i in range(size))
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._find_character(emu, 'msvcrt.wcschr', None,
+                                              [0x1000, ord('b')]), 0x1002)
+        self.assertEqual(crt._find_character(emu, 'msvcrt.wcsrchr', None,
+                                              [0x1000, ord('b')]), 0x1006)
+        self.assertEqual(crt._find_character(emu, 'msvcrt.wcschr', None,
+                                              [0x1000, ord('z')]), 0)
+        self.assertEqual(crt._find_character(emu, 'msvcrt.wcschr', None,
+                                              [0x1000, 0]), 0x100a)
+        narrow = b'ab.ba\0'
+        emu.mem_read = lambda address, size: narrow[address - 0x2000:
+                                                     address - 0x2000 + size]
+        self.assertEqual(crt._find_character(emu, 'msvcrt.strchr', None,
+                                              [0x2000, ord('b')]), 0x2001)
+        self.assertEqual(crt._find_character(emu, 'msvcrt.strrchr', None,
+                                              [0x2000, ord('b')]), 0x2003)
+        self.assertFalse(crt.unsupported)
+
+    def test_setmode_tracks_each_standard_descriptor_per_process(self):
+        emu = _Emulator(8)
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._setmode(emu, 'msvcrt._setmode', None,
+                                      [1, 0x20000]), 0x4000)
+        self.assertEqual(crt._setmode(emu, 'msvcrt._setmode', None,
+                                      [1, 0x4000]), 0x20000)
+        self.assertEqual(crt._setmode(emu, 'msvcrt._setmode', None,
+                                      [2, 0x4000]), 0x4000)
+        emu.process = object()
+        self.assertEqual(crt._setmode(emu, 'msvcrt._setmode', None,
+                                      [1, 0x8000]), 0x4000)
+        self.assertEqual(crt._setmode(emu, 'msvcrt._setmode', None,
+                                      [9, 0x4000]), -1)
+        self.assertEqual(len(crt.unsupported), 1)
+        crt.cleanup_process(emu.process)
+        self.assertEqual(crt._setmode(emu, 'msvcrt._setmode', None,
+                                      [1, 0x4000]), 0x4000)
+
+    def test_write_descriptor_captures_guest_standard_stream_bytes(self):
+        emu = _Emulator(8)
+        memory = b'DESKTOP-Q3R8V2A\n'
+        emu.mem_read = lambda address, size: memory[address - 0x1000:
+                                                    address - 0x1000 + size]
+        captured = []
+        crt = LegacyCRTStreams()
+        crt.console_write = lambda stream, content: captured.append((stream, content))
+        self.assertEqual(crt._write_descriptor(emu, 'msvcrt._write', None,
+                                                [1, 0x1000, len(memory)]), len(memory))
+        self.assertEqual(captured, [('stdout', 'DESKTOP-Q3R8V2A\n')])
+        self.assertEqual(crt._write_descriptor(emu, 'msvcrt._write', None,
+                                                [9, 0x1000, len(memory)]), -1)
+        self.assertEqual(len(captured), 1)
+        emu.mem_read = lambda _address, _size: b'\x80'
+        self.assertEqual(crt._write_descriptor(emu, 'msvcrt._write', None,
+                                                [1, 0x1000, 1]), -1)
+        self.assertEqual(len(captured), 1)
+
     def test_stream_layout_and_process_ownership(self):
         for width, stride, flag_offset, file_offset in ((4, 32, 12, 16),
                                                         (8, 48, 24, 28)):

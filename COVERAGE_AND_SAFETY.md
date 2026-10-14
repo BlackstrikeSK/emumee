@@ -3,11 +3,11 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `route.exe`, and `tzutil.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, and `tzutil.exe` files
 in guest System32, alongside the
-existing generated `hostname.exe` and `whoami.exe`. The six newer PE instructions call
+existing generated `hostname.exe` and `whoami.exe`. The eight newer PE instructions call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; the
-`ipconfig /all` dispatcher also calls guest `lstrcmpiA`. Their
+argument dispatchers also call guest `lstrcmpiA`. Their
 output bytes are derived only from the selected persona. Direct guest child
 launches through `WinExec` on both architectures printed custom persona values,
 matched the generated output exactly, and added a guest child entry point.
@@ -16,11 +16,17 @@ process configuration. Generated `ipconfig.exe /all` prints the persona's
 hostname, adapter description, MAC address, DHCP flag, IPv4 settings, and DNS
 servers. Bare-name and quoted full-path `WinExec` launches reached that output
 on both architectures. A supplied `/release` argument exited 87 without output;
-other switches are likewise unmodeled. Generated `route.exe print` and
+other switches are likewise unmodeled. Generated `arp.exe -a` prints the
+same broadcast cache entry as guest `GetIpNetTable`, or no entries for a
+`/31` or `/32` adapter; `-d` exits 87 and does not modify any cache.
+Generated `route.exe print` and
 `route.exe print -4` print the persona's IP Helper route snapshot; `route add`
 exits 87 without changing guest or host routes. Generated `tzutil.exe /g`
-prints the configured fixed-offset time zone; `/s` exits 87. `getmac.exe`, `systeminfo.exe`,
-and `tasklist.exe` currently support their no-switch view only. These are bounded guest utilities, separate from the real
+prints the configured fixed-offset time zone; `/s` exits 87. Generated
+`netsh.exe interface ipv4 show config` and `show dnsservers` read the persona
+adapter snapshot; `interface ipv4 set address` exits 87. `getmac.exe`,
+`systeminfo.exe`, and `tasklist.exe` currently support their no-switch view
+only. These are bounded guest utilities, separate from the real
 Microsoft binaries staged in earlier compatibility probes. They do not read or
 launch host binaries, and process or network changes made after run setup are
 not reflected in their initial snapshots.

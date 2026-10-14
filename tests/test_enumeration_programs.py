@@ -56,7 +56,9 @@ class EnumerationProgramTests(unittest.TestCase):
     def test_winexec_route_and_timezone_queries_use_custom_persona(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             for name, arguments in (("route.exe", "print -4"),
-                                    ("tzutil.exe", "/g")):
+                                    ("tzutil.exe", "/g"),
+                                    ("arp.exe", "-a"),
+                                    ("netsh.exe", "interface ipv4 show config")):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -81,7 +83,8 @@ class EnumerationProgramTests(unittest.TestCase):
     def test_generated_programs_run_as_guest_children_on_both_architectures(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe",
-                         "getmac.exe", "route.exe", "tzutil.exe"):
+                         "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
+                         "tzutil.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -136,6 +139,15 @@ class EnumerationProgramTests(unittest.TestCase):
              persona["network_adapter"]["prefix_length"]), strict=False)
         self.assertIn(str(subnet.network_address), route)
         self.assertIn(str(subnet.netmask), route)
+        arp = enumeration_text("arp.exe", persona, "-a")
+        self.assertIn(persona["network_adapter"]["ipv4"], arp)
+        self.assertIn(str(subnet.broadcast_address), arp)
+        self.assertIn("ff-ff-ff-ff-ff-ff", arp)
+        netsh = enumeration_text("netsh.exe", persona, "interface ipv4 show config")
+        self.assertIn(persona["network_adapter"]["ipv4"], netsh)
+        self.assertIn(persona["network_adapter"]["gateway"], netsh)
+        for server in persona["network_adapter"]["dns_servers"]:
+            self.assertIn(server, netsh)
         self.assertEqual(enumeration_text("tzutil.exe", persona, "/g"),
                          persona["timezone"] + "_dstoff\r\n")
         systeminfo = enumeration_text("systeminfo.exe", persona)
@@ -213,6 +225,50 @@ class EnumerationProgramTests(unittest.TestCase):
                         self.assertEqual(result["guest_exit_code"], 0)
                         self.assertEqual(result["console_output"]["stdout"],
                                          enumeration_text("tzutil.exe", persona, "/g"))
+                    else:
+                        self.assertEqual(result["guest_exit_code"], 87)
+                        self.assertEqual(result["console_output"]["stdout"], "")
+
+    def test_arp_listing_tracks_guest_table_without_invented_gateway_mac(self):
+        for arch in ("x86", "x64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                image = enumeration_programs(arch == "x64", persona)["arp.exe"]
+                for argument in ("-a", "-d"):
+                    result = run_native(image, inspect_pe(image, "arp.exe"), persona,
+                                        Path(directory) / argument[1:], [], 10, 100_000,
+                                        guest_args=[argument])
+                    self.assertFalse(result["errors"])
+                    if argument == "-a":
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text("arp.exe", persona, "-a"))
+                    else:
+                        self.assertEqual(result["guest_exit_code"], 87)
+                        self.assertEqual(result["console_output"]["stdout"], "")
+                persona["network_adapter"].update({"ipv4": "10.0.0.0",
+                                                   "gateway": "10.0.0.1",
+                                                   "prefix_length": 31})
+                self.assertEqual(enumeration_text("arp.exe", persona, "-a"),
+                                 "No ARP Entries Found.\r\n")
+
+    def test_netsh_queries_use_guest_adapter_and_reject_mutation(self):
+        persona = load_persona(None)
+        for arch in ("x86", "x64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                image = enumeration_programs(arch == "x64", persona)["netsh.exe"]
+                commands = ("interface ipv4 show config",
+                            "interface ipv4 show dnsservers",
+                            "interface ipv4 set address")
+                for index, command in enumerate(commands):
+                    result = run_native(image, inspect_pe(image, "netsh.exe"), persona,
+                                        Path(directory) / str(index), [], 10, 100_000,
+                                        guest_args=command.split())
+                    self.assertFalse(result["errors"])
+                    if " show " in command:
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text("netsh.exe", persona, command))
                     else:
                         self.assertEqual(result["guest_exit_code"], 87)
                         self.assertEqual(result["console_output"]["stdout"], "")

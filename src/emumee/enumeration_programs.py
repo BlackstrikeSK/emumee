@@ -57,6 +57,19 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
         return ("\r\nPhysical Address    Transport Name\r\n"
                 "=================== ==========================================================\r\n"
                 f"{adapter['mac']:19} \\Device\\Tcpip_{adapter['guid']}\r\n")
+    if name == "arp.exe":
+        if not arguments:
+            return "Displays and modifies the IP-to-physical address translation tables.\r\nUsage: arp -a\r\n"
+        if arguments.casefold() != "-a":
+            raise ValueError("unsupported arp arguments")
+        adapter = persona["network_adapter"]
+        if adapter["prefix_length"] >= 31:
+            return "No ARP Entries Found.\r\n"
+        subnet = ipaddress.IPv4Network(
+            (adapter["ipv4"], adapter["prefix_length"]), strict=False)
+        return (f"\r\nInterface: {adapter['ipv4']} --- 0x{adapter['if_index']:x}\r\n"
+                "  Internet Address      Physical Address      Type\r\n"
+                f"  {str(subnet.broadcast_address):<21} ff-ff-ff-ff-ff-ff     static\r\n")
     if name == "route.exe":
         if not arguments:
             return "Manipulates network routing tables.\r\nUsage: route print\r\n"
@@ -83,6 +96,25 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
                 "Network Destination        Netmask          Gateway       Interface  Metric\r\n"
                 f"{table}"
                 "===========================================================================\r\n")
+    if name == "netsh.exe":
+        if not arguments:
+            return "Network Shell\r\nUsage: netsh interface ipv4 show config\r\n"
+        adapter = persona["network_adapter"]
+        if arguments.casefold() == "interface ipv4 show config":
+            mask = ipaddress.IPv4Network(
+                (adapter["ipv4"], adapter["prefix_length"]), strict=False).netmask
+            dns = "".join(f"    {server}\r\n" for server in adapter["dns_servers"])
+            return (f"Configuration for interface \"{adapter['name']}\"\r\n"
+                    f"    DHCP enabled:                         {'Yes' if adapter['dhcp_enabled'] else 'No'}\r\n"
+                    f"    IP Address:                           {adapter['ipv4']}\r\n"
+                    f"    Subnet Prefix:                        {adapter['ipv4']}/{adapter['prefix_length']} (mask {mask})\r\n"
+                    f"    Default Gateway:                      {adapter['gateway']}\r\n"
+                    f"    DNS servers configured:               \r\n{dns}")
+        if arguments.casefold() == "interface ipv4 show dnsservers":
+            dns = "".join(f"    {server}\r\n" for server in adapter["dns_servers"])
+            return (f"Configuration for interface \"{adapter['name']}\"\r\n"
+                    f"    DNS servers configured:               \r\n{dns}")
+        raise ValueError("unsupported netsh arguments")
     if name == "tzutil.exe":
         if not arguments:
             return "Displays or configures the system time zone.\r\nUsage: tzutil /g\r\n"
@@ -320,9 +352,12 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     code_page = oem_code_page(persona["locale"])
     result = {}
     for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
-                 "route.exe", "tzutil.exe"):
+                 "arp.exe", "route.exe", "netsh.exe", "tzutil.exe"):
         commands = ({"ipconfig.exe": ("/all",),
+                     "arp.exe": ("-a",),
                      "route.exe": ("print", "print -4"),
+                     "netsh.exe": ("interface ipv4 show config",
+                                   "interface ipv4 show dnsservers"),
                      "tzutil.exe": ("/g",)}.get(name, ()))
         variants = {argument: enumeration_text(name, persona, argument)
                     for argument in commands}

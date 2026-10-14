@@ -1,5 +1,22 @@
 # Coverage, containment, and test plan
 
+## 2026-10-14 generated enumeration programs
+
+The default native guest now includes generated x86/x64 `ipconfig.exe`,
+`systeminfo.exe`, and `tasklist.exe` files in guest System32, alongside the
+existing generated `hostname.exe` and `whoami.exe`. Their PE instructions call
+guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
+output bytes are derived only from the selected persona. Direct guest child
+launches through `WinExec` on both architectures printed custom persona values,
+matched the generated output exactly, and added a guest child entry point.
+The `tasklist` rows use the same names, PIDs, and session mapping as the persona
+process configuration. A supplied `/all` argument to generated `ipconfig.exe`
+exited 87 without output on both architectures; other switches are likewise
+unmodeled. These are bounded no-switch guest utilities, separate from the real
+Microsoft binaries staged in earlier compatibility probes. They do not read or
+launch host binaries, and process or network changes made after run setup are
+not reflected in their initial snapshots.
+
 ## 2026-10-14 native byte comparison and pantry revision
 
 The default persona now has 54 virtual files. `pantry-inventory-updated.csv` changes the milk count from zero to one while keeping the file the same byte length as `pantry-inventory.csv`; both follow custom guest user names. Locally staged Microsoft x86 and x64 `comp.exe` programs, companion `ulib.dll` binaries, and MUI resource files complete `/M /D` comparisons of the two guest files. Both print `Compare error at OFFSET 18`, `file1 = 48`, and `file2 = 49`, with guest exit 1, empty stderr, no reported emulator errors, and no signature-only calls. A read-only host `comp.exe` comparison of the same bytes returned the same offset and values. Same-file `/M` controls print `Files compare OK` and exit 0 on both architectures; missing-file controls print an error and exit 2. The six reports are `output/probe-comp-pantry-x64`, `output/probe-comp-pantry-x86`, `output/probe-comp-x64-same`, `output/probe-comp-x86-same`, `output/probe-comp-x64-missing`, and `output/probe-comp-x86-missing`. Microsoft binaries are local inputs and are not distributed.

@@ -11,7 +11,7 @@ not yet parse switches. Guest commands never change host state.
 | Guest program | Included by default | Modeled read commands |
 | --- | --- | --- |
 | `hostname.exe` | Yes | Default hostname |
-| `whoami.exe` | Yes | Default user name, `/user`, `/groups` from the modeled token |
+| `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |

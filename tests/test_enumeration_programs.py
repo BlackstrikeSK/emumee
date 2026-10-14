@@ -195,12 +195,13 @@ class EnumerationProgramTests(unittest.TestCase):
                                                   "user_is_admin": is_admin}), encoding="utf-8")
                     persona = load_persona(custom)
                     image = enumeration_programs(arch == "x64", persona)["whoami.exe"]
-                    for index, argument in enumerate(("/user", "/groups", "/priv")):
+                    for index, argument in enumerate(("/user", "/groups", "/priv",
+                                                       "/all", "/upn")):
                         result = run_native(image, inspect_pe(image, "whoami.exe"), persona,
                                             root / str(index), [], 10, 100_000,
                                             guest_args=[argument])
                         self.assertFalse(result["errors"])
-                        if argument == "/priv":
+                        if argument == "/upn":
                             self.assertEqual(result["guest_exit_code"], 87)
                             self.assertEqual(result["console_output"]["stdout"], "")
                         else:
@@ -210,6 +211,13 @@ class EnumerationProgramTests(unittest.TestCase):
                     groups = enumeration_text("whoami.exe", persona, "/groups")
                     self.assertIn("BUILTIN\\Users", groups)
                     self.assertEqual("BUILTIN\\Administrators" in groups, is_admin)
+                    privileges = enumeration_text("whoami.exe", persona, "/priv")
+                    self.assertIn("SeChangeNotifyPrivilege", privileges)
+                    self.assertEqual("SeDebugPrivilege" in privileges, is_admin)
+                    combined = enumeration_text("whoami.exe", persona, "/all")
+                    self.assertIn(persona["user_sid"], combined)
+                    self.assertIn(groups, combined)
+                    self.assertIn(privileges, combined)
 
     def test_non_ascii_owner_uses_persona_console_code_page(self):
         with tempfile.TemporaryDirectory() as directory:

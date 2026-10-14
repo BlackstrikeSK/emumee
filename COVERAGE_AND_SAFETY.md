@@ -33,9 +33,10 @@ not reflected in their initial snapshots.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`
-reports the configured SID and `/groups` lists the groups in the guest token
-model, including Administrators only for an admin persona. Unsupported `/priv`
-exits 87 without output. The earlier small `GetUserNameA` PE remains a test
+reports the configured SID, `/groups` lists the guest token groups, `/priv`
+lists the guest token privileges, and `/all` combines those views with the
+modeled empty claims state. Administrators and debug privilege appear only for
+an admin persona. Unsupported `/upn` exits 87 without output. The earlier small `GetUserNameA` PE remains a test
 fixture, but is no longer installed as the default guest `whoami.exe`.
 
 ## 2026-10-14 native byte comparison and pantry revision

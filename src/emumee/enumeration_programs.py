@@ -10,7 +10,7 @@ import ipaddress
 import struct
 
 from .persona_content import PROCESS_PATHS, oem_code_page
-from .tokens import GuestTokens
+from .tokens import GuestTokens, PRIVILEGE_DESCRIPTIONS, PRIVILEGE_NAMES
 
 
 _MAX_TEXT = 32 * 1024
@@ -26,25 +26,44 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
         identity = f"{persona['hostname']}\\{persona['user_name']}"
         if not arguments:
             return identity
-        if arguments.casefold() == "/user":
-            return ("\r\nUSER INFORMATION\r\n"
-                    "----------------\r\n"
-                    "User Name                 SID\r\n"
-                    "========================= =============================================\r\n"
-                    f"{identity:25} {persona['user_sid']}\r\n")
-        if arguments.casefold() == "/groups":
-            tokens = GuestTokens(persona)
-            rows = []
-            for sid, encoded in zip(tokens.group_sids, tokens.groups, strict=True):
-                name, domain, _ = tokens.sid_names[encoded]
-                group = f"{domain}\\{name}" if domain else name
-                rows.append(f"{group:32} {sid}\r\n")
-            return ("\r\nGROUP INFORMATION\r\n"
-                    "-----------------\r\n"
-                    "Group Name                       SID\r\n"
-                    "================================ =============================================\r\n"
-                    + "".join(rows))
-        raise ValueError("unsupported whoami arguments")
+        argument = arguments.casefold()
+        if argument not in {"/user", "/groups", "/priv", "/all"}:
+            raise ValueError("unsupported whoami arguments")
+        tokens = GuestTokens(persona)
+        user = ("\r\nUSER INFORMATION\r\n"
+                "----------------\r\n"
+                "User Name                 SID\r\n"
+                "========================= =============================================\r\n"
+                f"{identity:25} {persona['user_sid']}\r\n")
+        if argument == "/user":
+            return user
+        rows = []
+        for sid, encoded in zip(tokens.group_sids, tokens.groups, strict=True):
+            group_name, domain, _ = tokens.sid_names[encoded]
+            group = f"{domain}\\{group_name}" if domain else group_name
+            rows.append(f"{group:32} {sid}\r\n")
+        groups = ("\r\nGROUP INFORMATION\r\n"
+                  "-----------------\r\n"
+                  "Group Name                       SID\r\n"
+                  "================================ =============================================\r\n"
+                  + "".join(rows))
+        if argument == "/groups":
+            return groups
+        privilege_rows = "".join(
+            f"{PRIVILEGE_NAMES[luid]:35} {PRIVILEGE_DESCRIPTIONS[luid]:44} "
+            f"{'Enabled' if flags & 2 else 'Disabled'}\r\n"
+            for luid, flags in tokens.privileges)
+        privileges = ("\r\nPRIVILEGES INFORMATION\r\n"
+                      "----------------------\r\n"
+                      "Privilege Name                      Description                                  State\r\n"
+                      "=================================== ============================================ ========\r\n"
+                      + privilege_rows)
+        if argument == "/priv":
+            return privileges
+        return (user + groups + privileges +
+                "\r\nUSER CLAIMS INFORMATION\r\n"
+                "-----------------------\r\n"
+                "User claims are not present.\r\n")
     if name == "ipconfig.exe":
         adapter = persona["network_adapter"]
         mask = ipaddress.IPv4Network(
@@ -173,7 +192,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
                      variants: dict[str, str] | None = None) -> bytes:
     """Build a PE that selects bounded guest text by exact command argument."""
     variants = variants or {}
-    if len(variants) > 2 or any(not key or not key.isascii() or "\0" in key
+    if len(variants) > 4 or any(not key or not key.isascii() or "\0" in key
                                for key in variants):
         raise ValueError("guest utility argument variants are invalid")
     outputs = [("", output), *variants.items()]
@@ -377,7 +396,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     result = {}
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe"):
-        commands = ({"whoami.exe": ("/user", "/groups"),
+        commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "arp.exe": ("-a",),
                      "route.exe": ("print", "print -4"),

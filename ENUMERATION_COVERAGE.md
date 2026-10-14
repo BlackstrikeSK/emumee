@@ -247,7 +247,10 @@ on-disk definitions, and live scheduling are not modeled yet.
 `cmd.exe`, VBScript, JavaScript, and Python are outside this native utility
 inventory. PowerShell is a separate future confinement target: the current
 guest child loader rejects managed PEs, and the bounded managed interpreter
-does not run the PowerShell engine. A usable implementation must run script
+does not run the PowerShell engine. A fixed benign Linux-container prototype
+has verified a separate PowerShell execution and runtime-binding trace path;
+it does not yet reproduce the Windows persona or accept submitted scripts.
+A usable implementation must run script
 code inside a guest execution boundary, deny or broker network operations,
 record the command and arguments at each actual invocation after dynamic
 expansion, and display those records in the dashboard. Source text or static

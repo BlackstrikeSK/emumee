@@ -17,6 +17,7 @@ from .persona_content import DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files, reg
 
 
 WINDOWS_11_DISPLAY_VERSIONS = DISPLAY_VERSIONS
+DEFAULT_VOLUME_GUID = "{6f2a9e4d-81b7-4f03-a73c-2d0e6f12a5b8}"
 
 
 DEFAULT_PERSONA = {
@@ -50,6 +51,7 @@ DEFAULT_PERSONA = {
         "if_index": 12,
     },
     "current_dir": "C:\\Users\\Alex\\Downloads",
+    "volume_guid": DEFAULT_VOLUME_GUID,
     "locale": "en-US",
     "timezone": "Eastern Standard Time",
     "utc_offset_minutes": -240,
@@ -161,6 +163,10 @@ def load_persona(path: Path | None) -> dict:
                 persona["user_name"], persona["hostname"])
     if not persona["user_name"] or not persona["hostname"]:
         raise ValueError("Persona user_name and hostname must not be empty")
+    if (not isinstance(persona["volume_guid"], str) or
+            not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
+                             persona["volume_guid"])):
+        raise ValueError("Persona volume_guid must be a braced GUID")
     adapter = persona["network_adapter"]
     if (not isinstance(adapter["guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",

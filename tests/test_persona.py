@@ -690,6 +690,49 @@ class PersonaContentTests(unittest.TestCase):
                 emu, "kernel32.GetVolumeInformationW", None, args), 0)
             self.assertEqual(errors[-1], 3)
 
+    def test_volume_name_api_matches_configured_mountvol_guid(self):
+        guid = "{9b8f5412-6d03-423a-b492-fdb0f94771e2}"
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "persona.json"
+            config.write_text(json.dumps({"volume_guid": guid}), encoding="utf-8")
+            self.assertEqual(load_persona(config)["volume_guid"], guid)
+            bridge = VirtualFileBridge(r"C:\Users\Alex\Downloads",
+                                       ArtifactCatalog(Path(directory) / "artifacts"),
+                                       volume_guid=guid)
+            hooks = []
+            bridge.install(SimpleNamespace(add_api_hook=lambda callback, module, name, argc:
+                                           hooks.append((module, name, argc))))
+            self.assertIn(("kernel32", "GetVolumeNameForVolumeMountPointW", 3), hooks)
+            self.assertIn(("kernel32", "GetVolumeNameForVolumeMountPointA", 3), hooks)
+            writes, errors = {}, []
+            emu = SimpleNamespace(
+                read_mem_string=lambda ptr, width: "C:\\",
+                mem_write=lambda ptr, data: writes.__setitem__(ptr, data),
+                set_last_error=errors.append,
+            )
+            expected = "\\\\?\\Volume" + guid + "\\"
+            for suffix, codec in (("W", "utf-16-le"), ("A", "ascii")):
+                writes.clear()
+                args = [0x1000, 0x2000, len(expected)]
+                self.assertEqual(bridge._get_volume_name_for_mount_point(
+                    emu, "kernel32.GetVolumeNameForVolumeMountPoint" + suffix,
+                    None, args), 0)
+                self.assertEqual(errors[-1], 122)
+                self.assertEqual(writes, {})
+                args[2] += 1
+                self.assertEqual(bridge._get_volume_name_for_mount_point(
+                    emu, "kernel32.GetVolumeNameForVolumeMountPoint" + suffix,
+                    None, args), 1)
+                self.assertEqual(writes[0x2000], (expected + "\0").encode(codec))
+            emu.read_mem_string = lambda ptr, width: "D:\\"
+            self.assertEqual(bridge._get_volume_name_for_mount_point(
+                emu, "kernel32.GetVolumeNameForVolumeMountPointW", None,
+                [0x1000, 0x2000, len(expected) + 1]), 0)
+            self.assertEqual(errors[-1], 3)
+            config.write_text(json.dumps({"volume_guid": "host"}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "volume_guid"):
+                load_persona(config)
+
     def test_temp_path_small_buffer_has_no_write(self):
         with tempfile.TemporaryDirectory() as directory:
             bridge = VirtualFileBridge(r"C:\Users\Alex\Downloads",

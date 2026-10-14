@@ -743,7 +743,8 @@ def run_native(
     guest_identity = GuestIdentity(persona)
     virtual_files = VirtualFileBridge(persona["current_dir"], catalog, persona_sources,
                                     clock.filetime_ticks(),
-                                    desktop_directories(persona["user_name"]))
+                                    desktop_directories(persona["user_name"]),
+                                    persona["volume_guid"])
     bridge = NetworkBridge(catalog, virtual_files)
     virtual_registry = VirtualRegistryBridge(catalog, clock.filetime_ticks())
     virtual_process = VirtualProcessBridge(catalog, persona_sources)

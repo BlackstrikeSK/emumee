@@ -11,6 +11,7 @@ from speakeasy import common
 from speakeasy.windows.fileman import File as GuestFile
 
 from .artifacts import ArtifactCatalog, MAX_ARTIFACT, MAX_MEMORY_SCAN
+from .persona import DEFAULT_VOLUME_GUID
 
 
 class SharedGuestFileView:
@@ -91,11 +92,13 @@ class VirtualFileBridge:
     def __init__(self, current_dir: str, catalog: ArtifactCatalog,
                  persona_sources: dict[str, bytes] | None = None,
                  filetime_ticks: int = 0,
-                 persona_directories: list[str] | None = None):
+                 persona_directories: list[str] | None = None,
+                 volume_guid: str = DEFAULT_VOLUME_GUID):
         self.current_dir = current_dir
         self.catalog = catalog
         self.persona_sources = {key.lower(): value for key, value in (persona_sources or {}).items()}
         self.filetime_ticks = filetime_ticks
+        self.volume_guid = volume_guid
         self.events: list[dict] = []
         self.unsupported: list[str] = []
         self.directories = {self._key(part) for part in self._ancestors(current_dir)}
@@ -388,6 +391,10 @@ class VirtualFileBridge:
             emulator.add_api_hook(self._get_file_attributes_ex, "kernel32", name, argc=3)
         for name in ("GetVolumeInformationA", "GetVolumeInformationW"):
             emulator.add_api_hook(self._get_volume_information, "kernel32", name, argc=8)
+        for name in ("GetVolumeNameForVolumeMountPointA",
+                     "GetVolumeNameForVolumeMountPointW"):
+            emulator.add_api_hook(self._get_volume_name_for_mount_point,
+                                  "kernel32", name, argc=3)
         for name in ("GetTempPathA", "GetTempPathW"):
             emulator.add_api_hook(self._get_temp_path, "kernel32", name, argc=2)
         for name in ("SetFileAttributesA", "SetFileAttributesW"):
@@ -518,6 +525,31 @@ class VirtualFileBridge:
         emu.set_last_error(0)
         self.events.append({"event": "virtual_volume_query", "api": api_name,
                             "root": "C:\\", "serial": "4C2F-91A7", "file_system": fs_name})
+        return 1
+
+    def _get_volume_name_for_mount_point(self, emu, api_name, original, params):
+        mount_ptr, result_ptr, length = (int(value) for value in params)
+        if not mount_ptr or not result_ptr:
+            emu.set_last_error(87)
+            return 0
+        width = 2 if api_name.endswith("W") else 1
+        mount = emu.read_mem_string(mount_ptr, width)
+        if mount.casefold() != "c:\\":
+            emu.set_last_error(3)
+            return 0
+        name = "\\\\?\\Volume" + self.volume_guid + "\\"
+        if length < len(name) + 1:
+            emu.set_last_error(122)
+            return 0
+        try:
+            emu.mem_write(result_ptr, (name + "\0").encode(
+                "utf-16-le" if width == 2 else "ascii"))
+        except Exception:
+            emu.set_last_error(998)
+            return 0
+        emu.set_last_error(0)
+        self.events.append({"event": "virtual_volume_name_query", "api": api_name,
+                            "mount": "C:\\", "volume": name})
         return 1
 
     def _get_temp_path(self, emu, api_name, original, params):

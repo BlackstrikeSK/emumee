@@ -16,6 +16,54 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_mountvol_uses_guest_volume_guid_and_rejects_other_mounts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            guid = "{9b8f5412-6d03-423a-b492-fdb0f94771e2}"
+            config.write_text(json.dumps({"volume_guid": guid}), encoding="utf-8")
+            persona = load_persona(config)
+            volume = "\\\\?\\Volume" + guid + "\\"
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["mountvol.exe"]
+                    pe = inspect_pe(image, "mountvol.exe")
+                    self.assertEqual(pe.architecture, "x64" if is_x64 else "x86")
+                    for index, (args, expected) in enumerate((
+                            ([], "        C:\\\r\n"),
+                            (["C:\\", "/L"], volume + "\r\n"))):
+                        result = run_native(image, pe, persona, root / f"{is_x64}-{index}",
+                                            [], 10, 100_000, guest_args=args)
+                        self.assertFalse(result["errors"])
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertIn(expected, result["console_output"]["stdout"])
+                        self.assertIn(volume, result["console_output"]["stdout"])
+                    rejected = run_native(image, pe, persona, root / f"{is_x64}-other",
+                                          [], 10, 100_000, guest_args=["D:\\", "/L"])
+                    self.assertFalse(rejected["errors"])
+                    self.assertEqual(rejected["guest_exit_code"], 87)
+                    self.assertEqual(rejected["console_output"]["stdout"], "")
+
+    def test_winexec_launches_guest_mountvol(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"mountvol.exe\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn(persona["volume_guid"], result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\mountvol.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_driverquery_uses_only_configured_guest_drivers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

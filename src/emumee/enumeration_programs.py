@@ -213,6 +213,13 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
         if arguments.casefold() == "/g":
             return persona["timezone"] + "_dstoff\r\n"
         raise ValueError("unsupported tzutil arguments")
+    if name == "mountvol.exe":
+        volume = "\\\\?\\Volume" + persona["volume_guid"] + "\\"
+        if not arguments:
+            return f"Possible values for VolumeName along with current mount points are:\r\n\r\n    {volume}\r\n        C:\\\r\n"
+        if arguments.casefold() in {"c: /l", "c:\\ /l"}:
+            return volume + "\r\n"
+        raise ValueError("unsupported mountvol arguments")
     if name == "driverquery.exe":
         argument = arguments.casefold()
         if argument not in {"", "/v", "/fo list", "/fo csv", "/nh"}:
@@ -584,7 +591,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
-                 "schtasks.exe", "driverquery.exe"):
+                 "schtasks.exe", "driverquery.exe", "mountvol.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -608,6 +615,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                                          else task["name"])
                                         for task in persona["scheduled_tasks"][:2])),
                      "tzutil.exe": ("/g",),
+                     "mountvol.exe": ("C: /L", "C:\\ /L"),
                      "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)

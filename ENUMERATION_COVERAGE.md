@@ -13,6 +13,7 @@ never change host state.
 | `hostname.exe` | Yes | Default hostname |
 | `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
 | [`fsutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-fsinfo) | Yes | `fsinfo drives`, `fsinfo drivetype C:`, and `fsinfo volumeinfo C:` for the guest volume |
+| [`mountvol.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mountvol) | Yes | Default volume listing and `C:\ /L` from the guest volume GUID |
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
@@ -44,6 +45,12 @@ but it is not included by default unless the table above says so.
 | --- | --- | --- |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
+| `mountvol.exe` beyond the listed forms | Other volume mount points and changes | Multiple volumes and mount mutations remain unmodeled. |
+| [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | `/enum-drivers`, `/enum-devices` | A guest driver package store and PnP device inventory; `driverquery` records alone do not describe installed packages or devices. |
+| [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Filter, instance, and volume enumeration | Guest minifilter records, altitudes, and attachment state. |
+| [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | `el`, `gl`, `qe` | A guest event channel catalog and bounded event records. |
+| [`bcdedit.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/bcdedit) | Default or `/enum` | A guest Boot Configuration Data store and boot entry identities. |
+| [`gpresult.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult) | `/r` | Guest applied policy and RSoP data for the persona user and computer. |
 | `driverquery.exe` beyond the listed forms | `/si`, combined flags, and remote queries | Signed driver data, more output modes, and `.sys` guest files remain unmodeled; driver images are not executed. |
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
@@ -104,6 +111,11 @@ The included `fsutil.exe` is compiled from repository C source. Its read-only
 `GetVolumeInformationW` model at runtime, so its label, serial, maximum
 component length, and filesystem name agree with that API. An unmodeled drive
 returns path-not-found; unsupported commands exit 87. No host volume is read.
+
+Generated `mountvol.exe` lists the single guest `C:` mount and supports
+`C:\ /L`. Its volume GUID comes from the persona and matches the guest
+`GetVolumeNameForVolumeMountPointA/W` response. Other mounts and mutation
+commands exit 87 without changing guest or host volumes.
 
 Generated `driverquery.exe` reads only the persona's `drivers` list. Each
 configured driver also creates a guest Services registry key with its type,

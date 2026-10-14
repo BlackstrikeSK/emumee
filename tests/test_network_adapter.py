@@ -10,7 +10,8 @@ from types import SimpleNamespace
 
 import speakeasy.common as common
 
-from emumee.network_adapter import GuestNetworkAdapter, _fixed_layouts, _layouts
+from emumee.network_adapter import (GuestNetworkAdapter, _MibIfRow,
+                                    _fixed_layouts, _layouts)
 from emumee.feature_config import GuestFeatureConfiguration
 from emumee.persona import load_persona
 
@@ -48,6 +49,84 @@ class MemoryEmulator:
 
 
 class GuestNetworkAdapterTests(unittest.TestCase):
+    def test_mib_interface_and_arp_tables_follow_persona_and_bound_writes(self):
+        for width in (4, 8):
+            with self.subTest(width=width):
+                emu = MemoryEmulator(width)
+                persona = load_persona(None)
+                persona["network_adapter"].update({
+                    "ipv4": "10.10.4.22", "prefix_length": 23,
+                    "gateway": "10.10.4.1", "if_index": 7,
+                    "mtu": 1400, "mac": "12-34-56-78-9A-BC"})
+                model = GuestNetworkAdapter(persona)
+                size_ptr, buffer = 0x10100, 0x11000
+                for method, expected_size in (
+                        (model._get_if_table, 4 + ctypes.sizeof(_MibIfRow)),
+                        (model._get_ip_net_table, 4 + 24),
+                        (model._get_ip_addr_table, 4 + 24)):
+                    with self.subTest(method=method.__name__):
+                        emu.mem_write(buffer, b"\0" * expected_size)
+                        emu.mem_write(size_ptr, struct.pack("<I", 0))
+                        call = lambda address: method(emu, "iphlpapi." +
+                                                      method.__name__, None,
+                                                      [address, size_ptr, 1])
+                        self.assertEqual(call(0), 122)
+                        self.assertEqual(emu.mem_read(size_ptr, 4),
+                                         struct.pack("<I", expected_size))
+                        emu.mem_write(size_ptr, struct.pack("<I", expected_size - 1))
+                        self.assertEqual(call(buffer), 122)
+                        self.assertEqual(emu.mem_read(buffer, expected_size),
+                                         b"\0" * expected_size)
+                        self.assertEqual(call(buffer), 0)
+                        self.assertEqual(emu.mem_read(buffer, 4), struct.pack("<I", 1))
+                        if method == model._get_if_table:
+                            interface_image = emu.mem_read(buffer, expected_size)
+                        elif method == model._get_ip_net_table:
+                            neighbor_image = emu.mem_read(buffer, expected_size)
+                        else:
+                            address_image = emu.mem_read(buffer, expected_size)
+                        emu.mem_write(size_ptr, struct.pack("<I", expected_size))
+                        self.assertEqual(call(0x30000), 87)
+                        self.assertEqual(method(emu, "iphlpapi.test", None,
+                                                [buffer, 0x30000, 0]), 87)
+                row = _MibIfRow.from_buffer_copy(interface_image[4:])
+                self.assertEqual(ctypes.sizeof(_MibIfRow), 860)
+                self.assertEqual(row.dwIndex, 7)
+                self.assertEqual(row.dwType, 6)
+                self.assertEqual(row.dwMtu, 1400)
+                self.assertEqual(row.dwSpeed, 1_000_000_000)
+                self.assertEqual(row.dwPhysAddrLen, 6)
+                self.assertEqual(bytes(row.bPhysAddr[:6]), bytes.fromhex("123456789abc"))
+                self.assertEqual((row.dwAdminStatus, row.dwOperStatus), (1, 5))
+                self.assertIn("{7A91D3B6-46CF-4D12-9D5B-8E7C412A9360}",
+                              bytes(row.wszName).decode("utf-16le"))
+                self.assertEqual(bytes(row.bDescr[:row.dwDescrLen]),
+                                 persona["network_adapter"]["description"].encode("cp1252"))
+                self.assertEqual(neighbor_image[4:],
+                                 struct.pack("<II8s4sI", 7, 6,
+                                             b"\xff" * 6 + b"\0\0",
+                                             bytes((10, 10, 5, 255)), 4))
+                self.assertEqual(address_image[4:],
+                                 struct.pack("<4sI4sIIHH", bytes((10, 10, 4, 22)),
+                                             7, bytes((255, 255, 254, 0)),
+                                             1, 65535, 0, 1))
+
+    def test_arp_table_has_no_invented_broadcast_on_point_to_point_subnet(self):
+        emu = MemoryEmulator(8)
+        persona = load_persona(None)
+        persona["network_adapter"].update({
+            "ipv4": "10.0.0.2", "prefix_length": 31, "gateway": "10.0.0.3"})
+        model = GuestNetworkAdapter(persona)
+        size_ptr, buffer = 0x10100, 0x11000
+        emu.mem_write(size_ptr, struct.pack("<I", 64))
+        self.assertEqual(model._get_ip_net_table(
+            emu, "iphlpapi.GetIpNetTable", None,
+            [buffer, size_ptr, 0]), 232)
+        self.assertEqual(emu.mem_read(buffer, 28), b"\0" * 28)
+        self.assertEqual(model._get_ip_net_table(
+            emu, "iphlpapi.GetIpNetTable", None,
+            [buffer, 0x30000, 0]), 87)
+
     def test_ipv4_route_table_size_and_persona_addresses(self):
         for width in (4, 8):
             with self.subTest(width=width):

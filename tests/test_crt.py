@@ -69,6 +69,25 @@ class LegacyCRTStreamsTests(unittest.TestCase):
         crt.write_guard = lambda *_args: False
         self.assertEqual(crt._wcsupr(emu, 'msvcrt._wcsupr', None, [0x1000]), 0)
 
+    def test_strupr_preserves_byte_length_and_checks_write_access(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        original = b'route print -4 caf\xe9 \xdf \x81\0'
+        emu.mem_write(0x1000, original)
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._strupr(emu, 'msvcrt._strupr', None, [0x1000]),
+                         0x1000)
+        self.assertEqual(emu.mem_read(0x1000, len(original)),
+                         b'ROUTE PRINT -4 CAF\xc9 \xdf \x81\0')
+        crt.write_guard = lambda *_args: False
+        emu.mem_write(0x1000, original)
+        self.assertEqual(crt._strupr(emu, 'msvcrt._strupr', None, [0x1000]), 0)
+        self.assertEqual(emu.mem_read(0x1000, len(original)), original)
+
     def test_wcscspn_stops_at_first_rejected_guest_character(self):
         emu = _Emulator(8)
         memory = {}

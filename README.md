@@ -24,6 +24,8 @@ In a separate x64 package probe, Microsoft's `findstr.exe` with its staged MUI f
 
 The default persona includes 49 virtual files, including a valid PDF receipt and ZIP travel archive, with matching profile, Program Files, Common Files, shell-folder, and time-zone registry paths. A staged x64 `findstr.exe` reads the persona calendar file and the PDF receipt, a staged x64 `reg.exe` queries its Startup and profile-root values, and staged x86/x64 `tzutil.exe /g` print the configured time zone with the `_dstoff` suffix used by this fixed-offset persona. The exact probes and limits are in [COVERAGE_AND_SAFETY.md](COVERAGE_AND_SAFETY.md).
 
+The IP Helper model also supplies persona-backed `GetIfTable`, `GetIpAddrTable`, `GetIpNetTable`, and `GetIpForwardTable` responses for its Ethernet adapter. These are bounded subsets; `route.exe print -4` still stops at an undocumented NSI API, so its listing is not supported.
+
 In the 2026-10-12 build, the packaged worker runs two supplied x64 EXEs past their formerly unsupported AVX startup instruction. Both runs finish with no recorded errors and 11 extracted artifacts. The fallback covers only the documented AVX shapes; use `.\tools\run_avx_cases.ps1` to repeat the harmless x86/x64 checks.
 
 See [COVERAGE_AND_SAFETY.md](COVERAGE_AND_SAFETY.md) for researched gaps,

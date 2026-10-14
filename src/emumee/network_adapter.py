@@ -94,6 +94,24 @@ def _fixed_layouts(width: int):
     return FixedInfo, IpAddrString
 
 
+class _MibIfRow(ctypes.Structure):
+    _fields_ = [
+        ("wszName", ctypes.c_uint16 * 256),
+        ("dwIndex", ctypes.c_uint32), ("dwType", ctypes.c_uint32),
+        ("dwMtu", ctypes.c_uint32), ("dwSpeed", ctypes.c_uint32),
+        ("dwPhysAddrLen", ctypes.c_uint32), ("bPhysAddr", ctypes.c_uint8 * 8),
+        ("dwAdminStatus", ctypes.c_uint32), ("dwOperStatus", ctypes.c_uint32),
+        ("dwLastChange", ctypes.c_uint32), ("dwInOctets", ctypes.c_uint32),
+        ("dwInUcastPkts", ctypes.c_uint32), ("dwInNUcastPkts", ctypes.c_uint32),
+        ("dwInDiscards", ctypes.c_uint32), ("dwInErrors", ctypes.c_uint32),
+        ("dwInUnknownProtos", ctypes.c_uint32), ("dwOutOctets", ctypes.c_uint32),
+        ("dwOutUcastPkts", ctypes.c_uint32), ("dwOutNUcastPkts", ctypes.c_uint32),
+        ("dwOutDiscards", ctypes.c_uint32), ("dwOutErrors", ctypes.c_uint32),
+        ("dwOutQLen", ctypes.c_uint32), ("dwDescrLen", ctypes.c_uint32),
+        ("bDescr", ctypes.c_uint8 * 256),
+    ]
+
+
 class GuestNetworkAdapter:
     def __init__(self, persona: dict):
         self.persona = persona
@@ -103,6 +121,11 @@ class GuestNetworkAdapter:
         self.unsupported: list[str] = []
 
     def install(self, emulator) -> None:
+        emulator.add_api_hook(self._get_if_table, "iphlpapi", "GetIfTable", argc=3)
+        emulator.add_api_hook(self._get_ip_net_table, "iphlpapi",
+                              "GetIpNetTable", argc=3)
+        emulator.add_api_hook(self._get_ip_addr_table, "iphlpapi",
+                              "GetIpAddrTable", argc=3)
         emulator.add_api_hook(self._get_ip_forward_table, "iphlpapi",
                               "GetIpForwardTable", argc=3)
         emulator.add_api_hook(self._get_adapters_addresses, "iphlpapi",
@@ -218,6 +241,78 @@ class GuestNetworkAdapter:
                     address + size <= int(mapping.base) + int(mapping.size) and
                     int(mapping.prot) & required and
                     (guard is None or guard(emu, address, size)))
+
+    def _write_mib_table(self, emu, api_name: str, params, image: bytes) -> int:
+        buffer, size_ptr, _ordered = map(int, params)
+        if (not self._access(emu, size_ptr, 4, False) or
+                not self._access(emu, size_ptr, 4, True)):
+            return ERROR_INVALID_PARAMETER
+        try:
+            capacity = int.from_bytes(emu.mem_read(size_ptr, 4), "little")
+            required = len(image)
+            if not buffer or capacity < required:
+                emu.mem_write(size_ptr, struct.pack("<I", required))
+                self.events.append({"event": "guest_mib_table", "api": api_name,
+                                    "status": ERROR_INSUFFICIENT_BUFFER,
+                                    "required": required})
+                return ERROR_INSUFFICIENT_BUFFER
+            if not self._access(emu, buffer, required, True):
+                return ERROR_INVALID_PARAMETER
+            emu.mem_write(buffer, image)
+            emu.mem_write(size_ptr, struct.pack("<I", required))
+        except Exception:
+            return ERROR_INVALID_PARAMETER
+        self.events.append({"event": "guest_mib_table", "api": api_name,
+                            "status": 0, "required": required})
+        return 0
+
+    def _get_if_table(self, emu, api_name, _original, params) -> int:
+        adapter = self.persona["network_adapter"]
+        row = _MibIfRow()
+        name = (r"\DEVICE\TCPIP_" + adapter["guid"]).encode("utf-16le")
+        row.wszName[:len(name) // 2] = struct.unpack("<" + "H" * (len(name) // 2), name)
+        row.dwIndex = adapter["if_index"]
+        row.dwType = 6  # Ethernet
+        row.dwMtu = adapter["mtu"]
+        row.dwSpeed = 1_000_000_000
+        mac = bytes.fromhex(adapter["mac"].replace("-", ""))
+        row.dwPhysAddrLen = len(mac)
+        row.bPhysAddr[:len(mac)] = mac
+        row.dwAdminStatus = 1  # Up
+        row.dwOperStatus = 5  # Operational
+        description = adapter["description"].encode("cp1252", errors="replace")[:255]
+        row.dwDescrLen = len(description)
+        row.bDescr[:len(description)] = description
+        image = struct.pack("<I", 1) + bytes(row)
+        return self._write_mib_table(emu, api_name, params, image)
+
+    def _get_ip_net_table(self, emu, api_name, _original, params) -> int:
+        adapter = self.persona["network_adapter"]
+        if adapter["prefix_length"] >= 31:
+            size_ptr = int(params[1])
+            if (not self._access(emu, size_ptr, 4, False) or
+                    not self._access(emu, size_ptr, 4, True)):
+                return ERROR_INVALID_PARAMETER
+            return ERROR_NO_DATA
+        subnet = ipaddress.IPv4Network((adapter["ipv4"],
+                                        adapter["prefix_length"]), strict=False)
+        # A broadcast mapping needs no invented gateway hardware address.
+        broadcast = subnet.broadcast_address.packed
+        row = struct.pack("<II8s4sI", adapter["if_index"], 6,
+                          b"\xff" * 6 + b"\0\0", broadcast, 4)
+        image = struct.pack("<I", 1) + row
+        return self._write_mib_table(emu, api_name, params, image)
+
+    def _get_ip_addr_table(self, emu, api_name, _original, params) -> int:
+        adapter = self.persona["network_adapter"]
+        subnet = ipaddress.IPv4Network((adapter["ipv4"],
+                                        adapter["prefix_length"]), strict=False)
+        address = ipaddress.IPv4Address(adapter["ipv4"]).packed
+        mask = subnet.netmask.packed
+        row = struct.pack("<4sI4sIIHH", address, adapter["if_index"], mask,
+                          1, 65535, 0, 1)
+        image = struct.pack("<I", 1) + row
+        return self._write_mib_table(emu, api_name, params, image)
 
     def _get_ip_forward_table(self, emu, api_name, _original, params) -> int:
         buffer, size_ptr, ordered = map(int, params)

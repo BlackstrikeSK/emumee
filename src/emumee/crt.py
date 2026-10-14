@@ -123,6 +123,8 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._wcsupr, "msvcrt", "_wcsupr", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._strupr, "msvcrt", "_strupr", argc=1,
+                              call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._swprintf_s, "msvcrt", "swprintf_s", argc=3,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._snwprintf_s, "msvcrt", "_snwprintf_s", argc=4,
@@ -307,6 +309,33 @@ class LegacyCRTStreams:
                     emu, pointer, len(image)):
                 raise ValueError("guest string write denied")
             emu.mem_write(pointer, image)
+            return pointer
+        except Exception as exc:
+            self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
+            return 0
+
+    def _strupr(self, emu, api_name, _original, params) -> int:
+        pointer = int(params[0])
+        try:
+            if not pointer:
+                raise ValueError("null guest string")
+            image = bytearray()
+            for index in range(_MAX_FORMAT_CHARS):
+                unit = self._read(emu, pointer + index, 1)
+                if unit == b"\0":
+                    break
+                try:
+                    upper = unit.decode("cp1252").upper().encode("cp1252")
+                except UnicodeError:
+                    upper = unit
+                image.extend(upper if len(upper) == 1 else unit)
+            else:
+                raise ValueError("guest string exceeds limit")
+            image.append(0)
+            if self.write_guard is not None and not self.write_guard(
+                    emu, pointer, len(image)):
+                raise ValueError("guest string write denied")
+            emu.mem_write(pointer, bytes(image))
             return pointer
         except Exception as exc:
             self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")

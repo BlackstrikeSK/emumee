@@ -5,12 +5,12 @@
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
 `getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, and `reg.exe` files
 in guest System32, alongside the
-existing generated `hostname.exe` and `whoami.exe`. The fifteen newer PE instructions call
-guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; the
-argument dispatchers also call guest `lstrcmpiA`. Their
-output bytes are derived only from the selected persona. Direct guest child
-launches through `WinExec` on both architectures printed custom persona values,
-matched the generated output exactly, and added a guest child entry point.
+existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
+guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
+argument dispatchers also call guest `lstrcmpiA`. Their output bytes are
+derived only from the selected persona. Direct guest child launches through
+`WinExec` on both architectures printed custom persona values and added a
+guest child entry point.
 The `tasklist` rows use the same names, PIDs, and session mapping as the persona
 process configuration. Generated `ipconfig.exe /all` prints the persona's
 hostname, adapter description, MAC address, DHCP flag, IPv4 settings, and DNS
@@ -31,8 +31,8 @@ only. Generated `query.exe user`, `query.exe session`, `quser.exe`, and
 session 0; the logon time comes from
 the guest clock and uptime. Other `query` forms exit 87. These are bounded guest utilities, separate from the real
 Microsoft binaries staged in earlier compatibility probes. They do not read or
-launch host binaries, and process or network changes made after run setup are
-not reflected in their initial snapshots.
+launch host binaries. The text PEs render process and network data at setup,
+so later changes are not reflected in those initial snapshots.
 
 Generated `net.exe` and `net1.exe` list the persona user and fixed local
 Administrator and Guest accounts. Their local Users and Administrators views
@@ -48,11 +48,13 @@ Only the first three configured services have named query variants; list
 queries include all. Unsupported `stop` exits 87 without changing service
 state. This is a setup snapshot, not a dynamic Service Control Manager.
 
-Generated `reg.exe` answers selected exact `query` commands from the guest
-registry snapshot, including values and immediate subkeys. Both quoted and
-unquoted common paths were exercised; `reg add` exited 87. The generated
-binary does not query or modify the host registry. A locally staged Microsoft
-`reg.exe` remains a separate compatibility path with broader guest API use.
+The included `reg.exe` is built from the repository's small guest C source
+without a C runtime. It calls guest `RegOpenKeyExW`, `RegEnumValueW`, and
+`RegEnumKeyExW`, so local key queries read current guest registry values and
+immediate subkeys. Quoted paths and custom persona keys worked on x86 and x64;
+`reg add` exited 87, and a missing key returned error 2. It neither queries
+nor modifies the host registry. A locally staged Microsoft `reg.exe` remains
+a separate compatibility path with additional Windows command behavior.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`

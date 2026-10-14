@@ -28,3 +28,6 @@ emumee = "emumee.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+emumee = ["guest_native/*.c", "guest_native/*.exe"]

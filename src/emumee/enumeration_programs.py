@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import ipaddress
 import struct
+from importlib.resources import files
 
 from .clock import VirtualClock
 from .persona_content import PROCESS_PATHS, oem_code_page
@@ -280,34 +281,6 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
                 "        WIN32_EXIT_CODE    : 0  (0x0)\r\n"
                 "        SERVICE_EXIT_CODE  : 0  (0x0)\r\n\r\n")
         return "".join(rows) or "Enum: no matching services.\r\n"
-    if name == "reg.exe":
-        if not arguments:
-            return "REG QUERY KeyName\r\nDisplays the values and subkeys of a registry key.\r\n"
-        if not arguments.casefold().startswith("query "):
-            raise ValueError("unsupported reg arguments")
-        path = arguments[6:].strip()
-        if path.startswith('"') and path.endswith('"') and len(path) >= 2:
-            path = path[1:-1]
-        roots = {"hklm": "HKEY_LOCAL_MACHINE", "hkcu": "HKEY_CURRENT_USER",
-                 "hkcr": "HKEY_CLASSES_ROOT", "hku": "HKEY_USERS",
-                 "hkcc": "HKEY_CURRENT_CONFIG"}
-        root, separator, suffix = path.partition("\\")
-        path = roots.get(root.casefold(), root) + (separator + suffix if separator else "")
-        path = path.rstrip("\\")
-        keys = {item["path"].casefold(): item for item in persona["registry_keys"]}
-        key = keys.get(path.casefold())
-        if key is None:
-            raise ValueError("unknown guest registry key")
-        rows = ["\r\n" + key["path"] + "\r\n"]
-        for value in key["values"]:
-            rows.append(f"    {value['name']}    {value['type']}    {value['data']}\r\n")
-        prefix = key["path"].casefold() + "\\"
-        children = sorted(item["path"] for item in persona["registry_keys"]
-                          if item["path"].casefold().startswith(prefix) and
-                          "\\" not in item["path"][len(prefix):])
-        if children:
-            rows.append("\r\n" + "\r\n".join(children) + "\r\n")
-        return "".join(rows)
     raise ValueError(f"unknown guest enumeration program: {name}")
 
 
@@ -519,8 +492,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     result = {}
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
-                 "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
-                 "reg.exe"):
+                 "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "arp.exe": ("-a",),
@@ -537,22 +509,14 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "sc.exe": ("query", "query state= all",
                                 *(f"query {service['name']}"
                                   for service in persona["services"][:3])),
-                     "reg.exe": (
-                         r'query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"',
-                         r'query HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion',
-                         r'query "HKCU\Control Panel\Desktop"',
-                         r'query HKCU\Control Panel\Desktop',
-                         r'query HKLM\SYSTEM\CurrentControlSet\Services\WinDefend'),
                      "tzutil.exe": ("/g",)}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
-        variants = {}
-        for argument in commands:
-            try:
-                variants[argument] = enumeration_text(name, persona, argument)
-            except ValueError:
-                if name != "reg.exe":
-                    raise
+        variants = {argument: enumeration_text(name, persona, argument)
+                    for argument in commands}
         result[name] = console_text_exe(
             is_x64, enumeration_text(name, persona), code_page=code_page,
             variants=variants)
+    arch = "x64" if is_x64 else "x86"
+    result["reg.exe"] = files("emumee").joinpath(
+        "guest_native", f"reg_query_{arch}.exe").read_bytes()
     return result

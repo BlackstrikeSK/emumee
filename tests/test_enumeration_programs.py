@@ -86,15 +86,21 @@ class EnumerationProgramTests(unittest.TestCase):
                     result = run_native(payload, inspect_pe(payload, "parent.exe"),
                                         persona, root / "run", [], 10, 100_000)
                     self.assertFalse(result["errors"])
-                    self.assertEqual(result["console_output"]["stdout"],
-                                     enumeration_text(name, persona, arguments))
+                    if name == "reg.exe":
+                        self.assertIn("CurrentBuild    REG_SZ    ",
+                                      result["console_output"]["stdout"])
+                        self.assertIn("RegisteredOwner    REG_SZ    ",
+                                      result["console_output"]["stdout"])
+                    else:
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text(name, persona, arguments))
 
     def test_generated_programs_run_as_guest_children_on_both_architectures(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
                          "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
                          "tzutil.exe", "query.exe", "quser.exe", "qwinsta.exe",
-                         "net.exe", "net1.exe", "sc.exe", "reg.exe"):
+                         "net.exe", "net1.exe", "sc.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -464,6 +470,7 @@ class EnumerationProgramTests(unittest.TestCase):
                     r'query "HKCU\Control Panel\Desktop"',
                     r'query HKLM\SYSTEM\CurrentControlSet\Services\WinDefend',
                     r'add HKCU\Control Panel\Desktop',
+                    r'query HKLM\Software\DefinitelyAbsent',
                 )
                 for index, command in enumerate(commands):
                     if command.startswith('query "'):
@@ -474,19 +481,34 @@ class EnumerationProgramTests(unittest.TestCase):
                                         root / str(index), [], 10, 100_000,
                                         guest_args=guest_args)
                     self.assertFalse(result["errors"])
-                    if command.startswith("add"):
-                        self.assertEqual(result["guest_exit_code"], 87)
+                    if command.startswith("add") or command.endswith("DefinitelyAbsent"):
+                        self.assertEqual(result["guest_exit_code"],
+                                         87 if command.startswith("add") else 2)
                         self.assertEqual(result["console_output"]["stdout"], "")
                     else:
                         self.assertEqual(result["guest_exit_code"], 0)
-                        self.assertEqual(result["console_output"]["stdout"],
-                                         enumeration_text("reg.exe", persona, command))
-                version = enumeration_text("reg.exe", persona, commands[0])
+                        self.assertIn("REG_", result["console_output"]["stdout"])
+                version_result = run_native(image, inspect_pe(image, "reg.exe"), persona,
+                                            root / "version", [], 10, 100_000,
+                                            guest_args=["query",
+                                                r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"])
+                self.assertFalse(version_result["errors"])
+                version = version_result["console_output"]["stdout"]
                 self.assertIn("CurrentBuild    REG_SZ    26100", version)
                 self.assertIn("RegisteredOwner    REG_SZ    Morgan", version)
-                custom.write_text(json.dumps({"registry_keys": []}), encoding="utf-8")
-                empty = load_persona(custom)
-                self.assertIn("reg.exe", enumeration_programs(arch == "x64", empty))
+                custom.write_text(json.dumps({"registry_keys": [{
+                    "path": r"HKEY_CURRENT_USER\Software\GuestProbe",
+                    "values": [{"name": "Answer", "type": "REG_SZ", "data": "persona-only"}]
+                }]}), encoding="utf-8")
+                custom_persona = load_persona(custom)
+                custom_result = run_native(image, inspect_pe(image, "reg.exe"),
+                                           custom_persona, root / "custom", [],
+                                           10, 100_000,
+                                           guest_args=["query", r"HKCU\Software\GuestProbe"])
+                self.assertFalse(custom_result["errors"])
+                self.assertEqual(custom_result["guest_exit_code"], 0)
+                self.assertIn("Answer    REG_SZ    persona-only",
+                              custom_result["console_output"]["stdout"])
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

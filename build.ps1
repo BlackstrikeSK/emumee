@@ -11,6 +11,8 @@ if (-not (Test-Path -LiteralPath $python)) {
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $python 'tools\patch_bootloader_cfg.py' 'dist\Emumee\Emumee.exe'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $python -m emumee.worker_build 'dist\Emumee\Emumee.exe' --source $projectRoot
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & 'dist\Emumee\Emumee.exe' persona | Out-Null
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host 'Isolated Emumee bundle built in dist\Emumee.'

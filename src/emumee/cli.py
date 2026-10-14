@@ -276,6 +276,12 @@ def run(args: argparse.Namespace) -> int:
     if not worker_exe.is_file():
         print("error: isolated worker bundle missing; run .\\build.ps1 first", file=sys.stderr)
         return 2
+    from .worker_build import verify_receipt
+    try:
+        verify_receipt(worker_exe, None if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2])
+    except (OSError, ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     import pefile
     worker_pe = pefile.PE(str(worker_exe), fast_load=True)
     if worker_pe.OPTIONAL_HEADER.DllCharacteristics & 0x4000:

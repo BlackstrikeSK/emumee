@@ -42,6 +42,12 @@ Guest `ping.exe` supports bounded IPv4 echo requests against the guest identity 
 
 Requires Windows 11 and Python 3.11 or newer. `setup.ps1` installs dependencies and builds the isolated worker executable. A .NET SDK is only needed to build the harmless managed test fixture. Run `build.ps1` after changing worker code.
 
+The build includes the generated guest PE assets and writes
+`dist/Emumee/worker-build.json` with source, executable, and asset hashes.
+Source runs reject a missing or stale receipt before starting analysis and
+show the rebuild command. Keep the receipt with the complete portable bundle.
+It detects build drift and corruption; it is not a code signature.
+
 ```powershell
 .\setup.ps1
 .\emumee.ps1 persona

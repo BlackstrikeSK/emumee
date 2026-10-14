@@ -1,18 +1,70 @@
 # Coverage, containment, and test plan
 
-## PowerShell command-capture feasibility
+## PowerShell execution and command capture
 
-The fixed Linux-container probe now captures evaluated command data directly
-from the pinned PowerShell engine's current command processor and native
-parameter binder. Dynamic names, nested evaluation, splatted arrays, aliases,
-and native argument boundaries have been checked in the actual container.
-The dashboard displays structured invocation records and existing guest native
-process command lines, using the normal engine-report integrity check. Records
-describe invocations before execution, and the probe report is marked partial.
-Private engine fields, script-controllable breakpoints, hidden paths, new
-runspaces, native descendants, and Windows persona mapping remain open. No
-arbitrary PowerShell script execution mode is enabled. See
+The experimental `powershell` CLI accepts supplied scripts inside Docker
+Desktop's offline Linux VM. It captures evaluated parameters from a pinned,
+instrumented engine and native exec arguments through an external observer.
+Its required guest-tools build exposes all 40 bundled Windows enumeration
+utilities through the same persona-backed x64 PE CPU/API models inside the
+guest. Dynamic command names, nested evaluation, splatting, native argument
+boundaries, offline DNS/ICMP, timeout retention, and the dashboard have been
+verified with harmless fixtures. Runs remain partial: engine and utility
+payloads are guest-generated, general Windows APIs/providers and shared
+mutable Windows state remain incomplete, and complete capture or hostile
+tamper resistance is not established. See
 [POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md) for evidence and limits.
+
+## Worker build receipt and packaged utility assets
+
+The PyInstaller build explicitly includes the generated x86/x64 PE resources.
+`build.ps1` verifies that packaged utility bytes match the source assets, then
+writes a receipt with the worker executable hash, source input hashes, and
+guest asset hashes. The source `run` command checks that receipt against current
+source before it reads the analysis input or creates an AppContainer. The portable
+CLI checks executable and asset integrity without requiring a source checkout.
+Missing or stale receipts produce a rebuild instruction. Missing or altered
+utility assets and executable corruption also fail the preflight check.
+
+This is a compatibility and corruption check, not signed attestation. Existing
+run manifests still bind the entire worker bundle and execution inputs before
+launch. Changing the receipt cannot establish trust in an untrusted executable.
+
+The repeatable enumeration package gate is:
+
+```powershell
+.\build.ps1
+.venv\Scripts\python.exe -m tools.verify_enumeration_package --output output\enumeration-package-fresh
+```
+
+It uses a fresh output directory, a custom persona, and offline replay mode.
+Each supported read command must create the expected guest child, finish with
+exit 0, emit output, and use the exact generated persona PE bytes. It covers
+all bundled utilities on x86/x64 plus the source CLI's guest ping path. Parent
+exit status alone does not pass this gate.
+
+On 2026-10-14 UTC, the rebuilt worker passed all 81 cases: 40 generated
+utilities on each architecture and the source CLI's offline ping child.
+Every case verified AppContainer/job/child-process restrictions and engine
+report integrity. Four build-receipt tests passed, including early CLI
+rejection before sample parsing or container creation. Evidence is
+`output/guest-enumeration-package/final-81/verification.json`.
+The tested worker SHA-256 is
+`16510ce2fdd32a074d22a8165d7a4468a8fa2eaf766ebc8856cfb966bfd8ca5f`;
+the receipt verifies all 16 packaged guest PE resources. These checks cover
+the supported read forms in the inventory, not arbitrary Windows command
+syntax or a representative malware corpus.
+
+Twelve fresh packaged containment checks created no host markers and rejected
+direct private-mode invocation outside AppContainer. Three AppContainer smoke
+configurations denied outside file/registry access, bundle writes, parent
+process reads, and host child creation. Network-disabled profiles could not
+connect to the internet or host loopback. The scoped cleanup scan covered
+1,384 directories and 12,242 files and found zero explicit AppContainer SID
+grants, private broker journals, or packaged Emumee processes. Evidence is in
+`output/containment-probe/containment-results.json`,
+`output/guest-enumeration-package/final-81/sandbox-smoke.json`, and
+`output/guest-enumeration-package/cleanup-scan.txt`.
 
 ## 2026-10-14 generated enumeration programs
 

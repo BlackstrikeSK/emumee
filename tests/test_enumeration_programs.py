@@ -16,6 +16,80 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_wmic_guest_queries_use_persona_apis_and_reject_remote_and_change_commands(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "persona.json"
+                config.write_text(json.dumps({"hostname": "GUEST-INVENTORY", "domain": "corp.example",
+                    "user_name": "Morgan", "windows_build": 26100, "physical_memory_mb": 32768,
+                    "available_memory_mb": 12345, "cpu": {"brand": "Guest Inventory CPU", "cores": 4},
+                    "volume_capacity_bytes": 1024 * 1024 ** 3,
+                    "volume_free_bytes": 128 * 1024 ** 3}), encoding="utf-8")
+                persona = load_persona(config)
+                image = enumeration_programs(arch == "x64", persona)["wmic.exe"]
+                queries = [
+                    (["os", "get", "Version,BuildNumber,CSName,FreePhysicalMemory,TotalVisibleMemorySize", "/value"],
+                     ("Version=10.0.26100", "BuildNumber=26100", "CSName=GUEST-INVENTORY",
+                      "FreePhysicalMemory=12641280", "TotalVisibleMemorySize=33554432")),
+                    (["path", "Win32_ComputerSystem", "get", "/value"],
+                     ("Domain=corp.example", "Name=GUEST-INVENTORY", "NumberOfLogicalProcessors=8",
+                      "TotalPhysicalMemory=34359738368", r"UserName=GUEST-INVENTORY\Morgan")),
+                    (["CPU", "GET", "Name,NumberOfLogicalProcessors", "/VALUE"],
+                     ("Name=Guest Inventory CPU", "NumberOfLogicalProcessors=8")),
+                    (["logicaldisk", "get", "Size,", "FreeSpace,", "Name", "/value"],
+                     ("Size=1099511627776", "FreeSpace=137438953472", "Name=C:")),
+                    (["os", "get", "BuildNumber"], ("BuildNumber", "26100"))]
+                for index, (args, expected) in enumerate(queries):
+                    output = root / f"query-{index}"
+                    result = run_native(image, inspect_pe(image, "wmic.exe"), persona,
+                                        output, [], 10, 200_000, guest_args=args)
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["guest_exit_code"], 0)
+                    text = result["console_output"]["stdout"]
+                    for value in expected:
+                        self.assertIn(value, text)
+                    report = json.loads((output / result["engine_report"]).read_text())
+                    self.assertEqual(report["network_events"], [])
+                for index, args in enumerate((["/node:host.example", "os", "get", "Version"],
+                    ["process", "call", "create", "whoami.exe"], ["os", "get", "SerialNumber"],
+                    ["os", "get", "Version,"], ["os", "get", "Version,Version"],
+                    ["os", "get", "Ver", "sion"],
+                    ["os", "get", "/output:host.txt"], ["os", "get", "x" * 300])):
+                    result = run_native(image, inspect_pe(image, "wmic.exe"), persona,
+                                        root / f"denied-{index}", [], 10, 200_000, guest_args=args)
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["guest_exit_code"], 87)
+                    self.assertEqual(result["console_output"]["stdout"], "")
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"wmic.exe logicaldisk get Size,FreeSpace /value\0"
+                parent[0x700:0x700 + len(command)] = command
+                result = run_native(bytes(parent), inspect_pe(bytes(parent), "parent.exe"), persona,
+                                    root / "child", [], 10, 200_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("Size=1099511627776", result["console_output"]["stdout"])
+                report = json.loads((root / "child" / result["engine_report"]).read_text())
+                self.assertEqual(report["network_events"], [])
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\wmic.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+                command = br"C:\Windows\System32\Wbem\wmic.exe os get Version /value" + b"\0"
+                parent[0x700:0x900] = b"\0" * 0x200
+                parent[0x700:0x700 + len(command)] = command
+                result = run_native(bytes(parent), inspect_pe(bytes(parent), "parent.exe"), persona,
+                                    root / "wbem-child", [], 10, 200_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("Version=10.0.26100", result["console_output"]["stdout"])
+                default = load_persona(None)
+                default_image = enumeration_programs(arch == "x64", default)["wmic.exe"]
+                result = run_native(default_image, inspect_pe(default_image, "wmic.exe"), default,
+                                    root / "workgroup", [], 10, 200_000,
+                                    guest_args=["computersystem", "get", "Domain", "/value"])
+                self.assertFalse(result["errors"])
+                self.assertIn("Domain=WORKGROUP", result["console_output"]["stdout"])
+
     def test_wbadmin_guest_child_lists_persona_catalog_and_enforces_permission_view(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:

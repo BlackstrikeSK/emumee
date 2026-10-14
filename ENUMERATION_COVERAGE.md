@@ -26,6 +26,7 @@ never change host state.
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
+| [`wmic.exe`](https://learn.microsoft.com/en-us/windows/win32/wmisdk/wmic) | Yes | Local `os`, `computersystem`, `cpu`, and `logicaldisk` `get` views, selected modeled properties, table or `/value` output, and equivalent `path Win32_*` forms |
 | [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | Yes | `el` and `gl <simple channel>` through guest registry APIs |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
 | [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | Yes | `/enum-drivers`, legacy `-e`, `/enum-devices`, `/enum-devices /connected`, `/enum-classes` from guest driver packages and devices |
@@ -55,6 +56,12 @@ but it is not included by default unless the table above says so.
 
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
+| `wmic.exe` beyond the listed views | More aliases, properties, filters, and formats | WMI COM providers, remote targets, changes, and arbitrary WQL remain unmodeled. Unsupported requests exit 87. |
+| `auditpol.exe` | Audit policy enumeration | Guest audit policy categories, subcategories, and per-user settings. Not included by default. |
+| `w32tm.exe` | Time service configuration and peer status | Guest Windows Time service state and peer metadata. Not included by default. |
+| `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
+| `ping.exe`, `tracert.exe`, `pathping.exe` | Network reachability and route discovery | Guest ICMP and route-hop simulation, with attempted operations logged. Not included by default. |
+| `nslookup.exe` | DNS enumeration | Guest DNS records, server selection, and query logging. Not included by default. |
 | `cmdkey.exe` beyond `/list` | Target filters and credential changes | A dynamic guest credential store and command parser; unsupported forms exit 87. |
 | `klist.exe` beyond the listed forms | Other logon IDs, sessions, `tgt`, bindings, and cache changes | More guest LSA session and cache models are needed. Encoded tickets and usable keys are not modeled; unsupported forms exit 87. |
 | `nltest.exe` beyond the listed forms | Other domains, server targets, discovery flags, secure channels, and changes | Dynamic domain services and Windows domain APIs remain unmodeled; unsupported forms exit 87. |
@@ -79,6 +86,29 @@ Generated `cmdkey.exe /list` reads only the persona's `stored_credentials`
 metadata: target, user, type, and persistence. The default guest has no stored
 credentials. The schema accepts no password field, and the utility never
 opens a host credential store. Add and delete operations exit 87.
+
+The included `wmic.exe` is a guest PE, despite Microsoft's deprecation and
+removal of the original tool from newer Windows installations. It reads guest
+Win32/NTDLL, registry, and workstation APIs at invocation time. Modeled fields:
+
+- `os`: `BuildNumber`, `CSName`, `FreePhysicalMemory`, `TotalVisibleMemorySize`,
+  `Version`, `WindowsDirectory` (memory values are KiB).
+- `computersystem`: `Domain`, `Name`, `NumberOfLogicalProcessors`,
+  `TotalPhysicalMemory`, `UserName` (physical memory is bytes).
+- `cpu`: `Name`, `NumberOfLogicalProcessors`.
+- `logicaldisk`: `DeviceID`, `FileSystem`, `FreeSpace`, `Name`, `Size`
+  (the single modeled C: volume, with capacity in bytes).
+
+Omitting properties lists only those modeled fields; it does not imply full WMI
+class coverage. Comma-separated selection, spaces around commas, case-insensitive
+names, and the equivalent `path Win32_OperatingSystem`, `Win32_ComputerSystem`,
+`Win32_Processor`, and `Win32_LogicalDisk` forms are supported. Other properties,
+remote switches, output files, filters, and mutations fail before reading data.
+Its console uses guest Unicode output; it does not reproduce Microsoft's original
+WMIC encoding conventions for every redirection or pipe. It never opens a host
+WMI connection. Guest WMI COM providers remain an independent coverage gap.
+The same verified guest image is available at both
+`C:\Windows\System32\wmic.exe` and `C:\Windows\System32\Wbem\wmic.exe`.
 
 Generated `wbadmin.exe get versions` lists the persona's `backup_versions`
 metadata, without opening backup targets. Creation times produce a UTC version

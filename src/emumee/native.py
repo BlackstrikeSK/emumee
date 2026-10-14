@@ -688,6 +688,11 @@ def run_native(
             "mode": "full_path", "emu_path": r"C:\Windows\System32" + "\\" + name,
             "path": str(host_path),
         })
+        if name == "wmic.exe":
+            cfg["filesystem"]["files"].insert(0, {
+                "mode": "full_path", "emu_path": r"C:\Windows\System32\Wbem\wmic.exe",
+                "path": str(host_path),
+            })
         persona_sources[str(host_path)] = payload
     input_dir = run_dir / "inputs"
     input_dir.mkdir(parents=True, exist_ok=True)

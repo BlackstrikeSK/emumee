@@ -989,4 +989,6 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
         "guest_native", f"fsutil_query_{arch}.exe").read_bytes()
     result["wevtutil.exe"] = files("emumee").joinpath(
         "guest_native", f"wevtutil_query_{arch}.exe").read_bytes()
+    result["wmic.exe"] = files("emumee").joinpath(
+        "guest_native", f"wmic_query_{arch}.exe").read_bytes()
     return result

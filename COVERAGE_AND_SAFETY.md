@@ -3,9 +3,9 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, and `qwinsta.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, and `net1.exe` files
 in guest System32, alongside the
-existing generated `hostname.exe` and `whoami.exe`. The eleven newer PE instructions call
+existing generated `hostname.exe` and `whoami.exe`. The thirteen newer PE instructions call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; the
 argument dispatchers also call guest `lstrcmpiA`. Their
 output bytes are derived only from the selected persona. Direct guest child
@@ -33,6 +33,12 @@ the guest clock and uptime. Other `query` forms exit 87. These are bounded guest
 Microsoft binaries staged in earlier compatibility probes. They do not read or
 launch host binaries, and process or network changes made after run setup are
 not reflected in their initial snapshots.
+
+Generated `net.exe` and `net1.exe` list the persona user and fixed local
+Administrator and Guest accounts. Their local Users and Administrators views
+use the guest token's admin membership; account mutation forms such as
+`net user Morgan /add` exit 87 with no output. This is a bounded snapshot,
+not a general SAM or domain account implementation.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`

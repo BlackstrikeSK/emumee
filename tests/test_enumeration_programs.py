@@ -62,7 +62,9 @@ class EnumerationProgramTests(unittest.TestCase):
                                     ("whoami.exe", "/user"),
                                     ("query.exe", "user"),
                                     ("quser.exe", ""),
-                                    ("qwinsta.exe", "")):
+                                    ("qwinsta.exe", ""),
+                                    ("net.exe", "localgroup administrators"),
+                                    ("net1.exe", "user")):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -89,7 +91,8 @@ class EnumerationProgramTests(unittest.TestCase):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
                          "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
-                         "tzutil.exe", "query.exe", "quser.exe", "qwinsta.exe"):
+                         "tzutil.exe", "query.exe", "quser.exe", "qwinsta.exe",
+                         "net.exe", "net1.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -360,6 +363,50 @@ class EnumerationProgramTests(unittest.TestCase):
                     self.assertFalse(unsupported["errors"])
                     self.assertEqual(unsupported["guest_exit_code"], 87)
                     self.assertEqual(unsupported["console_output"]["stdout"], "")
+
+    def test_net_local_account_queries_match_guest_token(self):
+        for arch in ("x86", "x64"):
+            for is_admin in (False, True):
+                with self.subTest(arch=arch, admin=is_admin), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    custom = root / "persona.json"
+                    custom.write_text(json.dumps({"hostname": "DESKTOP-CHECK42",
+                                                  "user_name": "Morgan",
+                                                  "user_is_admin": is_admin}), encoding="utf-8")
+                    persona = load_persona(custom)
+                    for name in ("net.exe", "net1.exe"):
+                        image = enumeration_programs(arch == "x64", persona)[name]
+                        commands = ("user", "user Morgan", "localgroup",
+                                    "localgroup administrators", "localgroup users",
+                                    "user Morgan /add")
+                        for index, command in enumerate(commands):
+                            result = run_native(image, inspect_pe(image, name), persona,
+                                                root / name / str(index), [], 10, 100_000,
+                                                guest_args=command.split())
+                            self.assertFalse(result["errors"])
+                            if command.endswith("/add"):
+                                self.assertEqual(result["guest_exit_code"], 87)
+                                self.assertEqual(result["console_output"]["stdout"], "")
+                            else:
+                                self.assertEqual(result["guest_exit_code"], 0)
+                                self.assertEqual(result["console_output"]["stdout"],
+                                                 enumeration_text(name, persona, command))
+                    admins = enumeration_text("net.exe", persona,
+                                              "localgroup administrators")
+                    self.assertEqual("Morgan" in admins, is_admin)
+                    self.assertIn("Morgan", enumeration_text("net.exe", persona,
+                                                            "localgroup users"))
+                    self.assertEqual("BUILTIN\\Administrators" in
+                                     enumeration_text("whoami.exe", persona, "/groups"),
+                                     is_admin)
+        persona = load_persona(None)
+        persona["user_name"] = "Administrator"
+        persona["user_is_admin"] = False
+        accounts = enumeration_text("net.exe", persona, "user")
+        self.assertEqual(accounts.count("Administrator"), 1)
+        administrators = enumeration_text("net.exe", persona,
+                                          "localgroup administrators")
+        self.assertNotIn("\r\nAdministrator\r\n", administrators)
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

@@ -29,6 +29,47 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
             raise ValueError("unsupported session query arguments")
         return enumeration_text("query.exe", persona,
                                 "user" if name == "quser.exe" else "session")
+    if name in {"net.exe", "net1.exe"}:
+        if not arguments:
+            return "The syntax of this command is:\r\nNET USER | NET LOCALGROUP\r\n"
+        argument = arguments.casefold()
+        heading = f"\\\\{persona['hostname']}\r\n\r\n"
+        if argument == "user":
+            account_names = {name.casefold(): name for name in
+                             ("Administrator", "Guest", persona["user_name"])}
+            users = sorted(account_names.values(), key=str.casefold)
+            return (f"User accounts for {heading}"
+                    "-------------------------------------------------------------------------------\r\n"
+                    + "  ".join(users) + "\r\n"
+                    "The command completed successfully.\r\n")
+        if argument == f"user {persona['user_name'].casefold()}":
+            memberships = "*Users"
+            if persona["user_is_admin"]:
+                memberships += "  *Administrators"
+            return (f"User name                    {persona['user_name']}\r\n"
+                    "Account active               Yes\r\n"
+                    f"Local Group Memberships      {memberships}\r\n"
+                    "The command completed successfully.\r\n")
+        if argument == "localgroup":
+            return (f"Aliases for {heading}"
+                    "-------------------------------------------------------------------------------\r\n"
+                    "*Administrators\r\n*Users\r\n"
+                    "The command completed successfully.\r\n")
+        if argument in {"localgroup administrators", "localgroup users"}:
+            admin_group = argument.endswith("administrators")
+            group = "Administrators" if admin_group else "Users"
+            members = (["Administrator"] if admin_group and
+                       persona["user_name"].casefold() != "administrator" else [])
+            if not admin_group or persona["user_is_admin"]:
+                members.append(persona["user_name"])
+            members = sorted(set(members), key=str.casefold)
+            return (f"Alias name     {group}\r\n"
+                    f"Comment        Local {group} group\r\n\r\n"
+                    "Members\r\n\r\n"
+                    "-------------------------------------------------------------------------------\r\n"
+                    + "\r\n".join(members) + "\r\n"
+                    "The command completed successfully.\r\n")
+        raise ValueError("unsupported net arguments")
     if name == "whoami.exe":
         identity = f"{persona['hostname']}\\{persona['user_name']}"
         if not arguments:
@@ -214,7 +255,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
                      variants: dict[str, str] | None = None) -> bytes:
     """Build a PE that selects bounded guest text by exact command argument."""
     variants = variants or {}
-    if len(variants) > 4 or any(not key or not key.isascii() or "\0" in key
+    if len(variants) > 5 or any(not key or not key.isascii() or "\0" in key
                                for key in variants):
         raise ValueError("guest utility argument variants are invalid")
     outputs = [("", output), *variants.items()]
@@ -418,7 +459,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     result = {}
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
-                 "quser.exe", "qwinsta.exe"):
+                 "quser.exe", "qwinsta.exe", "net.exe", "net1.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "arp.exe": ("-a",),
@@ -426,7 +467,14 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "netsh.exe": ("interface ipv4 show config",
                                    "interface ipv4 show dnsservers"),
                      "query.exe": ("user", "session"),
+                     "net.exe": ("user", f"user {persona['user_name']}",
+                                 "localgroup", "localgroup administrators",
+                                 "localgroup users"),
+                     "net1.exe": ("user", f"user {persona['user_name']}",
+                                  "localgroup", "localgroup administrators",
+                                  "localgroup users"),
                      "tzutil.exe": ("/g",)}.get(name, ()))
+        commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, persona, argument)
                     for argument in commands}
         result[name] = console_text_exe(

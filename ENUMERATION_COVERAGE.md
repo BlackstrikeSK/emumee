@@ -23,6 +23,8 @@ never change host state.
 | `query.exe` | Yes | `user`, `session` for the modeled console and services sessions |
 | [`quser.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/quser) | Yes | Default user session view |
 | [`qwinsta.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/qwinsta) | Yes | Default session view |
+| [`net.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user) | Yes | `user`, `user <persona user>`, `localgroup`, `localgroup administrators`, `localgroup users` |
+| `net1.exe` | Yes | Same modeled local account and group views as `net.exe` |
 
 ## Tracked gaps
 
@@ -34,7 +36,6 @@ but it is not included by default unless the table above says so.
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | `-ano` | Guest socket, listener, and PID state that changes during the run. |
-| [`net.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user) | `user`, `localgroup` | A coherent guest account and group database. |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with services and device state. |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | `/query` | A virtual scheduled-task store and query semantics. |
 | `reg.exe` | `query` | General guest registry command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
@@ -55,6 +56,13 @@ and the service session 0. Its logon time is derived from the guest clock and
 uptime. Other [user](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/query-user)
 and [session](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/query-session)
 queries, remote servers, and session changes are unmodeled.
+
+Generated `net.exe` and `net1.exe` list the persona user alongside fixed local
+Administrator and Guest accounts. Their Users and Administrators memberships
+match the guest token's admin flag. The named user query requires an ASCII
+persona user name; [other account commands](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user),
+remote domains, account changes, and a general guest SAM database remain
+unmodeled.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
 utility inventory. No entry in this file authorizes a guest command to execute

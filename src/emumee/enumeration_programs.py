@@ -519,4 +519,6 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     arch = "x64" if is_x64 else "x86"
     result["reg.exe"] = files("emumee").joinpath(
         "guest_native", f"reg_query_{arch}.exe").read_bytes()
+    result["where.exe"] = files("emumee").joinpath(
+        "guest_native", f"where_query_{arch}.exe").read_bytes()
     return result

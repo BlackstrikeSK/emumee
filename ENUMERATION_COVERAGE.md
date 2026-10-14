@@ -11,6 +11,7 @@ never change host state.
 | Guest program | Included by default | Modeled read commands |
 | --- | --- | --- |
 | `hostname.exe` | Yes | Default hostname |
+| `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
@@ -79,6 +80,13 @@ current guest values and immediate subkeys; `/v` selects one named value,
 bounded to 24 levels, 512 keys, and 256 Ki characters of output. `/f`, remote
 keys, and writes remain unmodeled. The packaged x86/x64 PEs import only guest Kernel32 and
 Advapi32 APIs and do not invoke the host registry.
+
+The included `where.exe` is also compiled from repository C source. It calls
+guest `GetCurrentDirectoryW`, `GetEnvironmentVariableW`, and
+`GetFileAttributesW`, so a lookup sees only guest files. It accepts one simple
+file name, searches at most 32 guest `PATH` directories, and prints only paths
+found in the virtual filesystem. Wildcards, recursive searches, multiple
+patterns, and switches are not modeled.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
 utility inventory. No entry in this file authorizes a guest command to execute

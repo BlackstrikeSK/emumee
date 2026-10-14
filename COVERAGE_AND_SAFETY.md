@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, and `reg.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -57,6 +57,13 @@ to 24 levels, 512 keys, and 256 Ki characters of output. `reg add` and `/f`
 exit 87, and missing keys or values return error 2. It neither queries
 nor modifies the host registry. A locally staged Microsoft `reg.exe` remains
 a separate compatibility path with additional Windows command behavior.
+
+The included `where.exe` uses guest `GetCurrentDirectoryW`,
+`GetEnvironmentVariableW`, and `GetFileAttributesW` to search one simple file
+name in the current directory and up to 32 guest `PATH` entries. It adds `.exe`
+when no extension is supplied. A real host file in the guest current directory
+was absent from the guest lookup on both architectures; a persona virtual file
+in that same directory was found. Wildcards, `/r`, and multiple names exit 87.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`

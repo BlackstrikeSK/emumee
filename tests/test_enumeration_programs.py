@@ -14,6 +14,68 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_where_reads_guest_search_path_without_host_files(self):
+        for is_x64 in (False, True):
+            with self.subTest(arch="x64" if is_x64 else "x86"), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                host_only = root / "host_only.exe"
+                host_only.write_bytes(b"not a guest file")
+                custom = root / "persona.json"
+                custom.write_text(json.dumps({
+                    "current_dir": str(root),
+                    "virtual_files": [
+                        {"path": str(root / "portable.exe"), "text": "guest-only"},
+                        {"path": r"C:\GuestTools\customtool.exe", "text": "guest-path-only"},
+                    ],
+                }), encoding="utf-8")
+                persona = load_persona(custom)
+                image = enumeration_programs(is_x64, persona)["where.exe"]
+                self.assertEqual(inspect_pe(image, "where.exe").architecture,
+                                 "x64" if is_x64 else "x86")
+                for index, (name, expected, status, stream) in enumerate((
+                        ("ipconfig", r"C:\Windows\System32\ipconfig.exe", 0, "stdout"),
+                        ("portable.exe", str(root / "portable.exe"), 0, "stdout"),
+                        ("host_only.exe", "Could not find files", 1, "stderr"),
+                        ("/r", "", 87, "stdout"))):
+                    result = run_native(image, inspect_pe(image, "where.exe"), persona,
+                                        root / f"run-{index}", [], 10, 100_000,
+                                        guest_args=[name])
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["guest_exit_code"], status)
+                    self.assertIn(expected, result["console_output"][stream])
+                    if status == 1:
+                        self.assertEqual(result["console_output"]["stdout"], "")
+                    self.assertNotIn(str(host_only), result["console_output"]["stdout"])
+                custom_path = run_native(image, inspect_pe(image, "where.exe"), persona,
+                                         root / "custom-path", [], 10, 100_000,
+                                         guest_args=["customtool"],
+                                         guest_env={"PATH": r"C:\GuestTools"})
+                self.assertFalse(custom_path["errors"])
+                self.assertEqual(custom_path["guest_exit_code"], 0)
+                self.assertEqual(custom_path["console_output"]["stdout"],
+                                 "C:\\GuestTools\\customtool.exe\r\n")
+
+    def test_winexec_launches_guest_where(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"where.exe ipconfig.exe\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertEqual(result["console_output"]["stdout"],
+                                 "C:\\Windows\\System32\\ipconfig.exe\r\n")
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\where.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_createprocess_launches_guest_ipconfig(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:

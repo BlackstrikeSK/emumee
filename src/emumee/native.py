@@ -666,12 +666,12 @@ def run_native(
     cfg = make_speakeasy_config(persona, info.name, timeout, max_instructions,
                                 guest_args, guest_env)
     persona_sources = {}
-    for index, (guest_path, host_path) in enumerate(
-            materialize_virtual_files(persona, run_dir / "persona-files")):
+    for guest_path, host_path in materialize_virtual_files(
+            persona, run_dir / "persona-files"):
         cfg["filesystem"]["files"].insert(0, {
             "mode": "full_path", "emu_path": guest_path, "path": str(host_path)
         })
-        persona_sources[str(host_path)] = persona["virtual_files"][index]["text"].encode("utf-8")
+        persona_sources[str(host_path)] = host_path.read_bytes()
     program_dir = run_dir / "persona-programs"
     program_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in (

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import ipaddress
+import io
 import struct
 import uuid
+import zipfile
 
 
 DISPLAY_VERSIONS = {
@@ -27,6 +30,48 @@ OEM_CODE_PAGES = {
 
 def oem_code_page(locale: str) -> int:
     return OEM_CODE_PAGES.get(locale.casefold(), 437)
+
+
+def _receipt_pdf() -> bytes:
+    stream = (b"BT /F1 12 Tf 54 750 Td (Train ticket receipt) Tj "
+              b"0 -24 Td (12 April 2026) Tj "
+              b"0 -24 Td (Rail fare: 24.50) Tj ET\n")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") +
+        b" >>\nstream\n" + stream + b"endstream",
+    ]
+    document = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, body in enumerate(objects, 1):
+        offsets.append(len(document))
+        document.extend(f"{index} 0 obj\n".encode("ascii") + body + b"\nendobj\n")
+    xref = len(document)
+    document.extend(f"xref\n0 {len(offsets)}\n".encode("ascii"))
+    document.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        document.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    document.extend((f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
+                     f"startxref\n{xref}\n%%EOF\n").encode("ascii"))
+    return bytes(document)
+
+
+def _travel_archive() -> bytes:
+    contents = {
+        "trip-checklist.txt": "Tickets\nPhone charger\nTravel card\n",
+        "travel-expenses.csv": "Date,Item,Amount\n2026-04-12,Train,24.50\n2026-04-12,Lunch,13.20\n",
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, text in contents.items():
+            info = zipfile.ZipInfo(name, date_time=(2026, 4, 12, 9, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, text.encode("utf-8"))
+    return buffer.getvalue()
 
 
 def desktop_files(user_name: str, hostname: str) -> list[dict[str, str]]:
@@ -134,7 +179,14 @@ def desktop_files(user_name: str, hostname: str) -> list[dict[str, str]]:
         (r"C:\Users\Public\Pictures\desktop.ini",
          "[.ShellClassInfo]\nLocalizedResourceName=Public Pictures\n"),
     ]
-    return [{"path": path, "text": text} for path, text in files]
+    result = [{"path": path, "text": text} for path, text in files]
+    result.extend((
+        {"path": home + r"\Documents\Receipts\train-apr-2026.pdf",
+         "base64": base64.b64encode(_receipt_pdf()).decode("ascii")},
+        {"path": home + r"\Downloads\trip-documents.zip",
+         "base64": base64.b64encode(_travel_archive()).decode("ascii")},
+    ))
+    return result
 
 
 def desktop_directories(user_name: str) -> list[str]:

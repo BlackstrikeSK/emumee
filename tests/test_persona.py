@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import struct
 import tempfile
 import unittest
 import uuid
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,7 +22,8 @@ from emumee.guest_programs import hostname_exe, whoami_exe
 from emumee.identity import GuestIdentity
 from emumee.native import run_native
 from emumee.pe import inspect_pe
-from emumee.persona import load_persona, make_speakeasy_config, materialize_virtual_files
+from emumee.persona import (load_persona, make_speakeasy_config,
+                            materialize_virtual_files, virtual_file_bytes)
 from emumee.persona_content import desktop_directories
 from emumee.virtualregistry import VirtualRegistryBridge
 from emumee.virtualfs import VirtualFileBridge
@@ -380,10 +383,26 @@ class PersonaContentTests(unittest.TestCase):
                 'utc_offset_minutes': 60,
             }), encoding='utf-8')
             persona = load_persona(override)
-            self.assertEqual(len(persona['virtual_files']), 47)
+            self.assertEqual(len(persona['virtual_files']), 49)
             staged = dict(materialize_virtual_files(persona, root / 'staged'))
             receipt = staged[r'C:\Users\Morgan\Documents\Receipts\train-apr-2026.txt']
             self.assertIn(b'24.50', receipt.read_bytes())
+            pdf = staged[r'C:\Users\Morgan\Documents\Receipts\train-apr-2026.pdf'].read_bytes()
+            self.assertTrue(pdf.startswith(b'%PDF-1.4\n'))
+            self.assertIn(b'(Rail fare: 24.50)', pdf)
+            self.assertTrue(pdf.rstrip().endswith(b'%%EOF'))
+            xref = int(pdf.split(b'startxref\n')[1].splitlines()[0])
+            self.assertEqual(pdf[xref:xref + 9], b'xref\n0 6\n')
+            offsets = [int(line[:10]) for line in
+                       pdf[xref:].splitlines()[3:8]]
+            for number, offset in enumerate(offsets, 1):
+                self.assertTrue(pdf[offset:].startswith(f'{number} 0 obj\n'.encode()))
+            with zipfile.ZipFile(staged[r'C:\Users\Morgan\Downloads\trip-documents.zip']) as archive:
+                self.assertEqual(archive.testzip(), None)
+                self.assertEqual(archive.read('trip-checklist.txt'),
+                                 staged[r'C:\Users\Morgan\Downloads\trip-checklist.txt'].read_bytes())
+                self.assertEqual(archive.read('travel-expenses.csv'),
+                                 staged[r'C:\Users\Morgan\Downloads\travel-expenses.csv'].read_bytes())
             self.assertIn(r'C:\Users\Morgan\Documents\Receipts',
                           desktop_directories('Morgan'))
             config = make_speakeasy_config(persona, 'sample.exe', 10, 1000)
@@ -491,6 +510,29 @@ class PersonaContentTests(unittest.TestCase):
             self.assertEqual(persona["registry_keys"], [])
             self.assertEqual(len(persona["virtual_files"]), 1)
             self.assertEqual(persona["virtual_files"][0]["text"], "hello")
+
+    def test_binary_virtual_files_are_bounded_and_decoded_exactly(self):
+        payload = b"\0\xffPK\x03\x04\0"
+        guest_path = r"C:\Users\Alex\Downloads\probe.zip"
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "persona.json"
+            entry = {"path": guest_path,
+                     "base64": base64.b64encode(payload).decode("ascii")}
+            config.write_text(json.dumps({"virtual_files": [entry]}), encoding="utf-8")
+            persona = load_persona(config)
+            self.assertEqual(virtual_file_bytes(persona["virtual_files"][0]), payload)
+            self.assertEqual(dict(materialize_virtual_files(
+                persona, Path(directory) / "staged"))[guest_path].read_bytes(), payload)
+            for broken in ("%%%", base64.b64encode(b"A" * (1024 * 1024 + 1)).decode("ascii")):
+                entry["base64"] = broken
+                config.write_text(json.dumps({"virtual_files": [entry]}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "base64|1 MiB"):
+                    load_persona(config)
+            entry["base64"] = base64.b64encode(payload).decode("ascii")
+            entry["text"] = "ambiguous"
+            config.write_text(json.dumps({"virtual_files": [entry]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                load_persona(config)
 
     def test_guest_program_search_uses_only_staged_files(self):
         system_tool = SimpleNamespace(path=r"C:\Windows\System32\whoami.exe")

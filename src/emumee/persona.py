@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
 import ipaddress
 import json
@@ -66,6 +68,26 @@ DEFAULT_PERSONA = {
 DEFAULT_PERSONA["registry_keys"] = registry_keys(DEFAULT_PERSONA)
 DEFAULT_PERSONA["virtual_files"] = desktop_files(
     DEFAULT_PERSONA["user_name"], DEFAULT_PERSONA["hostname"])
+
+
+def virtual_file_bytes(entry: dict) -> bytes:
+    if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+        raise ValueError("Each virtual_files entry needs a string path")
+    if set(entry) == {"path", "text"} and isinstance(entry["text"], str):
+        content = entry["text"].encode("utf-8")
+    elif set(entry) == {"path", "base64"} and isinstance(entry["base64"], str):
+        encoded = entry["base64"]
+        if len(encoded) > 4 * ((1024 * 1024 + 2) // 3):
+            raise ValueError("Persona virtual file exceeds 1 MiB")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("Persona virtual file base64 is invalid") from exc
+    else:
+        raise ValueError("Each virtual_files entry needs path and exactly one of text or base64")
+    if len(content) > 1024 * 1024:
+        raise ValueError("Persona virtual file exceeds 1 MiB")
+    return content
 
 
 def load_persona(path: Path | None) -> dict:
@@ -176,16 +198,14 @@ def load_persona(path: Path | None) -> dict:
     file_names: set[str] = set()
     total_file_bytes = 0
     for item in persona["virtual_files"]:
-        if (not isinstance(item, dict) or set(item) != {"path", "text"} or
-                not isinstance(item["path"], str) or not isinstance(item["text"], str)):
-            raise ValueError("Each virtual_files entry needs string path and text")
+        content = virtual_file_bytes(item)
         path_name = item["path"]
         if (not ntpath.isabs(path_name) or not path_name.upper().startswith("C:\\") or
                 "\0" in path_name or ":" in path_name[2:] or len(path_name) > 1024 or
                 ntpath.normpath(path_name).casefold() in file_names):
             raise ValueError("Persona virtual file path is unsafe or duplicated")
         file_names.add(ntpath.normpath(path_name).casefold())
-        size = len(item["text"].encode("utf-8"))
+        size = len(content)
         total_file_bytes += size
         if size > 1024 * 1024 or total_file_bytes > 16 * 1024 * 1024:
             raise ValueError("Persona virtual file data exceeds limit")
@@ -286,11 +306,7 @@ def materialize_virtual_files(persona: dict, root: Path) -> list[tuple[str, Path
     root.mkdir(parents=True, exist_ok=True)
     result = []
     for index, entry in enumerate(persona["virtual_files"]):
-        if not isinstance(entry, dict) or set(entry) != {"path", "text"}:
-            raise ValueError("Each virtual_files entry needs path and text")
-        content = entry["text"].encode("utf-8")
-        if len(content) > 1024 * 1024:
-            raise ValueError("Persona virtual file exceeds 1 MiB")
+        content = virtual_file_bytes(entry)
         host_path = root / f"file-{index:04d}.bin"
         host_path.write_bytes(content)
         result.append((entry["path"], host_path))

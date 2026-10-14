@@ -13,6 +13,7 @@ never change host state.
 | `hostname.exe` | Yes | Default hostname |
 | [`cmdkey.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/cmdkey) | Yes | `/list` from guest stored credential metadata, with no password data |
 | [`klist.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/klist) | Yes | Default and `tickets` from guest Kerberos cache metadata |
+| [`wbadmin.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wbadmin-get-versions) | Yes | `get versions` from the guest backup catalog, gated by persona admin status |
 | [`nltest.exe`](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/cc731935%28v%3Dws.11%29) | Yes | `/domain_trusts`, `/dclist:<persona domain>`, and `/dsgetdc:<persona domain>` with DNS and NetBIOS aliases |
 | [`manage-bde.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-status) | Yes | `-status` and `-status C:` from guest capacity and BitLocker metadata |
 | `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
@@ -58,7 +59,7 @@ but it is not included by default unless the table above says so.
 | `klist.exe` beyond the listed forms | Other logon IDs, sessions, `tgt`, bindings, and cache changes | More guest LSA session and cache models are needed. Encoded tickets and usable keys are not modeled; unsupported forms exit 87. |
 | `nltest.exe` beyond the listed forms | Other domains, server targets, discovery flags, secure channels, and changes | Dynamic domain services and Windows domain APIs remain unmodeled; unsupported forms exit 87. |
 | `manage-bde.exe` beyond the listed forms | Protection error-level flags, other volumes, conversion progress, protector details, and changes | Full BitLocker state and key material are not modeled; unsupported forms exit 87. |
-| [`wbadmin.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wbadmin-get-versions) | `get versions` | Not included. Needs guest backup catalog and permission behavior; no host or remote backup access. |
+| `wbadmin.exe` beyond `get versions` | Target filters, item queries, backup status, and changes | A dynamic guest backup service, permissions, and backup file contents remain unmodeled. Unsupported forms exit 87. |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
 | `mountvol.exe` beyond the listed forms | Other volume mount points and changes | Multiple volumes and mount mutations remain unmodeled. |
@@ -78,6 +79,14 @@ Generated `cmdkey.exe /list` reads only the persona's `stored_credentials`
 metadata: target, user, type, and persistence. The default guest has no stored
 credentials. The schema accepts no password field, and the utility never
 opens a host credential store. Add and delete operations exit 87.
+
+Generated `wbadmin.exe get versions` lists the persona's `backup_versions`
+metadata, without opening backup targets. Creation times produce a UTC version
+identifier and a display time using the persona's UTC offset. An admin persona
+can view the catalog; a non-admin persona receives access denied and exit code
+5 without catalog details. The default catalog is empty, and an admin guest's
+empty listing succeeds. This is a static permission view rather than a live
+elevation or Backup Operators model. Remote filters and backup changes exit 87.
 
 Generated `klist.exe` reads the persona's `kerberos` current logon ID and
 bounded ticket metadata. The same server, realm, times, encryption type, and

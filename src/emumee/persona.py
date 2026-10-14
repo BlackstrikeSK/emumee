@@ -68,6 +68,7 @@ DEFAULT_PERSONA = {
     "bitlocker": {"encryption_method": "None", "protection_enabled": False,
                   "key_protectors": []},
     "shadow_copies": [],
+    "backup_versions": [],
     "stored_credentials": [],
     "kerberos": {"logon_id": 0x10001, "tickets": []},
     "boot_config": {
@@ -289,6 +290,8 @@ def load_persona(path: Path | None) -> dict:
                 persona["user_name"], persona["hostname"])
     if not persona["user_name"] or not persona["hostname"]:
         raise ValueError("Persona user_name and hostname must not be empty")
+    if not isinstance(persona["user_is_admin"], bool):
+        raise ValueError("Persona user_is_admin must be a boolean")
     if (not isinstance(persona["volume_guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
                              persona["volume_guid"])):
@@ -365,6 +368,33 @@ def load_persona(path: Path | None) -> dict:
                 raise ValueError("ticket time order")
         except ValueError as exc:
             raise ValueError("Persona Kerberos ticket times are invalid") from exc
+    backups = persona["backup_versions"]
+    if not isinstance(backups, list) or len(backups) > 16:
+        raise ValueError("Persona backup_versions must have at most 16 entries")
+    backup_ids: set[str] = set()
+    for backup in backups:
+        if (not isinstance(backup, dict) or
+                set(backup) != {"created_utc", "target", "recovery_types"} or
+                not isinstance(backup["created_utc"], str) or
+                not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", backup["created_utc"]) or
+                not isinstance(backup["target"], str) or not 1 <= len(backup["target"]) <= 256 or
+                any(ord(char) < 32 for char in backup["target"]) or
+                not isinstance(backup["recovery_types"], list) or
+                not 1 <= len(backup["recovery_types"]) <= 5 or
+                any(value not in ("Volumes", "Files", "Applications", "Bare Metal Recovery", "System State")
+                    for value in backup["recovery_types"]) or
+                len(set(backup["recovery_types"])) != len(backup["recovery_types"])):
+            raise ValueError("Persona backup version metadata is invalid")
+        try:
+            created = dt.datetime.strptime(backup["created_utc"], "%Y-%m-%dT%H:%M:%SZ")
+            if not 1601 <= created.year <= 9998:
+                raise ValueError("backup year")
+        except ValueError as exc:
+            raise ValueError("Persona backup creation time is invalid") from exc
+        version = created.strftime("%m/%d/%Y-%H:%M")
+        if version in backup_ids:
+            raise ValueError("Persona backup version identifiers are duplicated")
+        backup_ids.add(version)
     credentials = persona["stored_credentials"]
     if not isinstance(credentials, list) or len(credentials) > 32:
         raise ValueError("Persona stored_credentials must have at most 32 entries")

@@ -6,6 +6,7 @@ The default native guest now includes generated x86/x64 `ipconfig.exe`,
 `cmdkey.exe`,
 `klist.exe`,
 `nltest.exe`,
+`wbadmin.exe`,
 `manage-bde.exe`,
 `getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `pnputil.exe`, `gpresult.exe`, `dsregcmd.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `vssadmin.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
@@ -46,6 +47,10 @@ network discovery. Supported domain aliases come from the persona's DNS and
 NetBIOS names. Missing controller records return exit code 1355; unsupported
 targets and change commands exit 87. The generator stores a status per output
 view, so a modeled domain failure is distinguishable from a successful query.
+`wbadmin.exe get versions` reports only configured backup catalog metadata.
+The persona admin flag gates access; non-admin views exit 5 without exposing
+records. Remote targets and catalog changes exit 87. Backup targets are display
+metadata and are never opened; live elevation and backup services are unmodeled.
 `manage-bde.exe -status` and `-status C:` read guest capacity and BitLocker
 metadata. `GetDiskFreeSpaceExA/W` uses the same configured capacity and free
 space for guest directories on C:. Output buffers are validated before writes;

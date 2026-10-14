@@ -36,6 +36,25 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_backup_versions_validate_times_types_and_unique_ids(self):
+        backup = {"created_utc": "2026-10-14T10:30:00Z", "target": "Guest backup archive",
+                  "recovery_types": ["Volumes", "Files"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            path.write_text(json.dumps({"backup_versions": [backup]}), encoding="utf-8")
+            self.assertEqual(load_persona(path)["backup_versions"], [backup])
+            for records in ([{**backup, "created_utc": "2026-13-14T10:30:00Z"}],
+                            [{**backup, "target": "bad\nline"}],
+                            [{**backup, "recovery_types": ["Unknown"]}],
+                            [backup, {**backup, "created_utc": "2026-10-14T10:30:01Z"}],
+                            [backup] * 17):
+                path.write_text(json.dumps({"backup_versions": records}), encoding="utf-8")
+                with self.subTest(records=records), self.assertRaises(ValueError):
+                    load_persona(path)
+            path.write_text(json.dumps({"user_is_admin": "false"}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "user_is_admin"):
+                load_persona(path)
+
     def test_domain_discovery_requires_bounded_consistent_guest_records(self):
         controller = {"name": "dc1.corp.example", "address": "192.168.1.10",
                       "site_name": "Guest-Site", "pdc": True}

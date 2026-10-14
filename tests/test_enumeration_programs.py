@@ -16,6 +16,55 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_wbadmin_guest_child_lists_persona_catalog_and_enforces_permission_view(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "persona.json"
+                config.write_text(json.dumps({"user_is_admin": True, "utc_offset_minutes": 60,
+                    "backup_versions": [{"created_utc": "2026-10-14T10:30:00Z",
+                                         "target": "Guest offline archive",
+                                         "recovery_types": ["Volumes", "Files"]}]}), encoding="utf-8")
+                persona = load_persona(config)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"wbadmin.exe get versions\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root / "child", [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                output = result["console_output"]["stdout"]
+                for value in ("Guest offline archive", "10/14/2026-10:30", "11:30", "Volumes, Files"):
+                    self.assertIn(value, output)
+                report = json.loads((root / "child" / result["engine_report"]).read_text())
+                self.assertEqual(report["network_events"], [])
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\wbadmin.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+                image = enumeration_programs(arch == "x64", persona)["wbadmin.exe"]
+                for index, args in enumerate((["delete", "catalog", "-quiet"],
+                                              ["get", "versions", r"-backupTarget:\\host\share"])):
+                    denied = run_native(image, inspect_pe(image, "wbadmin.exe"), persona,
+                                        root / f"denied-{index}", [], 10, 100_000, guest_args=args)
+                    self.assertEqual(denied["guest_exit_code"], 87)
+                    self.assertEqual(denied["console_output"]["stdout"], "")
+                for admin, expected in ((False, 5), (True, 0)):
+                    current = load_persona(None)
+                    current["user_is_admin"] = admin
+                    if not admin:
+                        current["backup_versions"] = persona["backup_versions"]
+                    current_image = enumeration_programs(arch == "x64", current)["wbadmin.exe"]
+                    view = run_native(current_image, inspect_pe(current_image, "wbadmin.exe"),
+                                      current, root / f"permission-{admin}", [], 10, 100_000,
+                                      guest_args=["get", "versions"])
+                    self.assertFalse(view["errors"])
+                    self.assertEqual(view["guest_exit_code"], expected)
+                    self.assertNotIn("Guest offline archive", view["console_output"]["stdout"])
+                    self.assertIn("No backups were found" if admin else "Access is denied",
+                                  view["console_output"]["stdout"])
+
     def test_nltest_guest_child_reports_persona_domain_and_failure_exit_codes(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:

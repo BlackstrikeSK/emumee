@@ -26,6 +26,24 @@ def _align(value: int, boundary: int) -> int:
 
 def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
+    if name == "wbadmin.exe":
+        if not arguments:
+            return "Usage: wbadmin get versions\r\n"
+        if arguments.casefold() != "get versions":
+            raise ValueError("unsupported wbadmin arguments")
+        if not persona["user_is_admin"]:
+            return "ERROR - Access is denied. Run this command with administrative privileges.\r\n"
+        rows = ["wbadmin - Backup command-line tool", ""]
+        if not persona["backup_versions"]:
+            return "\r\n".join(rows) + "No backups were found.\r\n"
+        for backup in persona["backup_versions"]:
+            created = dt.datetime.strptime(backup["created_utc"], "%Y-%m-%dT%H:%M:%SZ")
+            local = created + dt.timedelta(minutes=persona["utc_offset_minutes"])
+            rows.extend((f"Backup time: {local.strftime('%m/%d/%Y %H:%M')}",
+                         f"Backup target: {backup['target']}",
+                         f"Version identifier: {created.strftime('%m/%d/%Y-%H:%M')}",
+                         "Can recover: " + ", ".join(backup["recovery_types"]), ""))
+        return "\r\n".join(rows) + "\r\n"
     if name == "nltest.exe":
         argument = arguments.casefold()
         if not argument:
@@ -898,7 +916,8 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
                  "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
-                 "vssadmin.exe", "cmdkey.exe", "manage-bde.exe", "klist.exe", "nltest.exe"):
+                 "vssadmin.exe", "cmdkey.exe", "manage-bde.exe", "klist.exe", "nltest.exe",
+                 "wbadmin.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -933,6 +952,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "dsregcmd.exe": ("/status",),
                      "cmdkey.exe": ("/list",),
                      "klist.exe": ("tickets",),
+                     "wbadmin.exe": ("get versions",),
                      "nltest.exe": ("/domain_trusts", *(f"/{command}:{domain}"
                                       for command in ("dclist", "dsgetdc")
                                       for domain in nltest_domains)),
@@ -945,6 +965,8 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
         variants = {argument: enumeration_text(name, render_persona, argument)
                     for argument in commands}
         exit_codes = {}
+        if name == "wbadmin.exe" and not persona["user_is_admin"]:
+            exit_codes["get versions"] = 5
         if name == "nltest.exe":
             for argument in commands:
                 available = (persona["device_registration"]["domain_joined"]

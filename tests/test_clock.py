@@ -12,6 +12,7 @@ class Memory:
         self.values = {}
         self.page_size = 0x1000
         self.maps = []
+        self.last_error = None
 
     def mem_write(self, address, value):
         self.values[address] = value
@@ -19,12 +20,38 @@ class Memory:
     def get_ptr_size(self):
         return 8
 
+    def set_last_error(self, error):
+        self.last_error = error
+
     def mem_map(self, size, base, tag):
         self.maps.append((size, base, tag))
         return base
 
 
 class VirtualClockTests(unittest.TestCase):
+    def test_dynamic_timezone_uses_fixed_persona_offset_and_full_layout(self):
+        clock = VirtualClock({"clock_utc": "2026-10-11T12:00:00Z",
+                              "utc_offset_minutes": -240,
+                              "timezone": "Eastern Standard Time",
+                              "uptime_ms": 523_812_000})
+        mem = Memory()
+        self.assertEqual(clock.dynamic_time_zone(mem, "", None, [0x1000]), 0)
+        data = mem.values[0x1000]
+        self.assertEqual(len(data), 432)
+        self.assertEqual(struct.unpack_from("<i", data)[0], 240)
+        self.assertEqual(data[4:68].decode("utf-16le").rstrip("\0"),
+                         "Eastern Standard Time")
+        self.assertEqual(data[172:428].decode("utf-16le").rstrip("\0"),
+                         "Eastern Standard Time")
+        self.assertEqual(data[68:84], b"\0" * 16)  # No DST transition.
+        self.assertEqual(data[152:168], b"\0" * 16)
+        self.assertEqual(data[428], 1)
+        self.assertEqual(mem.last_error, 0)
+        self.assertEqual(clock.time_zone(mem, "", None, [0x2000]), 0)
+        self.assertEqual(mem.values[0x2000], data[:172])
+        self.assertEqual(clock.dynamic_time_zone(mem, "", None, [0]), 0xFFFFFFFF)
+        self.assertEqual(mem.last_error, 87)
+
     def test_shared_user_data_tracks_virtual_time_on_both_aliases(self):
         clock = VirtualClock({"clock_utc": "2026-10-11T12:00:00Z",
                               "utc_offset_minutes": -240,
@@ -63,7 +90,8 @@ class VirtualClockTests(unittest.TestCase):
                               "uptime_ms": 523_812_000})
         hooks = {}
         clock.install(type("Hooks", (), {"add_api_hook":
-                      lambda _self, method, module, name: hooks.setdefault(name, method)})())
+                      lambda _self, method, module, name, **_kwargs:
+                      hooks.setdefault(name, method)})())
         mem = Memory()
         hooks["GetSystemTimeAsFileTime"](mem, "", None, [0x1000])
         hooks["GetSystemTimePreciseAsFileTime"](mem, "", None, [0x1008])

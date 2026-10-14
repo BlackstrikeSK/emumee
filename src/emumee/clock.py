@@ -17,6 +17,7 @@ class VirtualClock:
         else:
             self.utc = dt.datetime.now(dt.timezone.utc)
         self.offset = dt.timedelta(minutes=int(persona["utc_offset_minutes"]))
+        self.timezone_name = str(persona.get("timezone", "UTC"))
         self.uptime_ms = int(persona["uptime_ms"])
         # Keep sub-millisecond observations in the same timeline as wall time.
         # A frozen QPC across successive API calls is a common sandbox tell.
@@ -80,6 +81,46 @@ class VirtualClock:
             "QueryPerformanceFrequency": self.performance_frequency,
         }.items():
             emulator.add_api_hook(method, "kernel32", name)
+        for module in ("kernel32", "api-ms-win-core-timezone-l1-1-0"):
+            emulator.add_api_hook(self.dynamic_time_zone, module,
+                                  "GetDynamicTimeZoneInformation", argc=1)
+            emulator.add_api_hook(self.time_zone, module,
+                                  "GetTimeZoneInformation", argc=1)
+
+    def _time_zone_result(self, emu, params, size: int):
+        """Write the shared 172-byte prefix, with optional dynamic fields."""
+        address = int(params[0])
+        if not address:
+            emu.set_last_error(87)  # ERROR_INVALID_PARAMETER
+            return 0xFFFFFFFF  # TIME_ZONE_ID_INVALID
+        label = self.timezone_name.encode("utf-16le")
+        if len(label) > 254:
+            emu.set_last_error(87)
+            return 0xFFFFFFFF
+        standard_name = self.timezone_name
+        while len(standard_name.encode("utf-16le")) > 62:
+            standard_name = standard_name[:-1]
+        data = bytearray(432)
+        struct.pack_into("<i", data, 0, -int(self.offset.total_seconds() // 60))
+        standard_label = standard_name.encode("utf-16le")
+        data[4:4 + len(standard_label)] = standard_label  # StandardName[32]
+        data[172:172 + len(label)] = label  # TimeZoneKeyName[128]
+        data[428] = 1  # No transition dates in the fixed-offset model.
+        try:
+            emu.mem_write(address, bytes(data[:size]))
+        except Exception:
+            emu.set_last_error(998)  # ERROR_NOACCESS
+            return 0xFFFFFFFF
+        emu.set_last_error(0)
+        return 0  # TIME_ZONE_ID_UNKNOWN: no daylight transitions
+
+    def dynamic_time_zone(self, emu, api_name, original, params):
+        """Report the persona's fixed offset in the documented 432-byte layout."""
+        return self._time_zone_result(emu, params, 432)
+
+    def time_zone(self, emu, api_name, original, params):
+        """Report the same offset in TIME_ZONE_INFORMATION's 172-byte layout."""
+        return self._time_zone_result(emu, params, 172)
 
     def advance(self, milliseconds: int) -> None:
         # Sleep takes a DWORD; a multi-day delay must not silently stop at 24h.

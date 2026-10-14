@@ -104,8 +104,14 @@ def load_persona(path: Path | None) -> dict:
             raise ValueError("Persona utc_offset_minutes must be between -840 and 840")
         timezone_name = persona["timezone"]
         if (not isinstance(timezone_name, str) or not timezone_name or
-                len(timezone_name) > 128 or "\0" in timezone_name):
+                len(timezone_name) > 127 or any(char in timezone_name
+                                                for char in "\\/\0")):
             raise ValueError("Persona timezone must be a nonempty Windows time zone name")
+        try:
+            if len(timezone_name.encode("utf-16le")) > 254:
+                raise ValueError("Persona timezone name exceeds Windows key limit")
+        except UnicodeEncodeError as exc:
+            raise ValueError("Persona timezone name is not valid Unicode") from exc
         if (persona["user_name"] != previous_name and not custom_current_dir and
                 persona["current_dir"].casefold() ==
                 rf"C:\Users\{previous_name}\Downloads".casefold()):

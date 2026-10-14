@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import struct
 import uuid
 
 
@@ -172,6 +173,8 @@ def registry_keys(persona: dict) -> list[dict]:
     machine_digest = hashlib.sha256(
         ("emumee-machine:" + persona["hostname"].casefold()).encode("utf-8")).digest()
     machine_guid = str(uuid.UUID(bytes=machine_digest[:16], version=4))
+    fixed_tzi = struct.pack("<iii32s", -persona["utc_offset_minutes"], 0, 0,
+                            b"\0" * 32).hex()
     subnet_mask = str(ipaddress.IPv4Network(
         (adapter["ipv4"], adapter["prefix_length"]), strict=False).netmask)
 
@@ -244,7 +247,14 @@ def registry_keys(persona: dict) -> list[dict]:
               value("TimeZoneKeyName", persona["timezone"]),
               value("ActiveTimeBias", (-persona["utc_offset_minutes"]) & 0xFFFFFFFF,
                     "REG_DWORD"),
-              value("DynamicDaylightTimeDisabled", 0, "REG_DWORD")),
+              value("DynamicDaylightTimeDisabled", 1, "REG_DWORD")),
+        entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones"),
+        entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones" +
+              "\\" + persona["timezone"],
+              value("Display", persona["timezone"]),
+              value("Std", persona["timezone"]),
+              value("Dlt", persona["timezone"]),
+              value("TZI", "hex:" + fixed_tzi, "REG_BINARY")),
         entry(r"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0",
               value("ProcessorNameString", cpu["brand"]),
               value("VendorIdentifier", "GenuineIntel"),

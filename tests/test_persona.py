@@ -22,6 +22,7 @@ from emumee.native import run_native
 from emumee.pe import inspect_pe
 from emumee.persona import load_persona, make_speakeasy_config, materialize_virtual_files
 from emumee.persona_content import desktop_directories
+from emumee.virtualregistry import VirtualRegistryBridge
 from emumee.virtualfs import VirtualFileBridge
 from emumee.virtualprocess import VirtualProcessBridge
 from emumee.winenvironment import GuestEnvironmentBlocks
@@ -394,6 +395,17 @@ class PersonaContentTests(unittest.TestCase):
                              'W. Europe Standard Time')
             self.assertEqual(int(timezone.get_value('ActiveTimeBias').get_data()),
                              0xFFFFFFC4)
+            self.assertEqual(int(timezone.get_value('DynamicDaylightTimeDisabled').get_data()),
+                             1)
+            zone = registry.get_key_from_config(
+                r'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones'
+                r'\W. Europe Standard Time')
+            self.assertIsNotNone(zone)
+            kind, tzi = VirtualRegistryBridge(None)._configured_value(
+                zone.get_value('TZI'), True)
+            self.assertEqual(kind, 3)
+            self.assertEqual(len(tzi), 44)
+            self.assertEqual(struct.unpack_from('<i', tzi)[0], -60)
             shell = registry.get_key_from_config(
                 r'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders')
             self.assertEqual(shell.get_value('Downloads').get_data(),
@@ -414,6 +426,10 @@ class PersonaContentTests(unittest.TestCase):
                                 ['values'][0]['data'])
             with self.assertRaisesRegex(ValueError, 'utc_offset_minutes'):
                 override.write_text(json.dumps({'utc_offset_minutes': 'invalid'}),
+                                    encoding='utf-8')
+                load_persona(override)
+            with self.assertRaisesRegex(ValueError, 'timezone'):
+                override.write_text(json.dumps({'timezone': r'Invalid\Path'}),
                                     encoding='utf-8')
                 load_persona(override)
 

@@ -48,6 +48,25 @@ class RegistryHookTests(unittest.TestCase):
         self.assertEqual(bridge._canonical_handle(0xffffffff80000001), 0x80000001)
         self.assertEqual(bridge._canonical_handle(0x100000001), 0x100000001)
 
+    def test_configured_binary_hex_decodes_exact_guest_bytes(self):
+        key = RegKey(None, r"HKEY_LOCAL_MACHINE\SOFTWARE\Example")
+        value = key.create_value("TZI", 3, b"\xf0\x00\x80\xff")
+        self.assertEqual(VirtualRegistryBridge(None)._configured_value(value, True),
+                         (3, b"\xf0\x00\x80\xff"))
+        configured = key.create_value("Configured", "REG_BINARY", "hex:f00080ff")
+        self.assertEqual(VirtualRegistryBridge(None)._configured_value(configured, True),
+                         (3, b"\xf0\x00\x80\xff"))
+        bad = key.create_value("Broken", "REG_BINARY", "hex:zz")
+        self.assertIsNone(VirtualRegistryBridge(None)._configured_value(bad, True))
+
+    def test_configured_dword_string_is_returned_as_little_endian_bytes(self):
+        key = RegKey(None, r"HKEY_LOCAL_MACHINE\SOFTWARE\Example")
+        value = key.create_value("Flag", "REG_DWORD", "0x10203")
+        self.assertEqual(VirtualRegistryBridge(None)._configured_value(value, True),
+                         (4, b"\x03\x02\x01\x00"))
+        malformed = key.create_value("Broken", "REG_DWORD", "not a number")
+        self.assertIsNone(VirtualRegistryBridge(None)._configured_value(malformed, True))
+
     def test_reg_get_value_size_then_exact_guest_bytes(self):
         key = RegKey(None, r"HKEY_CURRENT_USER\Control Panel\Desktop")
         key.create_value("ScreenSaveActive", 1, "1")

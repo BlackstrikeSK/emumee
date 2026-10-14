@@ -305,11 +305,18 @@ class VirtualRegistryBridge:
             return None
         data = value.get_data()
         if code == REG_BINARY:
-            if not isinstance(data, bytes):
-                return None
-            try:
-                raw = base64.b64decode(data, validate=True)
-            except (ValueError, binascii.Error):
+            if isinstance(data, str):
+                try:
+                    raw = (bytes.fromhex(data[4:]) if data.startswith("hex:")
+                           else data.encode("utf-8"))
+                except (ValueError, UnicodeError):
+                    return None
+            elif isinstance(data, bytes):
+                try:
+                    raw = base64.b64decode(data, validate=True)
+                except (ValueError, binascii.Error):
+                    return None
+            else:
                 return None
         elif code in (REG_SZ, REG_EXPAND_SZ, REG_MULTI_SZ):
             if not isinstance(data, str):
@@ -318,6 +325,11 @@ class VirtualRegistryBridge:
             raw = (data.rstrip("\0") + ending).encode("utf-16le" if wide else "cp1252",
                                                      errors="replace")
         elif code in (REG_DWORD, REG_QWORD):
+            if isinstance(data, str):
+                try:
+                    data = int(data, 0)
+                except ValueError:
+                    return None
             if not isinstance(data, int):
                 return None
             width = 4 if code == REG_DWORD else 8

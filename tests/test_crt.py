@@ -30,6 +30,29 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_wprintf_wide_and_narrow_strings_are_bounded(self):
+        memory = {}
+        def put(address, data):
+            memory.update({address + index: byte for index, byte in enumerate(data)})
+        put(0x1000, "Zone: %s / %S%%\n".encode("utf-16le") + b"\0\0")
+        put(0x2000, "Eastern Standard Time".encode("utf-16le") + b"\0\0")
+        put(0x3000, b"active\0")
+        emu = SimpleNamespace(
+            mem_read=lambda address, size: bytes(memory[address + index]
+                                                 for index in range(size)),
+            get_func_argv=lambda _conv, count: [0x1000, 0x2000, 0x3000][:count])
+        crt = LegacyCRTStreams()
+        output = []
+        crt.console_write = lambda stream, rendered: output.append((stream, rendered))
+        expected = "Zone: Eastern Standard Time / active%\n"
+        self.assertEqual(crt._wprintf(emu, "msvcrt.wprintf", None, [0x1000]),
+                         len(expected))
+        self.assertEqual(output, [("stdout", expected)])
+        put(0x1000, "%n".encode("utf-16le") + b"\0\0")
+        self.assertEqual(crt._wprintf(emu, "msvcrt.wprintf", None, [0x1000]), -1)
+        self.assertEqual(output, [("stdout", expected)])
+        self.assertIn("unsupported wide format specifier", crt.unsupported[-1])
+
     def test_wcsupr_uppercases_guest_buffer_in_place_with_write_guard(self):
         emu = _Emulator(8)
         memory = {}

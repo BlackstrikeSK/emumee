@@ -88,6 +88,8 @@ class LegacyCRTStreams:
                               argc=1, call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fprintf, "msvcrt", "fprintf", argc=2,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._wprintf, "msvcrt", "wprintf", argc=1,
+                              call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fflush, "msvcrt", "fflush", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fflush, "api-ms-win-crt-private-l1-1-0",
@@ -649,6 +651,50 @@ class LegacyCRTStreams:
         elif index is None:
             self.unsupported.append(f"{api_name}: nonstandard FILE pointer is not modeled")
         return int(result)
+
+    def _wprintf(self, emu, api_name, _original, params) -> int:
+        """Bounded wide console output for literal text and %s/%S strings."""
+        try:
+            format_ptr = int(params[0])
+            fmt = self._string(emu, format_ptr, 2)
+            parts = []
+            specifiers = []
+            cursor = 0
+            while cursor < len(fmt):
+                if fmt[cursor] != "%":
+                    end = fmt.find("%", cursor)
+                    if end < 0:
+                        end = len(fmt)
+                    parts.append(fmt[cursor:end])
+                    cursor = end
+                    continue
+                match = _FORMAT_SPEC.match(fmt, cursor)
+                if match is None:
+                    raise ValueError("unsupported wide format specifier")
+                flags, width, precision, length, kind = match.groups()
+                if flags or width or precision is not None or length or kind not in "%sS":
+                    raise ValueError("unsupported wide format options")
+                cursor = match.end()
+                if kind == "%":
+                    parts.append("%")
+                else:
+                    parts.append(None)
+                    specifiers.append((len(parts) - 1, kind))
+                    if len(specifiers) > 64:
+                        raise ValueError("wide format argument limit exceeded")
+            args = emu.get_func_argv(e_arch.CALL_CONV_CDECL, len(specifiers) + 1)
+            for index, (part_index, kind) in enumerate(specifiers, 1):
+                parts[part_index] = self._string(emu, int(args[index]),
+                                                 2 if kind == "s" else 1)
+            rendered = "".join(parts)
+            if len(rendered) > _MAX_OUTPUT_CHARS or self.console_write is None:
+                raise ValueError("wide console output exceeds limit or is unavailable")
+            written = len(rendered.encode("utf-16le")) // 2
+            self.console_write("stdout", rendered)
+            return written
+        except Exception as exc:
+            self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
+            return -1
 
     def _fflush(self, emu, api_name, _original, params) -> int:
         stream = int(params[0])

@@ -3,9 +3,9 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, and `tzutil.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, and `qwinsta.exe` files
 in guest System32, alongside the
-existing generated `hostname.exe` and `whoami.exe`. The eight newer PE instructions call
+existing generated `hostname.exe` and `whoami.exe`. The eleven newer PE instructions call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; the
 argument dispatchers also call guest `lstrcmpiA`. Their
 output bytes are derived only from the selected persona. Direct guest child
@@ -26,7 +26,10 @@ prints the configured fixed-offset time zone; `/s` exits 87. Generated
 `netsh.exe interface ipv4 show config` and `show dnsservers` read the persona
 adapter snapshot; `interface ipv4 set address` exits 87. `getmac.exe`,
 `systeminfo.exe`, and `tasklist.exe` currently support their no-switch view
-only. These are bounded guest utilities, separate from the real
+only. Generated `query.exe user`, `query.exe session`, `quser.exe`, and
+`qwinsta.exe` report the modeled console user in session 1 and services
+session 0; the logon time comes from
+the guest clock and uptime. Other `query` forms exit 87. These are bounded guest utilities, separate from the real
 Microsoft binaries staged in earlier compatibility probes. They do not read or
 launch host binaries, and process or network changes made after run setup are
 not reflected in their initial snapshots.

@@ -6,9 +6,11 @@ the selected persona. No host executable or host identity is copied into them.
 
 from __future__ import annotations
 
+import datetime as dt
 import ipaddress
 import struct
 
+from .clock import VirtualClock
 from .persona_content import PROCESS_PATHS, oem_code_page
 from .tokens import GuestTokens, PRIVILEGE_DESCRIPTIONS, PRIVILEGE_NAMES
 
@@ -22,6 +24,11 @@ def _align(value: int, boundary: int) -> int:
 
 def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
+    if name in {"quser.exe", "qwinsta.exe"}:
+        if arguments:
+            raise ValueError("unsupported session query arguments")
+        return enumeration_text("query.exe", persona,
+                                "user" if name == "quser.exe" else "session")
     if name == "whoami.exe":
         identity = f"{persona['hostname']}\\{persona['user_name']}"
         if not arguments:
@@ -185,6 +192,21 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
             session = "Services" if session_id == 0 else "Console"
             lines.append(f"{process:25} {pid:8} {session:16} {session_id:11}        N/A")
         return "\r\n".join(lines) + "\r\n"
+    if name == "query.exe":
+        if not arguments:
+            return "Displays information about user sessions.\r\nUsage: query user | query session\r\n"
+        if arguments.casefold() == "session":
+            return (" SESSIONNAME       USERNAME                 ID  STATE   TYPE        DEVICE\r\n"
+                    " services                                   0  Disc\r\n"
+                    f">console           {persona['user_name']:<24} 1  Active\r\n")
+        if arguments.casefold() == "user":
+            clock = VirtualClock(persona)
+            logged_on = (clock.utc + clock.offset -
+                         dt.timedelta(milliseconds=clock.uptime_ms))
+            stamp = logged_on.strftime("%m/%d/%Y %I:%M %p").lstrip("0")
+            return (" USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME\r\n"
+                    f">{persona['user_name']:<21} console             1  Active      none   {stamp}\r\n")
+        raise ValueError("unsupported query arguments")
     raise ValueError(f"unknown guest enumeration program: {name}")
 
 
@@ -395,13 +417,15 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     code_page = oem_code_page(persona["locale"])
     result = {}
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
-                 "arp.exe", "route.exe", "netsh.exe", "tzutil.exe"):
+                 "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
+                 "quser.exe", "qwinsta.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "arp.exe": ("-a",),
                      "route.exe": ("print", "print -4"),
                      "netsh.exe": ("interface ipv4 show config",
                                    "interface ipv4 show dnsservers"),
+                     "query.exe": ("user", "session"),
                      "tzutil.exe": ("/g",)}.get(name, ()))
         variants = {argument: enumeration_text(name, persona, argument)
                     for argument in commands}

@@ -4,9 +4,9 @@ Emumee runs native child programs only from verified guest bytes. It never
 launches a host Windows utility to answer a guest command. The default guest
 utilities below are generated PEs, not copies of Microsoft binaries. Their
 output is a snapshot of the configured persona at run setup; later guest
-changes may not appear in that output. The nine argument-aware enumeration
-utilities reject unmodeled arguments with exit code 87; `hostname.exe` does
-not yet parse switches. Guest commands never change host state.
+changes may not appear in that output. All listed utilities except
+`hostname.exe` reject unmodeled arguments with exit code 87. Guest commands
+never change host state.
 
 | Guest program | Included by default | Modeled read commands |
 | --- | --- | --- |
@@ -20,6 +20,9 @@ not yet parse switches. Guest commands never change host state.
 | `route.exe` | Yes | `print`, `print -4` |
 | `netsh.exe` | Yes | `interface ipv4 show config`, `interface ipv4 show dnsservers` |
 | `tzutil.exe` | Yes | `/g` |
+| `query.exe` | Yes | `user`, `session` for the modeled console and services sessions |
+| [`quser.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/quser) | Yes | Default user session view |
+| [`qwinsta.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/qwinsta) | Yes | Default session view |
 
 ## Tracked gaps
 
@@ -34,7 +37,6 @@ but it is not included by default unless the table above says so.
 | [`net.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user) | `user`, `localgroup` | A coherent guest account and group database. |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with services and device state. |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | `/query` | A virtual scheduled-task store and query semantics. |
-| [`query.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/query-user) | `user`, `session` | Session and logon records beyond the current process snapshot. |
 | `reg.exe` | `query` | General guest registry command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
 | `sc.exe` | `query` | A guest service-control database rather than process names alone. |
 
@@ -47,6 +49,12 @@ are unmodeled.
 Generated `netsh.exe` covers only two IPv4 interface views for the modeled
 adapter. Other [network shell commands](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-interface)
 remain unmodeled, including interface changes and profile displays.
+
+Generated `query.exe`, `quser.exe`, and `qwinsta.exe` report the persona's active console user in session 1
+and the service session 0. Its logon time is derived from the guest clock and
+uptime. Other [user](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/query-user)
+and [session](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/query-session)
+queries, remote servers, and session changes are unmodeled.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
 utility inventory. No entry in this file authorizes a guest command to execute

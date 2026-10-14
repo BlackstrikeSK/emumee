@@ -59,20 +59,24 @@ class EnumerationProgramTests(unittest.TestCase):
                                     ("tzutil.exe", "/g"),
                                     ("arp.exe", "-a"),
                                     ("netsh.exe", "interface ipv4 show config"),
-                                    ("whoami.exe", "/user")):
+                                    ("whoami.exe", "/user"),
+                                    ("query.exe", "user"),
+                                    ("quser.exe", ""),
+                                    ("qwinsta.exe", "")):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
                     custom.write_text(json.dumps({
                         "timezone": "W. Europe Standard Time",
                         "utc_offset_minutes": 60,
+                        "clock_utc": "2026-10-14T12:00:00Z",
                         "network_adapter": {"ipv4": "192.168.8.42",
                                             "gateway": "192.168.8.1"},
                     }), encoding="utf-8")
                     persona = load_persona(custom)
                     parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
                     parent[0x700:0x900] = b"\0" * 0x200
-                    command = f"{name} {arguments}\0".encode("ascii")
+                    command = f"{name}{' ' + arguments if arguments else ''}\0".encode("ascii")
                     parent[0x700:0x700 + len(command)] = command
                     payload = bytes(parent)
                     result = run_native(payload, inspect_pe(payload, "parent.exe"),
@@ -85,7 +89,7 @@ class EnumerationProgramTests(unittest.TestCase):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
                          "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
-                         "tzutil.exe"):
+                         "tzutil.exe", "query.exe", "quser.exe", "qwinsta.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -313,6 +317,49 @@ class EnumerationProgramTests(unittest.TestCase):
                     else:
                         self.assertEqual(result["guest_exit_code"], 87)
                         self.assertEqual(result["console_output"]["stdout"], "")
+
+    def test_query_uses_guest_user_session_and_clock(self):
+        for arch in ("x86", "x64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                custom = root / "persona.json"
+                custom.write_text(json.dumps({"user_name": "Morgan",
+                                              "clock_utc": "2026-10-14T12:00:00Z",
+                                              "utc_offset_minutes": 60,
+                                              "uptime_ms": 3_600_000}), encoding="utf-8")
+                persona = load_persona(custom)
+                image = enumeration_programs(arch == "x64", persona)["query.exe"]
+                for index, argument in enumerate(("user", "session", "process")):
+                    result = run_native(image, inspect_pe(image, "query.exe"), persona,
+                                        root / str(index), [], 10, 100_000,
+                                        guest_args=[argument])
+                    self.assertFalse(result["errors"])
+                    if argument == "process":
+                        self.assertEqual(result["guest_exit_code"], 87)
+                        self.assertEqual(result["console_output"]["stdout"], "")
+                    else:
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text("query.exe", persona, argument))
+                user = enumeration_text("query.exe", persona, "user")
+                self.assertIn("Morgan", user)
+                self.assertIn("10/14/2026 12:00 PM", user)
+                session = enumeration_text("query.exe", persona, "session")
+                self.assertIn("services", session)
+                self.assertIn("console", session)
+                for name, expected in (("quser.exe", user), ("qwinsta.exe", session)):
+                    self.assertEqual(enumeration_text(name, persona), expected)
+                    alias = enumeration_programs(arch == "x64", persona)[name]
+                    result = run_native(alias, inspect_pe(alias, name), persona,
+                                        root / name, [], 10, 100_000)
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["console_output"]["stdout"], expected)
+                    unsupported = run_native(alias, inspect_pe(alias, name), persona,
+                                             root / (name + "-unsupported"), [],
+                                             10, 100_000, guest_args=["/server:HOST"])
+                    self.assertFalse(unsupported["errors"])
+                    self.assertEqual(unsupported["guest_exit_code"], 87)
+                    self.assertEqual(unsupported["console_output"]["stdout"], "")
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

@@ -11,7 +11,8 @@ from speakeasy import common
 from speakeasy.windows.fileman import File as GuestFile
 
 from .artifacts import ArtifactCatalog, MAX_ARTIFACT, MAX_MEMORY_SCAN
-from .persona import DEFAULT_VOLUME_GUID
+from .persona import (DEFAULT_VOLUME_GUID, DEFAULT_VOLUME_CAPACITY_BYTES,
+                      DEFAULT_VOLUME_FREE_BYTES)
 
 
 class SharedGuestFileView:
@@ -93,12 +94,16 @@ class VirtualFileBridge:
                  persona_sources: dict[str, bytes] | None = None,
                  filetime_ticks: int = 0,
                  persona_directories: list[str] | None = None,
-                 volume_guid: str = DEFAULT_VOLUME_GUID):
+                 volume_guid: str = DEFAULT_VOLUME_GUID,
+                 volume_capacity_bytes: int = DEFAULT_VOLUME_CAPACITY_BYTES,
+                 volume_free_bytes: int = DEFAULT_VOLUME_FREE_BYTES):
         self.current_dir = current_dir
         self.catalog = catalog
         self.persona_sources = {key.lower(): value for key, value in (persona_sources or {}).items()}
         self.filetime_ticks = filetime_ticks
         self.volume_guid = volume_guid
+        self.volume_capacity_bytes = volume_capacity_bytes
+        self.volume_free_bytes = volume_free_bytes
         self.events: list[dict] = []
         self.unsupported: list[str] = []
         self.directories = {self._key(part) for part in self._ancestors(current_dir)}
@@ -391,6 +396,9 @@ class VirtualFileBridge:
             emulator.add_api_hook(self._get_file_attributes_ex, "kernel32", name, argc=3)
         for name in ("GetVolumeInformationA", "GetVolumeInformationW"):
             emulator.add_api_hook(self._get_volume_information, "kernel32", name, argc=8)
+        for module in ("kernel32", "kernelbase", "api-ms-win-core-file-l1-2-0"):
+            for name in ("GetDiskFreeSpaceExA", "GetDiskFreeSpaceExW"):
+                emulator.add_api_hook(self._get_disk_free_space_ex, module, name, argc=4)
         for name in ("GetVolumeNameForVolumeMountPointA",
                      "GetVolumeNameForVolumeMountPointW"):
             emulator.add_api_hook(self._get_volume_name_for_mount_point,
@@ -492,6 +500,39 @@ class VirtualFileBridge:
         if result:
             self.find_search_dirs.pop(handle, None)
         return result
+
+    def _get_disk_free_space_ex(self, emu, api_name, original, params):
+        source, available_ptr, total_ptr, free_ptr = map(int, params)
+        width = 2 if api_name.endswith("W") else 1
+        try:
+            path = (self._read_guest_path(emu, source, width) if source else
+                    ntpath.splitdrive(emu.get_cd())[0] + "\\")
+            volume_path = "\\\\?\\Volume" + self.volume_guid + "\\"
+            if path.casefold() == volume_path.casefold():
+                path = "C:\\"
+            else:
+                path = self._full_guest_path(emu.get_cd(), path)
+        except (ValueError, UnicodeError):
+            emu.set_last_error(998)
+            return 0
+        if ntpath.splitdrive(path)[0].casefold() != "c:" or self._key(path) not in self.directories:
+            emu.set_last_error(3)
+            return 0
+        outputs = ((available_ptr, self.volume_free_bytes),
+                   (total_ptr, self.volume_capacity_bytes),
+                   (free_ptr, self.volume_free_bytes))
+        if any(pointer and not self._guest_pointer_access(emu, pointer, 8, True)
+               for pointer, _ in outputs):
+            emu.set_last_error(998)
+            return 0
+        for pointer, value in outputs:
+            if pointer:
+                emu.mem_write(pointer, value.to_bytes(8, "little"))
+        self.events.append({"event": "virtual_disk_space_query", "api": api_name,
+                            "path": path, "total_bytes": self.volume_capacity_bytes,
+                            "free_bytes": self.volume_free_bytes})
+        emu.set_last_error(0)
+        return 1
 
     def _get_volume_information(self, emu, api_name, original, params):
         root_ptr, label_ptr, label_size, serial_ptr, component_ptr, flags_ptr, fs_ptr, fs_size = (

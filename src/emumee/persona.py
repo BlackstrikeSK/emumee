@@ -20,6 +20,8 @@ from .persona_content import (DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files,
 
 WINDOWS_11_DISPLAY_VERSIONS = DISPLAY_VERSIONS
 DEFAULT_VOLUME_GUID = "{6f2a9e4d-81b7-4f03-a73c-2d0e6f12a5b8}"
+DEFAULT_VOLUME_CAPACITY_BYTES = 512 * 1024 ** 3
+DEFAULT_VOLUME_FREE_BYTES = 320 * 1024 ** 3
 
 
 DEFAULT_PERSONA = {
@@ -55,6 +57,10 @@ DEFAULT_PERSONA = {
     },
     "current_dir": "C:\\Users\\Alex\\Downloads",
     "volume_guid": DEFAULT_VOLUME_GUID,
+    "volume_capacity_bytes": DEFAULT_VOLUME_CAPACITY_BYTES,
+    "volume_free_bytes": DEFAULT_VOLUME_FREE_BYTES,
+    "bitlocker": {"encryption_method": "None", "protection_enabled": False,
+                  "key_protectors": []},
     "shadow_copies": [],
     "stored_credentials": [],
     "boot_config": {
@@ -197,6 +203,11 @@ def load_persona(path: Path | None) -> dict:
                 raise ValueError("Unknown persona boot_config fields: " +
                                  ", ".join(sorted(unknown_boot)))
             persona["boot_config"].update(boot)
+        if "bitlocker" in supplied:
+            bitlocker = supplied.pop("bitlocker")
+            if not isinstance(bitlocker, dict) or set(bitlocker) - set(persona["bitlocker"]):
+                raise ValueError("Persona bitlocker fields are invalid")
+            persona["bitlocker"].update(bitlocker)
         if "group_policy" in supplied:
             policy = supplied.pop("group_policy")
             if not isinstance(policy, dict):
@@ -265,6 +276,22 @@ def load_persona(path: Path | None) -> dict:
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
                              persona["volume_guid"])):
         raise ValueError("Persona volume_guid must be a braced GUID")
+    capacity, free = persona["volume_capacity_bytes"], persona["volume_free_bytes"]
+    if (any(not isinstance(value, int) or isinstance(value, bool)
+            for value in (capacity, free)) or
+            not 0 <= free <= capacity or not 1 <= capacity <= 16 * 1024 ** 4):
+        raise ValueError("Persona volume capacity or free bytes are invalid")
+    bitlocker = persona["bitlocker"]
+    if (bitlocker["encryption_method"] not in ("None", "XTS-AES 128", "XTS-AES 256") or
+            not isinstance(bitlocker["protection_enabled"], bool) or
+            not isinstance(bitlocker["key_protectors"], list) or
+            len(bitlocker["key_protectors"]) > 2 or
+            any(value not in ("TPM", "Numerical Password") for value in bitlocker["key_protectors"]) or
+            len(set(bitlocker["key_protectors"])) != len(bitlocker["key_protectors"]) or
+            bitlocker["encryption_method"] == "None" and (
+                bitlocker["protection_enabled"] or bitlocker["key_protectors"]) or
+            bitlocker["protection_enabled"] and not bitlocker["key_protectors"]):
+        raise ValueError("Persona bitlocker fields are inconsistent")
     shadows = persona["shadow_copies"]
     if not isinstance(shadows, list) or len(shadows) > 16:
         raise ValueError("Persona shadow_copies must have at most 16 entries")

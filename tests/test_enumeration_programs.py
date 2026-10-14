@@ -16,6 +16,54 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_manage_bde_guest_child_and_status_use_persona_volume_state(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "persona.json"
+                config.write_text(json.dumps({
+                    "volume_capacity_bytes": 123 * 1024 ** 3,
+                    "volume_free_bytes": 17 * 1024 ** 3,
+                    "bitlocker": {"encryption_method": "XTS-AES 256",
+                                  "protection_enabled": True,
+                                  "key_protectors": ["TPM", "Numerical Password"]}}),
+                    encoding="utf-8")
+                persona = load_persona(config)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"manage-bde.exe -status C:\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root / "child", [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                output = result["console_output"]["stdout"]
+                for value in ("123.00 GB", "Fully Encrypted", "XTS-AES 256",
+                              "Protection On", "Numerical Password"):
+                    self.assertIn(value, output)
+                report = json.loads((root / "child" / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\manage-bde.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+                image = enumeration_programs(arch == "x64", persona)["manage-bde.exe"]
+                for index, args in enumerate((["-off", "C:"], ["-status", "D:"],
+                                              ["-status", "-computername", "host"])):
+                    denied = run_native(image, inspect_pe(image, "manage-bde.exe"),
+                                        persona, root / f"denied-{index}", [], 10,
+                                        100_000, guest_args=args)
+                    self.assertFalse(denied["errors"])
+                    self.assertEqual(denied["guest_exit_code"], 87)
+                    self.assertEqual(denied["console_output"]["stdout"], "")
+                default_persona = load_persona(None)
+                default_image = enumeration_programs(arch == "x64", default_persona)["manage-bde.exe"]
+                default = run_native(default_image, inspect_pe(default_image, "manage-bde.exe"),
+                                     default_persona, root / "default", [], 10, 100_000,
+                                     guest_args=["-status"])
+                self.assertEqual(default["guest_exit_code"], 0)
+                self.assertIn("Fully Decrypted", default["console_output"]["stdout"])
+                self.assertIn("Protection Off", default["console_output"]["stdout"])
+
     def test_cmdkey_guest_child_lists_persona_metadata_and_rejects_changes(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:

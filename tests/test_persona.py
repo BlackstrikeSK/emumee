@@ -30,11 +30,84 @@ from emumee.virtualfs import VirtualFileBridge
 from emumee.virtualprocess import VirtualProcessBridge
 from emumee.winenvironment import GuestEnvironmentBlocks
 from tests.fixtures.build_native import (build as build_test_pe,
+                                         build_disk_space_probe,
                                          build_host_process_probe,
                                          build_host_winexec_probe)
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_native_disk_space_api_reports_configured_guest_capacity(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "persona.json"
+                config.write_text(json.dumps({"volume_capacity_bytes": 123 * 1024 ** 3,
+                                              "volume_free_bytes": 17 * 1024 ** 3}),
+                                  encoding="utf-8")
+                persona = load_persona(config)
+                image = build_disk_space_probe(machine)
+                result = run_native(image, inspect_pe(image, "disk-space.exe"),
+                                    persona, root / "run", [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertEqual(result["guest_exit_code"], 0)
+                report = json.loads((root / "run" / result["engine_report"]).read_text())
+                query = next(event for event in report["virtual_file_events"]
+                             if event["event"] == "virtual_disk_space_query")
+                self.assertEqual(query["total_bytes"], persona["volume_capacity_bytes"])
+                self.assertEqual(query["free_bytes"], persona["volume_free_bytes"])
+
+    def test_bitlocker_and_volume_capacity_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            path.write_text(json.dumps({"bitlocker": {
+                "encryption_method": "XTS-AES 256", "protection_enabled": True,
+                "key_protectors": ["TPM", "Numerical Password"]}}), encoding="utf-8")
+            self.assertTrue(load_persona(path)["bitlocker"]["protection_enabled"])
+            for broken in ({"volume_free_bytes": 20 * 1024 ** 4},
+                           {"volume_capacity_bytes": True},
+                           {"bitlocker": {"protection_enabled": True}},
+                           {"bitlocker": {"key_protectors": ["Recovery secret"]}}):
+                path.write_text(json.dumps(broken), encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaises(ValueError):
+                    load_persona(path)
+
+    def test_disk_free_space_uses_guest_capacity_and_checks_all_outputs_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = VirtualFileBridge(r"C:\Users\Alex\Downloads",
+                                       ArtifactCatalog(Path(directory) / "artifacts"),
+                                       volume_capacity_bytes=123 * 1024 ** 3,
+                                       volume_free_bytes=17 * 1024 ** 3)
+            memory = bytearray(0x1000)
+            errors = []
+            mapping = SimpleNamespace(base=0x1000, size=0x1000, free=False, prot=6)
+            emu = SimpleNamespace(
+                get_cd=lambda: r"C:\Users\Alex\Downloads",
+                get_address_map=lambda ptr: mapping if 0x1000 <= ptr < 0x2000 else None,
+                mem_read=lambda ptr, size: bytes(memory[ptr - 0x1000:ptr - 0x1000 + size]),
+                mem_write=lambda ptr, data: memory.__setitem__(
+                    slice(ptr - 0x1000, ptr - 0x1000 + len(data)), data),
+                set_last_error=errors.append)
+            for width in (1, 2):
+                encoding = "ascii" if width == 1 else "utf-16le"
+                emu.mem_write(0x1000, ("C:\\" + "\0").encode(encoding))
+                api = "kernel32.GetDiskFreeSpaceEx" + ("A" if width == 1 else "W")
+                self.assertEqual(bridge._get_disk_free_space_ex(
+                    emu, api, None, [0x1000, 0x1100, 0x1110, 0x1120]), 1)
+                self.assertEqual(struct.unpack("<Q", emu.mem_read(0x1110, 8))[0], 123 * 1024 ** 3)
+                self.assertEqual(struct.unpack("<Q", emu.mem_read(0x1100, 8))[0], 17 * 1024 ** 3)
+                self.assertEqual(emu.mem_read(0x1100, 8), emu.mem_read(0x1120, 8))
+                emu.mem_write(0x1100, b"unchanged")
+                self.assertEqual(bridge._get_disk_free_space_ex(
+                    emu, api, None, [0x1000, 0x1100, 0x1ffc, 0]), 0)
+                self.assertEqual(errors[-1], 998)
+                self.assertEqual(emu.mem_read(0x1100, 9), b"unchanged")
+                emu.mem_write(0x1000, ("D:\\" + "\0").encode(encoding))
+                self.assertEqual(bridge._get_disk_free_space_ex(
+                    emu, api, None, [0x1000, 0, 0, 0]), 0)
+                self.assertEqual(errors[-1], 3)
+            self.assertEqual(bridge._get_disk_free_space_ex(
+                emu, "kernel32.GetDiskFreeSpaceExW", None, [0, 0, 0, 0]), 1)
+
     def test_stored_credentials_accept_metadata_and_reject_secrets_or_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

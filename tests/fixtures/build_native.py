@@ -85,6 +85,42 @@ def build(machine: int, dll: bool = False) -> bytes:
     return bytes(buf)
 
 
+def build_disk_space_probe(machine: int) -> bytes:
+    """Read guest C: disk capacity through GetDiskFreeSpaceExW, then exit."""
+    is_x64 = machine == 0x8664
+    base = 0x140000000 if is_x64 else 0x400000
+    buf = bytearray(build(machine))
+    optional_size = 0xF0 if is_x64 else 0xE0
+    struct.pack_into("<I", buf, 0x98 + optional_size + 40 + 8, 0x200)
+    struct.pack_into("<IIIII", buf, 0x400, 0x2080, 0, 0, 0x2060, 0x20A0)
+    step = 8 if is_x64 else 4
+    for offset in (0x480, 0x4A0):
+        struct.pack_into("<QQQ" if is_x64 else "<III", buf, offset, 0x20C0, 0x2100, 0)
+    name = b"\0\0GetDiskFreeSpaceExW\0"
+    buf[0x4C0:0x4C0 + len(name)] = name
+    buf[0x500:0x50E] = b"\0\0ExitProcess\0"
+    path = "C:\\\0".encode("utf-16le")
+    buf[0x5C0:0x5C0 + len(path)] = path
+    if is_x64:
+        code = bytearray(b"\x48\x83\xec\x28")
+        for opcode, address in ((b"\x48\xb9", base + 0x21C0),
+                                (b"\x48\xba", base + 0x2180),
+                                (b"\x49\xb8", base + 0x2188),
+                                (b"\x49\xb9", base + 0x2190)):
+            code.extend(opcode + struct.pack("<Q", address))
+        code.extend(b"\xff\x15" + struct.pack("<i", 0x20A0 - (0x1000 + len(code) + 6)))
+        code.extend(b"\x83\xf0\x01\x89\xc1")
+        code.extend(b"\xff\x15" + struct.pack("<i", 0x20A0 + step - (0x1000 + len(code) + 6)))
+    else:
+        code = bytearray()
+        for rva in (0x2190, 0x2188, 0x2180, 0x21C0):
+            code.extend(b"\x68" + struct.pack("<I", base + rva))
+        code.extend(b"\xff\x15" + struct.pack("<I", base + 0x20A0))
+        code.extend(b"\x83\xf0\x01\x50\xff\x15" + struct.pack("<I", base + 0x20A0 + step))
+    buf[0x200:0x200 + len(code)] = code
+    return bytes(buf)
+
+
 def build_crt_initializer(machine: int) -> bytes:
     """Call msvcrt._initterm; its guest callback marks memory before return."""
     is_x64 = machine == 0x8664

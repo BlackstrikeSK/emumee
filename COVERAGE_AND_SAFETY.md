@@ -4,6 +4,7 @@
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
 `cmdkey.exe`,
+`manage-bde.exe`,
 `getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `pnputil.exe`, `gpresult.exe`, `dsregcmd.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `vssadmin.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
@@ -33,6 +34,11 @@ host VSS access.
 `cmdkey.exe /list` reports only configured guest credential metadata. The
 default store is empty, password fields are rejected, and credential changes
 exit 87 without host credential store access.
+`manage-bde.exe -status` and `-status C:` read guest capacity and BitLocker
+metadata. `GetDiskFreeSpaceExA/W` uses the same configured capacity and free
+space for guest directories on C:. Output buffers are validated before writes;
+unknown volumes fail. Capacity is a snapshot without quotas or dynamic
+accounting. BitLocker changes and remote queries exit 87.
 Generated `ipconfig.exe /all` prints the persona's
 hostname, adapter description, MAC address, DHCP flag, IPv4 settings, and DNS
 servers. Bare-name and quoted full-path `WinExec` launches reached that output

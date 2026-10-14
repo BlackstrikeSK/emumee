@@ -40,6 +40,24 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
                         f"    User: {credential['user']}\r\n"
                         f"    {credential['persistence']} persistence\r\n")
         return "\r\n".join(rows)
+    if name == "manage-bde.exe":
+        if not arguments:
+            return "Usage: manage-bde -status [C:]\r\n"
+        if arguments.casefold() not in {"-status", "-status c:"}:
+            raise ValueError("unsupported manage-bde arguments")
+        bitlocker = persona["bitlocker"]
+        encrypted = bitlocker["encryption_method"] != "None"
+        protectors = "\r\n".join("        " + value for value in bitlocker["key_protectors"]) or "        None Found"
+        return ("BitLocker Drive Encryption: Configuration Tool\r\n\r\n"
+                "Volume C: [Windows]\r\n[OS Volume]\r\n\r\n"
+                f"    Size:                 {persona['volume_capacity_bytes'] / 1024 ** 3:.2f} GB\r\n"
+                f"    BitLocker Version:    {'2.0' if encrypted else 'None'}\r\n"
+                f"    Conversion Status:    {'Fully Encrypted' if encrypted else 'Fully Decrypted'}\r\n"
+                f"    Percentage Encrypted: {'100.0' if encrypted else '0.0'}%\r\n"
+                f"    Encryption Method:    {bitlocker['encryption_method']}\r\n"
+                f"    Protection Status:    Protection {'On' if bitlocker['protection_enabled'] else 'Off'}\r\n"
+                "    Lock Status:          Unlocked\r\n"
+                f"    Key Protectors:\r\n{protectors}\r\n")
     if name in {"quser.exe", "qwinsta.exe"}:
         if arguments:
             raise ValueError("unsupported session query arguments")
@@ -808,7 +826,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
                  "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
-                 "vssadmin.exe", "cmdkey.exe"):
+                 "vssadmin.exe", "cmdkey.exe", "manage-bde.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -842,6 +860,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                                       "/scope computer /r", "/r /scope computer"),
                      "dsregcmd.exe": ("/status",),
                      "cmdkey.exe": ("/list",),
+                     "manage-bde.exe": ("-status", "-status C:"),
                      "vssadmin.exe": ("list shadows", "list shadows /for=C:",
                                       "list shadows /for=C:\\", "list volumes",
                                       "list providers"),

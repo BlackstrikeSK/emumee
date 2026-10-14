@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import json
 import ntpath
+import re
 from pathlib import Path
 
 from speakeasy.config import get_default_config_dict
@@ -32,6 +34,19 @@ DEFAULT_PERSONA = {
         "base_mhz": 2900,
         "max_mhz": 4300,
     },
+    "network_adapter": {
+        "guid": "{7A91D3B6-46CF-4D12-9D5B-8E7C412A9360}",
+        "name": "Ethernet",
+        "description": "Intel(R) Ethernet Connection (7) I219-V",
+        "mac": "3C-52-82-4A-6F-19",
+        "ipv4": "192.168.1.107",
+        "prefix_length": 24,
+        "gateway": "192.168.1.1",
+        "dns_servers": ["192.168.1.1"],
+        "dhcp_enabled": True,
+        "mtu": 1500,
+        "if_index": 12,
+    },
     "current_dir": "C:\\Users\\Alex\\Downloads",
     "locale": "en-US",
     "timezone": "Eastern Standard Time",
@@ -55,6 +70,7 @@ DEFAULT_PERSONA["virtual_files"] = desktop_files(
 
 def load_persona(path: Path | None) -> dict:
     persona = copy.deepcopy(DEFAULT_PERSONA)
+    refresh_registry = False
     if path is not None:
         supplied = json.loads(path.read_text(encoding="utf-8"))
         unknown = set(supplied) - set(persona)
@@ -67,7 +83,17 @@ def load_persona(path: Path | None) -> dict:
             if unknown_cpu:
                 raise ValueError(f"Unknown persona cpu fields: {', '.join(sorted(unknown_cpu))}")
             persona["cpu"].update(supplied.pop("cpu"))
+        if "network_adapter" in supplied:
+            adapter = supplied.pop("network_adapter")
+            if not isinstance(adapter, dict):
+                raise ValueError("Persona network_adapter must be an object")
+            unknown_adapter = set(adapter) - set(persona["network_adapter"])
+            if unknown_adapter:
+                raise ValueError("Unknown persona network_adapter fields: " +
+                                 ", ".join(sorted(unknown_adapter)))
+            persona["network_adapter"].update(adapter)
         custom_registry = "registry_keys" in supplied
+        refresh_registry = not custom_registry
         custom_files = "virtual_files" in supplied
         custom_current_dir = "current_dir" in supplied
         previous_name = persona["user_name"]
@@ -84,13 +110,51 @@ def load_persona(path: Path | None) -> dict:
                 persona["current_dir"].casefold() ==
                 rf"C:\Users\{previous_name}\Downloads".casefold()):
             persona["current_dir"] = rf"C:\Users\{persona['user_name']}\Downloads"
-        if not custom_registry:
-            persona["registry_keys"] = registry_keys(persona)
         if not custom_files:
             persona["virtual_files"] = desktop_files(
                 persona["user_name"], persona["hostname"])
     if not persona["user_name"] or not persona["hostname"]:
         raise ValueError("Persona user_name and hostname must not be empty")
+    adapter = persona["network_adapter"]
+    if (not isinstance(adapter["guid"], str) or
+            not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
+                             adapter["guid"]) or
+            any(not isinstance(adapter[field], str) or not adapter[field] or
+                len(adapter[field]) > 128 or "\0" in adapter[field]
+                for field in ("name", "description")) or
+            not isinstance(adapter["mac"], str) or
+            not re.fullmatch(r"(?:[0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}", adapter["mac"]) or
+            not isinstance(adapter["prefix_length"], int) or
+            isinstance(adapter["prefix_length"], bool) or
+            not 1 <= adapter["prefix_length"] <= 32 or
+            not isinstance(adapter["mtu"], int) or isinstance(adapter["mtu"], bool) or
+            not 576 <= adapter["mtu"] <= 9000 or
+            not isinstance(adapter["if_index"], int) or
+            isinstance(adapter["if_index"], bool) or
+            not 1 <= adapter["if_index"] <= 65535 or
+            not isinstance(adapter["dhcp_enabled"], bool) or
+            not isinstance(adapter["dns_servers"], list) or
+            not 1 <= len(adapter["dns_servers"]) <= 4):
+        raise ValueError("Persona network_adapter fields are invalid")
+    try:
+        if not isinstance(adapter["ipv4"], str) or not isinstance(adapter["gateway"], str):
+            raise ValueError
+        address = ipaddress.IPv4Address(adapter["ipv4"])
+        gateway = ipaddress.IPv4Address(adapter["gateway"])
+        network = ipaddress.IPv4Network((address, adapter["prefix_length"]),
+                                        strict=False)
+        if (address.is_multicast or address.is_loopback or address.is_unspecified or
+                gateway.is_multicast or gateway.is_loopback or
+                gateway not in network or address == gateway):
+            raise ValueError
+        for item in adapter["dns_servers"]:
+            if not isinstance(item, str):
+                raise ValueError
+            ipaddress.IPv4Address(item)
+    except (ValueError, TypeError, ipaddress.AddressValueError) as exc:
+        raise ValueError("Persona network_adapter IPv4 settings are invalid") from exc
+    if refresh_registry:
+        persona["registry_keys"] = registry_keys(persona)
     build = persona["windows_build"]
     if not isinstance(build, int) or isinstance(build, bool) or not 22000 <= build <= 65535:
         raise ValueError("Persona windows_build must be a Windows 11 build between 22000 and 65535")

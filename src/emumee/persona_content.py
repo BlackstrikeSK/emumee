@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+
 
 DISPLAY_VERSIONS = {
     22000: "21H2", 22621: "22H2", 22631: "23H2",
@@ -136,6 +138,9 @@ def registry_keys(persona: dict) -> list[dict]:
     build = persona["windows_build"]
     display = DISPLAY_VERSIONS.get(build)
     cpu = persona["cpu"]
+    adapter = persona["network_adapter"]
+    subnet_mask = str(ipaddress.IPv4Network(
+        (adapter["ipv4"], adapter["prefix_length"]), strict=False).netmask)
 
     def value(key: str, data, kind: str = "REG_SZ") -> dict:
         return {"name": key, "type": kind, "data": str(data)}
@@ -176,6 +181,20 @@ def registry_keys(persona: dict) -> list[dict]:
               value("NV Hostname", persona["hostname"]),
               value("Domain", "" if persona["domain"] == "WORKGROUP" else persona["domain"]),
               value("NV Domain", "" if persona["domain"] == "WORKGROUP" else persona["domain"])),
+        entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces" +
+              "\\" + adapter["guid"],
+              value("EnableDHCP", int(adapter["dhcp_enabled"]), "REG_DWORD"),
+              value("DhcpIPAddress", adapter["ipv4"]),
+              value("DhcpSubnetMask", subnet_mask),
+              value("DhcpDefaultGateway", adapter["gateway"], "REG_MULTI_SZ"),
+              value("DhcpNameServer", " ".join(adapter["dns_servers"]))),
+        entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkCards\1",
+              value("Description", adapter["description"]),
+              value("ServiceName", adapter["guid"])),
+        entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Network\{4D36E972-E325-11CE-BFC1-08002BE10318}" +
+              "\\" + adapter["guid"] + r"\Connection",
+              value("Name", adapter["name"]),
+              value("PnpInstanceID", r"PCI\VEN_8086&DEV_0D4F&SUBSYS_087B1028")),
         entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\TimeZoneInformation",
               value("TimeZoneKeyName", persona["timezone"]),
               value("ActiveTimeBias", (-persona["utc_offset_minutes"]) & 0xFFFFFFFF,

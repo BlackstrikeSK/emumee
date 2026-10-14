@@ -30,6 +30,37 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_setlocale_uses_persona_and_process_owned_return_buffer(self):
+        emu = _Emulator(8)
+        memory = {}
+        def put(address, data):
+            for offset, byte in enumerate(data):
+                memory[address + offset] = byte
+        emu.mem_write = put
+        emu.mem_read = lambda address, size: bytes(memory[address + index]
+                                                    for index in range(size))
+        put(0x1000, b'\0')
+        put(0x1100, b'C\0')
+        put(0x1200, b'xx-YY\0')
+        crt = LegacyCRTStreams('de-DE')
+        query = lambda category, pointer: crt._setlocale(
+            emu, 'msvcrt.setlocale', None, [category, pointer])
+        first = query(0, 0)
+        self.assertEqual(emu.mem_read(first, 2), b'C\0')
+        self.assertEqual(query(0, 0x1000), first)
+        self.assertEqual(emu.mem_read(first, 6), b'de-DE\0')
+        self.assertEqual(query(5, 0x1100), first)
+        self.assertEqual(query(0, 0), first)
+        prefix = b'LC_COLLATE=de-DE;LC_CTYPE=de-DE;'
+        self.assertEqual(emu.mem_read(first, len(prefix)), prefix)
+        self.assertEqual(query(0, 0x1200), 0)
+        self.assertEqual(query(6, 0), 0)
+        previous = emu.process
+        emu.process = object()
+        self.assertNotEqual(query(0, 0), first)
+        crt.cleanup_process(previous)
+        self.assertNotIn(id(previous), crt._locale_by_process)
+
     def test_private_crt_exit_records_guest_status_and_stops(self):
         process = SimpleNamespace(pid=1234)
         stopped = []

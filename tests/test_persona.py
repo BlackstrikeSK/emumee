@@ -30,6 +30,32 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_network_adapter_override_updates_registry_and_rejects_bad_addresses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "persona.json"
+            config.write_text(json.dumps({"network_adapter": {
+                "name": "Office Ethernet", "ipv4": "10.20.30.44",
+                "prefix_length": 24, "gateway": "10.20.30.1",
+                "dns_servers": ["10.20.30.2"]}}), encoding="utf-8")
+            persona = load_persona(config)
+            self.assertEqual(persona["network_adapter"]["mac"],
+                             "3C-52-82-4A-6F-19")
+            interface = next(item for item in persona["registry_keys"]
+                             if item["path"].endswith(
+                                 "Tcpip\\Parameters\\Interfaces\\" +
+                                 persona["network_adapter"]["guid"]))
+            values = {item["name"]: item["data"] for item in interface["values"]}
+            self.assertEqual(values["DhcpIPAddress"], "10.20.30.44")
+            self.assertEqual(values["DhcpSubnetMask"], "255.255.255.0")
+            self.assertEqual(values["DhcpDefaultGateway"], "10.20.30.1")
+            self.assertEqual(values["DhcpNameServer"], "10.20.30.2")
+
+            config.write_text(json.dumps({"network_adapter": {
+                "ipv4": "10.20.30.44", "gateway": "192.168.1.1"}}),
+                encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "IPv4 settings"):
+                load_persona(config)
+
     def test_computer_and_user_name_api_sizes_and_formats(self):
         persona = load_persona(None)
         bridge = GuestIdentity(persona)

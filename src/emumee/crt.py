@@ -44,11 +44,14 @@ def _legacy_iob_image(pointer_size: int) -> bytes:
 class LegacyCRTStreams:
     """Return stable guest FILE pointers without borrowing host CRT state."""
 
-    def __init__(self):
+    def __init__(self, locale: str = "en-US"):
+        self.persona_locale = locale
         self._iob_by_process: dict[int, int] = {}
         self._ucrt_iob_by_process: dict[int, tuple[int, int]] = {}
         self._mode_by_process: dict[tuple[int, int], int] = {}
         self._errno_by_thread: dict[tuple[int, int], int] = {}
+        self._locale_by_process: dict[int, dict[int, str]] = {}
+        self._locale_buffer_by_process: dict[int, int] = {}
         self.read_guard = None
         self.write_guard = None
         self.console_write = None
@@ -56,6 +59,8 @@ class LegacyCRTStreams:
 
     def install(self, emulator) -> None:
         emulator.add_api_hook(self._iob_func, "msvcrt", "__iob_func", argc=0,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._setlocale, "msvcrt", "setlocale", argc=2,
                               call_conv=e_arch.CALL_CONV_CDECL)
         for module in ("msvcrt", "ucrtbase"):
             emulator.add_api_hook(self._acrt_iob_func, module, "__acrt_iob_func", argc=1,
@@ -166,6 +171,8 @@ class LegacyCRTStreams:
         owner = id(process)
         self._iob_by_process.pop(owner, None)
         self._ucrt_iob_by_process.pop(owner, None)
+        self._locale_by_process.pop(owner, None)
+        self._locale_buffer_by_process.pop(owner, None)
         for key in tuple(self._mode_by_process):
             if key[0] == owner:
                 self._mode_by_process.pop(key, None)
@@ -194,6 +201,61 @@ class LegacyCRTStreams:
             self.unsupported.append(f"{api_name}: guest errno allocation failed")
             return 0
         self._errno_by_thread[key] = address
+        return address
+
+    def _setlocale(self, emu, api_name, _original, params) -> int:
+        category, pointer = map(int, params)
+        process = emu.get_current_process()
+        if process is None or category not in range(6):
+            self.unsupported.append(f"{api_name}: locale category unsupported")
+            return 0
+        owner = id(process)
+        categories = self._locale_by_process.setdefault(owner, {index: "C"
+                                                         for index in range(1, 6)})
+        if pointer:
+            try:
+                requested = self._string(emu, pointer, 1)
+            except Exception:
+                self.unsupported.append(f"{api_name}: guest locale string unreadable")
+                return 0
+            selected = self.persona_locale if requested == "" else requested
+            if selected not in ("C", self.persona_locale):
+                self.unsupported.append(f"{api_name}: locale {selected!r} unsupported")
+                return 0
+            if category == 0:
+                categories.update({index: selected for index in range(1, 6)})
+            else:
+                categories[category] = selected
+        if category:
+            result = categories[category]
+        elif len(set(categories.values())) == 1:
+            result = categories[1]
+        else:
+            names = ("LC_COLLATE", "LC_CTYPE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME")
+            result = ";".join(f"{name}={categories[index]}"
+                              for index, name in enumerate(names, 1))
+        try:
+            encoded = (result + "\0").encode("ascii", errors="strict")
+        except UnicodeEncodeError:
+            self.unsupported.append(f"{api_name}: non-ASCII locale unsupported")
+            return 0
+        if len(encoded) > 512:
+            self.unsupported.append(f"{api_name}: locale result too long")
+            return 0
+        address = self._locale_buffer_by_process.get(owner)
+        if address is None:
+            try:
+                address = emu.mem_map(512, perms=common.PERM_MEM_RW,
+                                      tag="api.msvcrt.locale", process=process)
+            except Exception:
+                self.unsupported.append(f"{api_name}: locale buffer allocation failed")
+                return 0
+            self._locale_buffer_by_process[owner] = address
+        try:
+            emu.mem_write(address, encoded)
+        except Exception:
+            self.unsupported.append(f"{api_name}: guest locale buffer write failed")
+            return 0
         return address
 
     def _write_descriptor(self, emu, api_name, _original, params) -> int:

@@ -117,6 +117,10 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._wcsspn, "msvcrt", "wcsspn", argc=2,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._wcscspn, "msvcrt", "wcscspn", argc=2,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._wcsupr, "msvcrt", "_wcsupr", argc=1,
+                              call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._swprintf_s, "msvcrt", "swprintf_s", argc=3,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._snwprintf_s, "msvcrt", "_snwprintf_s", argc=4,
@@ -265,6 +269,46 @@ class LegacyCRTStreams:
             return 0
         self.unsupported.append(f"{api_name}: guest string exceeds limit")
         return 0
+
+    def _wcscspn(self, emu, api_name, _original, params) -> int:
+        source, rejected = map(int, params)
+        try:
+            charset = set(self._string(emu, rejected, 2))
+            for index in range(_MAX_FORMAT_CHARS):
+                unit = self._read(emu, source + index * 2, 2)
+                if unit == b"\0\0" or unit.decode(
+                        "utf-16le", errors="surrogatepass") in charset:
+                    return index
+        except Exception:
+            self.unsupported.append(f"{api_name}: inaccessible guest string")
+            return 0
+        self.unsupported.append(f"{api_name}: guest string exceeds limit")
+        return 0
+
+    def _wcsupr(self, emu, api_name, _original, params) -> int:
+        pointer = int(params[0])
+        try:
+            if not pointer:
+                raise ValueError("null guest string")
+            units = bytearray()
+            for index in range(_MAX_FORMAT_CHARS):
+                unit = self._read(emu, pointer + index * 2, 2)
+                if unit == b"\0\0":
+                    break
+                value = int.from_bytes(unit, "little")
+                units.extend(self._towupper(emu, api_name, None, [value]).to_bytes(
+                    2, "little"))
+            else:
+                raise ValueError("guest string exceeds limit")
+            image = bytes(units) + b"\0\0"
+            if self.write_guard is not None and not self.write_guard(
+                    emu, pointer, len(image)):
+                raise ValueError("guest string write denied")
+            emu.mem_write(pointer, image)
+            return pointer
+        except Exception as exc:
+            self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
+            return 0
 
     def _towupper(self, emu, api_name, _original, params) -> int:
         value = int(params[0])

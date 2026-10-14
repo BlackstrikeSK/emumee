@@ -1,5 +1,13 @@
 # Coverage, containment, and test plan
 
+## 2026-10-14 `attrib.exe` path follow-up
+
+The staged x64 Microsoft `attrib.exe` previously reached an API-set `GetFullPathNameW` call through Speakeasy's default handler, which returned only 3 for the static `*.*` pattern. Registering the existing guest path model for `api-ms-win-core-file-l1-1-0` changed that return to the full guest path length and advanced execution to `msvcrt._wcsupr` and `wcscspn`. Bounded in-place wide uppercasing and wide reject-set scanning now handle those calls. The resulting named-file probe at `output/real-attrib-x64-wcscspn/20261014T135426Z-e7dfcbd2` completes after 20,281 instructions with no reported errors and reaches `FindFirstFileW`.
+
+The report still has empty stdout. A missing-file control at `output/real-attrib-x64-missing/20261014T135723Z-d88fb216` also returns 0 with empty stdout, and both traces call `FindFirstFileW` on the persona Downloads directory. Attribute-query behavior remains unverified; the successful return must not be interpreted as a working file lookup.
+
+The 57 focused source tests for the changed path, CRT, console, locale, delay-import, heap, and reporting models pass. This follow-up does not repeat the full source suite.
+
 ## 2026-10-14 x64 `findstr.exe` and `attrib.exe` probes
 
 An isolated alternate worker package exercised locally staged Microsoft Windows binaries; the binaries and MUI files are not redistributed. The real x64 `findstr.exe` with `en-US/findstr.exe.mui` searched the default persona file `C:\Users\Alex\Documents\Household\shopping-list.txt` for `Coffee`. The final offline replay report at `output/real-findstr-x64-final/20261014T134622Z-33db5cb5` completed after 6,168 guest instructions, returned 0, captured `Coffee\n` on stdout, and recorded no errors or denied operations. The trace includes a successful virtual `CreateFileA` and a console `WriteFile` through `api-ms-win-core-file-l1-1-0`. A missing-pattern control at `output/real-findstr-x64-missing/20261014T134126Z-3fd9e442` returned 1 with empty stdout and no errors. Other switches, encodings, input sizes, and x86 remain untested.

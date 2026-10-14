@@ -30,6 +30,35 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_wcsupr_uppercases_guest_buffer_in_place_with_write_guard(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.mem_write(0x1000, 'Coffeeß\0'.encode('utf-16le'))
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._wcsupr(emu, 'msvcrt._wcsupr', None, [0x1000]),
+                         0x1000)
+        self.assertEqual(emu.mem_read(0x1000, 16),
+                         'COFFEEß\0'.encode('utf-16le'))
+        crt.write_guard = lambda *_args: False
+        self.assertEqual(crt._wcsupr(emu, 'msvcrt._wcsupr', None, [0x1000]), 0)
+
+    def test_wcscspn_stops_at_first_rejected_guest_character(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.mem_write(0x1000, 'Coffee/Tea\0'.encode('utf-16le'))
+        emu.mem_write(0x2000, '/\\\0'.encode('utf-16le'))
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._wcscspn(emu, 'msvcrt.wcscspn', None,
+                                      [0x1000, 0x2000]), 6)
+
     def test_strncpy_s_copies_and_terminates_bounded_guest_string(self):
         emu = _Emulator(8)
         memory = {}

@@ -365,6 +365,8 @@ class VirtualFileBridge:
     def install(self, emulator) -> None:
         for name in ("GetFullPathNameA", "GetFullPathNameW"):
             emulator.add_api_hook(self._get_full_path_name, "kernel32", name, argc=4)
+            emulator.add_api_hook(self._get_full_path_name,
+                                  "api-ms-win-core-file-l1-1-0", name, argc=4)
         for name in ("GetLongPathNameA", "GetLongPathNameW"):
             emulator.add_api_hook(self._get_long_path_name, "kernel32", name, argc=3)
         for name in ("MoveFileExA", "MoveFileExW"):

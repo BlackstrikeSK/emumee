@@ -42,6 +42,25 @@ class _Guest:
 
 
 class FullPathTests(unittest.TestCase):
+    def test_api_set_full_path_import_uses_guest_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = VirtualFileBridge(r"C:\Users\Alex\Downloads",
+                                       ArtifactCatalog(Path(folder)))
+            callbacks = {}
+            class Registrar:
+                def add_api_hook(self, callback, module, name, **_kwargs):
+                    callbacks[(module, name)] = callback
+            bridge.install(Registrar())
+            callback = callbacks[("api-ms-win-core-file-l1-1-0",
+                                  "GetFullPathNameW")]
+            emu = _Guest()
+            emu.mem_write(0x100, '*.*\0'.encode('utf-16le'))
+            expected = r'C:\Users\Alex\Downloads\*.*'
+            self.assertEqual(callback(emu, 'api-ms-win-core-file-l1-1-0.GetFullPathNameW',
+                                      None, [0x100, 100, 0x400, 0]), len(expected))
+            self.assertEqual(emu.mem_read(0x400, (len(expected) + 1) * 2),
+                             (expected + '\0').encode('utf-16le'))
+
     def test_full_path_size_query_wide_output_and_file_part(self):
         with tempfile.TemporaryDirectory() as folder:
             bridge = VirtualFileBridge(r"C:\Users\Alex\Downloads",

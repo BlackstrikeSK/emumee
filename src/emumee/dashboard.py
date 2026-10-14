@@ -21,154 +21,7 @@ from .safeio import read_regular_file
 from .networkfixtures import MAX_FIXTURE_FILE, parse_network_fixtures
 
 
-STYLE = """
-*{box-sizing:border-box}body{background:#0b111b;color:#e6edf6;font:15px/1.5 system-ui,Segoe UI,sans-serif;margin:0}
-.wrap{max-width:1200px;margin:auto;padding:28px 24px 70px}header{border-bottom:1px solid #263548;background:#101a28}
-header .wrap{padding-top:19px;padding-bottom:19px;display:flex;align-items:center;justify-content:space-between}
-a{color:#8dc6ff;text-decoration:none}a:hover{text-decoration:underline}.brand{font-size:23px;font-weight:800;letter-spacing:.02em;color:#e6edf6}
-.muted{color:#96a8bb}.eyebrow{text-transform:uppercase;letter-spacing:.13em;color:#65d8c4;font-size:12px;font-weight:700}
-h1{font-size:31px;line-height:1.2;margin:9px 0 20px}h2{font-size:19px;margin:32px 0 12px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.card,.panel{background:#132032;border:1px solid #2a3b50;border-radius:12px;padding:18px}
-.metric{font-size:24px;font-weight:750;overflow-wrap:anywhere}.label{font-size:12px;color:#9caec1;text-transform:uppercase;letter-spacing:.07em}
-table{border-collapse:collapse;width:100%;background:#132032;border:1px solid #2a3b50;border-radius:12px;overflow:hidden}
-th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #263548;vertical-align:top;overflow-wrap:anywhere}
-th{color:#9badbf;font-size:12px;text-transform:uppercase;letter-spacing:.06em}tr:last-child td{border-bottom:0}
-code,pre{font-family:Consolas,monospace;color:#b5d9ff}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
-.pill{display:inline-block;padding:2px 9px;border-radius:99px;background:#254039;color:#8becd1;font-size:12px;font-weight:700}
-.pill.partial,.pill.failed,.pill.timeout{background:#503a26;color:#ffd08c}.error{border-color:#9b5949;background:#332229}
-.empty{padding:28px;border:1px dashed #3b5066;border-radius:12px;color:#9badbf}
-input{background:#0c1625;border:1px solid #3a5168;color:#e6edf6;padding:9px;border-radius:7px}
-select,button{background:#0c1625;border:1px solid #3a5168;color:#e6edf6;padding:9px;border-radius:7px}
-.console-text{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
-"""
-
-INDEX = """
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emumee · Runs</title><style>{{ style }}</style></head>
-<body><header><div class="wrap"><a class="brand" href="/">◈ Emumee</a><span class="muted">Local analysis dashboard</span></div></header>
-<main class="wrap"><div class="eyebrow">Analysis workspace</div><h1>Runs</h1>
-<form action="/" method="get" class="panel" style="margin-bottom:18px">
-<label>Sample SHA-256 prefix <input name="sha" value="{{ sha_filter }}" maxlength="64" placeholder="8–64 hex characters"></label>
-<label>Status <select name="status"><option value="">All</option>{% for name in ('completed','partial','failed','timeout','running') %}<option value="{{ name }}"{% if status_filter == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
-<label>Artifact kind <input name="kind" value="{{ kind_filter }}" maxlength="32" placeholder="pe, script, binary..."></label>
-<label>Behavior contains <input name="behavior" value="{{ behavior_filter }}" maxlength="128" placeholder="API, URL, guest path"></label>
-<label>Sort <select name="sort"><option value="newest"{% if sort_order == 'newest' %} selected{% endif %}>Newest</option><option value="oldest"{% if sort_order == 'oldest' %} selected{% endif %}>Oldest</option><option value="artifacts"{% if sort_order == 'artifacts' %} selected{% endif %}>Most artifacts</option></select></label>
-<button type="submit">Filter</button></form>
-{% if runs|length > 1 %}<form action="/compare" method="get" class="panel" style="margin-bottom:18px"><label>Compare runs: <select name="left">{% for run in runs %}<option value="{{ run.id }}">{{ run.id }} · {{ run.sample.name }}</option>{% endfor %}</select></label> <label>with <select name="right">{% for run in runs %}<option value="{{ run.id }}"{% if loop.index == 2 %} selected{% endif %}>{{ run.id }} · {{ run.sample.name }}</option>{% endfor %}</select></label> <button type="submit">Compare</button></form>{% endif %}
-{% if runs %}<p class="muted">{{ total }} matching runs · page {{ page }}</p><table><thead><tr><th>Run</th><th>Sample</th><th>Architecture</th><th>Engine</th><th>Status</th><th>Guest result</th><th>API calls</th><th>CIL opcode attempts</th><th>Signature-only names</th><th>Artifacts</th></tr></thead><tbody>
-{% for run in runs %}<tr><td><a href="/runs/{{ run.id }}">{{ run.id }}</a></td><td>{{ run.sample.name if run.sample else 'unknown' }}</td><td>{{ run.sample.architecture if run.sample else '—' }}</td><td>{{ run.engine or '—' }}</td><td><span class="pill {{ run.status }}">{{ run.status }}</span></td><td>{% if run.guest_exit_code is defined and run.guest_exit_code is not none %}Exit {{ run.guest_exit_code }}{% elif run.guest_entry_return is defined and run.guest_entry_return is not none %}Return {{ run.guest_entry_return }}{% else %}—{% endif %}</td><td>{{ run.api_coverage.api_calls if run.api_coverage else '—' }}</td><td>{{ run.cil_coverage.opcode_attempts if run.cil_coverage else '—' }}</td><td>{{ run.api_coverage.signature_only_calls|length if run.api_coverage else '—' }}</td><td>{{ run.artifact_groups|length if run.artifact_groups is defined else run.artifacts|length }}</td></tr>{% endfor %}
-</tbody></table><p>{% if previous_page %}<a href="{{ previous_page }}">← Previous</a>{% endif %} {% if next_page %}<a href="{{ next_page }}">Next →</a>{% endif %}</p>{% else %}<div class="empty">No matching runs. Use <code>emumee run sample.exe</code> from a terminal.</div>{% endif %}
-</main></body></html>
-"""
-
-COMPARE = """
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emumee · Compare runs</title><style>{{ style }}</style></head>
-<body><header><div class="wrap"><a class="brand" href="/">◈ Emumee</a><a href="/">← All runs</a></div></header><main class="wrap">
-<h1>Compare runs</h1><p><a href="/runs/{{ comparison.left.id }}">{{ comparison.left.id }}</a> → <a href="/runs/{{ comparison.right.id }}">{{ comparison.right.id }}</a> · <a href="/compare?left={{ comparison.left.id }}&right={{ comparison.right.id }}&format=json">JSON diff</a></p>
-<h2>Comparison context</h2><div class="panel"><pre>{{ comparison.comparable_context|tojson(indent=2) }}</pre></div>
-{% if comparison.artifact_evidence.left != 'verified' or comparison.artifact_evidence.right != 'verified' %}<div class="panel error">Artifact comparison excludes unverified evidence. <pre>{{ comparison.artifact_evidence|tojson(indent=2) }}</pre></div>{% endif %}
-<h2>Outcomes and limits</h2><div class="panel"><pre>{{ comparison.outcomes|tojson(indent=2) }}</pre></div>
-<h2>Changed persona fields</h2><div class="panel"><pre>{{ comparison.persona_changes|tojson(indent=2) }}</pre></div>
-<h2>Changed API counts</h2><div class="panel"><pre>{{ comparison.api_changes|tojson(indent=2) }}</pre></div>
-<h2>Changed API return values</h2><div class="panel"><pre>{{ comparison.api_result_changes|tojson(indent=2) }}</pre></div>
-<h2>Artifacts</h2><div class="panel"><pre>{{ comparison.artifact_changes|tojson(indent=2) }}</pre></div>
-<h2>Behavior changes</h2><div class="panel"><pre>{{ comparison.behavior_changes|tojson(indent=2) }}</pre></div>
-<h2>Console output</h2><div class="panel"><pre>{{ comparison.console_output|tojson(indent=2) }}</pre></div>
-</main></body></html>
-"""
-
-DETAIL = """
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emumee · {{ run.id }}</title><style>{{ style }}</style></head>
-<body><header><div class="wrap"><a class="brand" href="/">◈ Emumee</a><a href="/">← All runs</a></div></header><main class="wrap">
-<div class="eyebrow">{{ run.id }}</div><h1>{{ run.sample.name if run.sample else 'Analysis run' }}</h1>
-<div class="cards"><div class="card"><div class="label">Status</div><div class="metric"><span class="pill {{ run.status }}">{{ run.status }}</span></div></div>
-<div class="card"><div class="label">Architecture</div><div class="metric">{{ run.sample.architecture if run.sample else '—' }}</div></div>
-<div class="card"><div class="label">Runtime</div><div class="metric">{{ run.engine or '—' }}</div></div>
-<div class="card"><div class="label">Engine trace</div><div class="metric">{{ trace_integrity }}</div></div>
-<div class="card"><div class="label">Network report</div><div class="metric">{{ broker_integrity }}</div></div>
-<div class="card"><div class="label">Unique artifacts</div><div class="metric">{{ run.artifact_groups|length if run.artifact_groups is defined else run.artifacts|length }}</div></div>
-<div class="card"><div class="label">Guest exit code</div><div class="metric">{{ run.guest_exit_code if run.guest_exit_code is defined and run.guest_exit_code is not none else 'Unknown' }}</div></div>
-<div class="card"><div class="label">Entry return</div><div class="metric">{{ run.guest_entry_return if run.guest_entry_return is defined and run.guest_entry_return is not none else '—' }}</div></div>
-<div class="card"><div class="label">Completion reason</div><div class="metric">{{ run.completion_reason or '—' }}</div></div>
-<div class="card"><div class="label">Instructions</div><div class="metric">{{ run.instruction_count if run.instruction_count is defined else '—' }}</div></div>
-<div class="card"><div class="label">Instruction limit</div><div class="metric">{{ 'Reached' if run.instruction_limit_reached else 'Not reached' }}</div></div>
-<div class="card"><div class="label">Wall-clock limit</div><div class="metric">{{ 'Reached' if run.timeout_reached else 'Not reached' }}</div></div>
-<div class="card"><div class="label">Denied operations</div><div class="metric">{{ run.denied_operations or 0 }}</div></div>
-{% if run.cil_coverage %}
-<div class="card"><div class="label">CIL opcode attempts</div><div class="metric">{{ run.cil_coverage.opcode_attempts }}</div></div>
-<div class="card"><div class="label">Tracked opcode names</div><div class="metric">{{ run.cil_coverage.tracked_opcodes }}</div></div>
-<div class="card"><div class="label">Framework call attempts</div><div class="metric">{{ run.cil_coverage.framework_calls }}</div></div>
-{% else %}
-<div class="card"><div class="label">Observed API calls</div><div class="metric">{{ run.api_coverage.api_calls if run.api_coverage else '—' }}</div></div>
-<div class="card"><div class="label">Distinct API names</div><div class="metric">{{ run.api_coverage.observed_apis if run.api_coverage and run.api_coverage.observed_apis is defined else '—' }}</div></div>
-<div class="card"><div class="label">Signature-only API names</div><div class="metric">{{ run.api_coverage.signature_only_calls|length if run.api_coverage else '—' }}</div></div>{% endif %}</div>
-<h2>Sample</h2><div class="panel"><div>SHA-256: <code>{{ run.sample.sha256 if run.sample else '—' }}</code></div>
-<div>Type: {{ 'Managed' if run.sample and run.sample.managed else 'Native' }} {{ run.sample.kind if run.sample else '' }}</div>
-<div>Started: {{ run.started_at or '—' }}</div><div>Persona: {{ run.persona.hostname if run.persona else '—' }} / {{ run.persona.user_name if run.persona else '—' }}</div></div>
-<div class="panel"><div>Guest finished: {{ run.finished_at or '—' }}</div><div>Command finished: {{ run.command_finished_at or '—' }}</div><div>Total command time: {{ run.command_elapsed_seconds if run.command_elapsed_seconds is defined else '—' }} seconds</div><div>Worker exit code: {{ run.worker_exit_code if run.worker_exit_code is defined and run.worker_exit_code is not none else '—' }}</div></div>
-{% if run.run_manifest %}<h2>Run manifest</h2><div class="panel"><pre>{{ run.run_manifest|tojson(indent=2) }}</pre></div>{% endif %}
-{% if fixture_rules is not none %}<h2>Exact HTTP fixtures</h2><p class="muted">Requests match method, URL, chunked flag, every header name and value, and the complete body. Header names ignore case; values and body bytes are exact. <a href="/runs/{{ run.id }}/network-fixtures">Download full request and response definitions</a>.</p>
-{% if fixture_rules %}<table><thead><tr><th>ID</th><th>Request</th><th>Response</th></tr></thead><tbody>{% for rule in fixture_rules %}<tr><td>{{ rule.id }}</td><td><code>{{ rule.request.method }} {{ rule.request.url }}</code><pre>{{ rule.request.headers|tojson(indent=2) }}</pre>Body: {{ rule.request_body_size }} bytes · <code>{{ rule.request_body_sha256 }}</code></td><td>{{ rule.response.status }} {{ rule.response.reason }}<pre>{{ rule.response.headers|tojson(indent=2) }}</pre>Body: {{ rule.response_body_size }} bytes · <code>{{ rule.response_body_sha256 }}</code></td></tr>{% endfor %}</tbody></table>{% endif %}{% endif %}
-{% if run.errors %}<h2>Coverage limits and errors</h2><div class="panel error"><pre>{{ run.errors|tojson(indent=2) }}</pre></div>{% endif %}
-{% if run.guest_trace_complete is sameas false %}<div class="panel error">The worker did not finish its guest trace report. Guest API, file, process, memory, and console observations may be incomplete.</div>{% endif %}
-{% if run.artifact_checkpoint_recovered %}<div class="panel error">Artifacts below were recovered from a verified worker checkpoint. Later payloads and observations may be missing.</div>{% endif %}
-{% if run.artifact_integrity in ('failed', 'unverified') %}<div class="panel error">Artifact claims could not be verified and are excluded from counts, search, comparison, and downloads.{% if run.unverified_artifact_count %} {{ run.unverified_artifact_count }} worker artifact rows were quarantined.{% endif %}</div>{% endif %}
-{% if run.aes_plaintext_capture and (run.aes_plaintext_capture.captured_artifacts or run.aes_plaintext_capture.omitted_transforms) %}
-<h2>Decrypted memory</h2><div class="panel{% if run.aes_plaintext_capture.omitted_transforms %} error{% endif %}">
-{{ run.aes_plaintext_capture.captured_artifacts }} plaintext artifacts ({{ run.aes_plaintext_capture.captured_bytes }} bytes) captured.
-{% if run.aes_plaintext_capture.omitted_transforms %}{{ run.aes_plaintext_capture.omitted_transforms }} transforms ({{ run.aes_plaintext_capture.omitted_bytes }} bytes) omitted by the capture budget; inspect the transform events for hashes and reasons.{% endif %}
-</div>{% endif %}
-{% if run.artifact_capture and run.artifact_capture.omitted_observations %}
-<h2>Artifact capture limits</h2><div class="panel error">{{ run.artifact_capture.omitted_observations }} observations ({{ run.artifact_capture.omitted_bytes }} bytes) were not retained.
-<pre>{{ run.artifact_capture.reasons|tojson(indent=2) }}</pre>
-{% if run.artifact_capture.examples %}<pre>{{ run.artifact_capture.examples|tojson(indent=2) }}</pre>{% endif %}</div>{% endif %}
-{% if run.network_broker_complete is sameas false %}<div class="panel error">Network broker log was recovered after an interrupted shutdown and may be incomplete.</div>{% endif %}
-<h2>Console output</h2>
-{% if run.console_output %}
-<div class="panel"><div class="label">Standard output{% if run.console_output.stdout_truncated %} · truncated{% endif %}</div>
-{% if run.console_output.stdout %}<pre class="console-text">{{ run.console_output.stdout }}</pre>{% else %}<div class="muted">No stdout captured.</div>{% endif %}</div>
-<div class="panel"><div class="label">Standard error{% if run.console_output.stderr_truncated %} · truncated{% endif %}</div>
-{% if run.console_output.stderr %}<pre class="console-text">{{ run.console_output.stderr }}</pre>{% else %}<div class="muted">No stderr captured.</div>{% endif %}</div>
-{% else %}<div class="empty">No console capture in this report.</div>{% endif %}
-{% if run.cil_coverage %}
-<h2>Observed CIL opcodes</h2><p class="muted">Counts show interpreter dispatch attempts during this run. They do not prove that .NET behavior is fully modeled. An unsupported operation appears in Coverage limits and errors above.</p>
-{% if run.cil_coverage.top_opcodes %}<table><thead><tr><th>Opcode</th><th>Attempts</th></tr></thead><tbody>
-{% for item in run.cil_coverage.top_opcodes %}<tr><td><code>{{ item.opcode }}</code></td><td>{{ item.count }}</td></tr>{% endfor %}
-</tbody></table>{% else %}<div class="empty">No CIL opcodes were dispatched.</div>{% endif %}
-{% if run.cil_coverage.other_opcode_attempts %}<p class="muted">{{ run.cil_coverage.other_opcode_attempts }} attempts are outside the top 100 opcode names.</p>{% endif %}
-<h2>Observed framework calls</h2><p class="muted">These method counts include attempted calls that may have failed. Names are limited to 256 characters; at most 1,024 names are tracked.</p>
-{% if run.cil_coverage.top_framework_calls %}<table><thead><tr><th>Method</th><th>Attempts</th></tr></thead><tbody>
-{% for item in run.cil_coverage.top_framework_calls %}<tr><td><code>{{ item.method }}</code></td><td>{{ item.count }}</td></tr>{% endfor %}
-</tbody></table>{% else %}<div class="empty">No external framework calls were reached.</div>{% endif %}
-{% if run.cil_coverage.other_framework_calls %}<p class="muted">{{ run.cil_coverage.other_framework_calls }} calls are outside the displayed names{% if run.cil_coverage.untracked_framework_calls %}; {{ run.cil_coverage.untracked_framework_calls }} exceeded the name tracking limit{% endif %}.</p>{% endif %}
-{% else %}
-<h2>Observed WinAPI calls</h2><p class="muted">This trace shows APIs reached during the run. A traced call does not prove that its modeled side effects match Windows. Signature-only calls have no modeled side effects.</p>
-{% if run.api_coverage and run.api_coverage.observed_calls is defined %}
-{% if run.api_coverage.observed_calls %}<table><thead><tr><th>API</th><th>Calls</th><th>Signature-only calls</th></tr></thead><tbody>
-{% for item in run.api_coverage.observed_calls %}<tr><td><code>{{ item.api }}</code></td><td>{{ item.count }}</td><td>{{ item.signature_only_count }}</td></tr>{% endfor %}
-</tbody></table>{% else %}<div class="empty">No native WinAPI calls were traced.</div>{% endif %}
-{% if run.api_coverage.other_calls %}<p class="muted">{{ run.api_coverage.other_calls }} additional calls are outside the top 100 API names; see the engine report for the full trace.</p>{% endif %}
-{% else %}<div class="empty">Per-API call counts were not recorded for this run.</div>{% endif %}
-{% if run.api_coverage and run.api_coverage.signature_only_calls %}<h2>Signature-only API calls</h2><div class="panel"><pre>{{ run.api_coverage.signature_only_calls|tojson(indent=2) }}</pre></div>{% endif %}
-{% endif %}
-<h2>Network broker events <span class="muted">({{ broker_event_count }})</span></h2>
-<p class="muted">Showing {{ broker_first }}–{{ broker_last }} of {{ broker_event_count }} · page {{ broker_page }} of {{ broker_pages }}.
-{% if broker_page > 1 %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page, broker_page=broker_page - 1) }}">Previous broker page</a>{% endif %}
-{% if broker_page < broker_pages %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page, broker_page=broker_page + 1) }}">Next broker page</a>{% endif %}</p>
-{% if run.network_attempts %}<h2>Network attempts <span class="muted">({{ run.network_attempts|length }} shown{% if run.network_attempts_omitted %}; {{ run.network_attempts_omitted }} omitted by the summary cap{% endif %})</span></h2><div class="panel"><pre>{{ run.network_attempts|tojson(indent=2) }}</pre></div>{% endif %}
-{% if broker_events %}<table><thead><tr><th>Type</th><th>Details</th></tr></thead><tbody>
-{% for event in broker_events %}<tr><td><span class="pill">{{ event.event or 'event' }}</span></td><td><pre>{{ event|tojson(indent=2) }}</pre></td></tr>{% endfor %}
-</tbody></table>{% else %}<div class="empty">No broker events in this report.</div>{% endif %}
-<h2>Extracted artifacts</h2>{% if run.artifact_groups is defined and run.artifact_groups %}<table><thead><tr><th>Type and preview</th><th>Observations</th><th>Size</th><th>SHA-256</th><th>Download</th></tr></thead><tbody>
-{% for a in run.artifact_groups %}<tr><td>{{ a.kind }} <span class="muted">({{ a.preview_encoding }})</span>{% if a.pe_metadata %}<pre>{{ a.pe_metadata|tojson(indent=2) }}</pre>{% endif %}<pre>{{ a.preview }}</pre></td><td>{% for observation in a.observations %}<div>{{ observation.stage or 'observation' }} · {{ observation.source }}{% if observation.guest_path %} · {{ observation.guest_path }}{% endif %}{% if observation.context %}<pre>{{ observation.context|tojson(indent=2) }}</pre>{% endif %}</div>{% endfor %}</td><td>{{ a.size }}</td><td><code>{{ a.sha256 }}</code></td><td><a href="/runs/{{ run.id }}/artifacts/{{ a.file }}">Download</a></td></tr>{% endfor %}
-</tbody></table>{% elif run.artifacts %}<table><thead><tr><th>Type</th><th>Source</th><th>Guest path</th><th>Size</th><th>SHA-256</th><th>Download</th></tr></thead><tbody>{% for a in run.artifacts %}<tr><td>{{ a.kind }}</td><td>{{ a.source }}</td><td>{{ a.guest_path or '—' }}</td><td>{{ a.size }}</td><td><code>{{ a.sha256 }}</code></td><td><a href="/runs/{{ run.id }}/artifacts/{{ a.file }}">Download</a></td></tr>{% endfor %}</tbody></table>{% else %}<div class="empty">No artifacts recovered.</div>{% endif %}
-<h2>Events <span class="muted">({{ event_count }})</span></h2><p class="muted">Events with execution ticks are ordered by tick. Virtual event ticks inferred from matching API calls are marked. Events without a tick follow the timed sequence. Showing {{ event_first }}–{{ event_last }} of {{ event_count }} · page {{ events_page }} of {{ event_pages }}.
-{% if events_page > 1 %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page - 1, broker_page=broker_page) }}">Previous event page</a>{% endif %}
-{% if events_page < event_pages %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page + 1, broker_page=broker_page) }}">Next event page</a>{% endif %}</p>
-{% if events %}<table><thead><tr><th>Type</th><th>Details</th></tr></thead><tbody>
-{% for event in events %}<tr><td><span class="pill">{{ event.event or 'event' }}</span></td><td><pre>{{ event|tojson(indent=2) }}</pre></td></tr>{% endfor %}
-</tbody></table>{% else %}<div class="empty">No events in the engine report.</div>{% endif %}
-</main></body></html>
-"""
+from .dashboard_ui import STYLE, INDEX, COMPARE, DETAIL, ERROR, ui_number, ui_datetime
 
 
 def _run_dir(root: Path, run_id: str) -> Path:
@@ -452,8 +305,21 @@ def _compare_runs(left: dict, right: dict, left_engine: dict | None = None,
 def create_app(root: Path) -> Flask:
     root = root.resolve()
     app = Flask(__name__)
+    app.jinja_env.filters["ui_number"] = ui_number
+    app.jinja_env.filters["ui_datetime"] = ui_datetime
     app.config["MAX_CONTENT_LENGTH"] = 1024
     app.config["TRUSTED_HOSTS"] = ["localhost", "127.0.0.1"]
+
+    @app.errorhandler(400)
+    @app.errorhandler(404)
+    def report_error(error):
+        code = error.code
+        title = "Check your request" if code == 400 else "This report is unavailable"
+        message = ("A filter or page number is invalid. Return to the run library and try again."
+                   if code == 400 else
+                   "The run, page, or verified artifact could not be found. Return to the run library to choose an available report.")
+        return render_template_string(ERROR, title=title, message=message,
+                                      code=code, style=STYLE), code
 
     @app.after_request
     def headers(response):
@@ -531,7 +397,12 @@ def create_app(root: Path) -> Flask:
                                       previous_page=previous_page, next_page=next_page,
                                       sha_filter=sha_filter, status_filter=status_filter,
                                       kind_filter=kind_filter, behavior_filter=behavior_filter,
-                                      sort_order=sort_order, style=STYLE)
+                                      sort_order=sort_order, style=STYLE,
+                                      status_counts=Counter(run["status"] for run in runs),
+                                      review_count=sum(run["status"] in {"partial", "failed", "timeout"}
+                                                       for run in runs),
+                                      artifact_total=sum(len(run.get("artifact_groups") or
+                                                             run.get("artifacts") or []) for run in runs))
 
     @app.get("/compare")
     def compare():

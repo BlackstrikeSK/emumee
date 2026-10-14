@@ -19,19 +19,76 @@ def _align(value: int, boundary: int) -> int:
     return (value + boundary - 1) // boundary * boundary
 
 
-def enumeration_text(name: str, persona: dict) -> str:
-    """Render the initial, no-switch command view from one persona snapshot."""
+def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
+    """Render one supported command view from the persona snapshot."""
     if name == "ipconfig.exe":
         adapter = persona["network_adapter"]
         mask = ipaddress.IPv4Network(
             (adapter["ipv4"], adapter["prefix_length"]), strict=False).netmask
         suffix = "" if persona["domain"] == "WORKGROUP" else persona["domain"]
-        return ("\r\nWindows IP Configuration\r\n\r\n"
+        basic = ("\r\nWindows IP Configuration\r\n\r\n"
                 f"Ethernet adapter {adapter['name']}:\r\n\r\n"
                 f"   Connection-specific DNS Suffix  . : {suffix}\r\n"
                 f"   IPv4 Address. . . . . . . . . . . : {adapter['ipv4']}\r\n"
                 f"   Subnet Mask . . . . . . . . . . . : {mask}\r\n"
                 f"   Default Gateway . . . . . . . . : {adapter['gateway']}\r\n")
+        if not arguments:
+            return basic
+        if arguments.casefold() == "/all":
+            dns = "\r\n".join(
+                f"   DNS Servers . . . . . . . . . . : {server}" if index == 0
+                else f"                                       {server}"
+                for index, server in enumerate(adapter["dns_servers"]))
+            return ("\r\nWindows IP Configuration\r\n\r\n"
+                    f"   Host Name . . . . . . . . . . . : {persona['hostname']}\r\n"
+                    f"   Primary Dns Suffix  . . . . . . : {suffix}\r\n\r\n"
+                    f"Ethernet adapter {adapter['name']}:\r\n\r\n"
+                    f"   Description . . . . . . . . . . : {adapter['description']}\r\n"
+                    f"   Physical Address. . . . . . . . : {adapter['mac']}\r\n"
+                    f"   DHCP Enabled. . . . . . . . . . : {'Yes' if adapter['dhcp_enabled'] else 'No'}\r\n"
+                    f"   Connection-specific DNS Suffix  . : {suffix}\r\n"
+                    f"   IPv4 Address. . . . . . . . . . . : {adapter['ipv4']}\r\n"
+                    f"   Subnet Mask . . . . . . . . . . . : {mask}\r\n"
+                    f"   Default Gateway . . . . . . . . : {adapter['gateway']}\r\n"
+                    f"{dns}\r\n")
+        raise ValueError("unsupported ipconfig arguments")
+    if name == "getmac.exe" and not arguments:
+        adapter = persona["network_adapter"]
+        return ("\r\nPhysical Address    Transport Name\r\n"
+                "=================== ==========================================================\r\n"
+                f"{adapter['mac']:19} \\Device\\Tcpip_{adapter['guid']}\r\n")
+    if name == "route.exe":
+        if not arguments:
+            return "Manipulates network routing tables.\r\nUsage: route print\r\n"
+        if arguments.casefold() not in {"print", "print -4"}:
+            raise ValueError("unsupported route arguments")
+        adapter = persona["network_adapter"]
+        subnet = ipaddress.IPv4Network(
+            (adapter["ipv4"], adapter["prefix_length"]), strict=False)
+        mac = adapter["mac"].replace("-", " ").lower()
+        rows = (
+            ("0.0.0.0", "0.0.0.0", adapter["gateway"], adapter["ipv4"]),
+            (str(subnet.network_address), str(subnet.netmask), "On-link", adapter["ipv4"]),
+            (adapter["ipv4"], "255.255.255.255", "On-link", adapter["ipv4"]),
+        )
+        table = "".join(f"{dest:>20} {mask:>20} {gateway:>20} {interface:>20}     25\r\n"
+                        for dest, mask, gateway, interface in rows)
+        return ("===========================================================================\r\n"
+                "Interface List\r\n"
+                f" {adapter['if_index']:2}...{mac} ......{adapter['description']}\r\n"
+                "===========================================================================\r\n"
+                "IPv4 Route Table\r\n"
+                "===========================================================================\r\n"
+                "Active Routes:\r\n"
+                "Network Destination        Netmask          Gateway       Interface  Metric\r\n"
+                f"{table}"
+                "===========================================================================\r\n")
+    if name == "tzutil.exe":
+        if not arguments:
+            return "Displays or configures the system time zone.\r\nUsage: tzutil /g\r\n"
+        if arguments.casefold() == "/g":
+            return persona["timezone"] + "_dstoff\r\n"
+        raise ValueError("unsupported tzutil arguments")
     if name == "systeminfo.exe":
         cpu = persona["cpu"]
         return (f"Host Name:                 {persona['hostname']}\r\n"
@@ -56,10 +113,25 @@ def enumeration_text(name: str, persona: dict) -> str:
     raise ValueError(f"unknown guest enumeration program: {name}")
 
 
-def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437) -> bytes:
-    """Build a minimal PE that writes fixed guest text through WriteFile."""
-    data = output.encode(f"cp{code_page}", errors="replace")
-    if not data or len(data) > _MAX_TEXT:
+def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
+                     variants: dict[str, str] | None = None) -> bytes:
+    """Build a PE that selects bounded guest text by exact command argument."""
+    variants = variants or {}
+    if len(variants) > 2 or any(not key or not key.isascii() or "\0" in key
+                               for key in variants):
+        raise ValueError("guest utility argument variants are invalid")
+    outputs = [("", output), *variants.items()]
+    data = bytearray()
+    output_records = []
+    for argument, text in outputs:
+        encoded = text.encode(f"cp{code_page}", errors="replace")
+        output_records.append((argument, 0x3000 + len(data), len(encoded)))
+        data.extend(encoded)
+    argument_rvas = {}
+    for argument in variants:
+        argument_rvas[argument] = 0x3000 + len(data)
+        data.extend(argument.encode("ascii") + b"\0")
+    if not output or len(data) > _MAX_TEXT:
         raise ValueError("guest utility output exceeds limit")
     machine = 0x8664 if is_x64 else 0x14C
     base = 0x190000000 if is_x64 else 0x600000
@@ -108,7 +180,8 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437) -> byte
     step = 8 if is_x64 else 4
     struct.pack_into("<IIIII", image, 0x400, 0x2040, 0, 0, 0x20C0, 0x2080)
     image[0x4C0:0x4CD] = b"KERNEL32.dll\0"
-    names = (b"GetStdHandle", b"WriteFile", b"ExitProcess", b"GetCommandLineA")
+    names = (b"GetStdHandle", b"WriteFile", b"ExitProcess", b"GetCommandLineA",
+             b"lstrcmpiA")
     cursor = 0x4E0
     for index, name in enumerate(names):
         rva = 0x2000 + cursor - 0x400
@@ -139,7 +212,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437) -> byte
 
     if is_x64:
         code.extend(b"\x48\x83\xec\x38")
-    call(3)  # GetCommandLineA; reject switches until modeled explicitly.
+    call(3)  # GetCommandLineA; inspect only the arguments after the image name.
     code.extend(b"\x48\x89\xc6" if is_x64 else b"\x89\xc6")
     code.extend(b"\x80\x3e\x22")
     branch(b"\x0f\x85", "unquoted")
@@ -148,9 +221,12 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437) -> byte
     code.extend(b"\x80\x3e\x00")
     branch(b"\x0f\x84", "no_args")
     code.extend(b"\x80\x3e\x22")
-    branch(b"\x0f\x84", "after_token")
+    branch(b"\x0f\x84", "after_quote")
     code.extend(b"\x48\xff\xc6" if is_x64 else b"\x46")
     branch(b"\xe9", "quoted")
+    label("after_quote")
+    code.extend(b"\x48\xff\xc6" if is_x64 else b"\x46")
+    branch(b"\xe9", "after_token")
     label("unquoted")
     code.extend(b"\x80\x3e\x00")
     branch(b"\x0f\x84", "no_args")
@@ -167,16 +243,42 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437) -> byte
     branch(b"\x0f\x84", "skip_space")
     code.extend(b"\x80\x3e\x09")
     branch(b"\x0f\x84", "skip_space")
-    branch(b"\xe9", "unsupported_args")
+    branch(b"\xe9", "check_variants")
     label("skip_space")
     code.extend(b"\x48\xff\xc6" if is_x64 else b"\x46")
     branch(b"\xe9", "after_token")
+    label("check_variants")
+    for index, argument in enumerate(variants, 1):
+        if is_x64:
+            code.extend(b"\x48\x89\xf1\x48\xba" +
+                        struct.pack("<Q", base + argument_rvas[argument]))
+        else:
+            code.extend(b"\x68" + struct.pack("<I", base + argument_rvas[argument]) +
+                        b"\x56")
+        call(4)  # lstrcmpiA
+        code.extend(b"\x85\xc0")
+        branch(b"\x0f\x84", f"variant_{index}")
+    branch(b"\xe9", "unsupported_args")
+
+    def select_output(rva: int, length: int) -> None:
+        if is_x64:
+            code.extend(b"\x48\xbf" + struct.pack("<Q", base + rva) +
+                        b"\xbb" + struct.pack("<I", length))
+        else:
+            code.extend(b"\xbf" + struct.pack("<I", base + rva) +
+                        b"\xbd" + struct.pack("<I", length))
+        branch(b"\xe9", "write_output")
+
     label("no_args")
+    select_output(output_records[0][1], output_records[0][2])
+    for index, (_, rva, length) in enumerate(output_records[1:], 1):
+        label(f"variant_{index}")
+        select_output(rva, length)
+    label("write_output")
     if is_x64:
         code.extend(b"\xb9\xf5\xff\xff\xff")
         call(0)
-        code.extend(b"\x48\x89\xc1\x48\xba" + struct.pack("<Q", base + 0x3000))
-        code.extend(b"\x41\xb8" + struct.pack("<I", len(data)))
+        code.extend(b"\x48\x89\xc1\x48\x89\xfa\x41\x89\xd8")
         code.extend(b"\x49\xb9" + struct.pack("<Q", base + count_rva))
         code.extend(b"\x48\xc7\x44\x24\x20\0\0\0\0")
         call(1)
@@ -192,8 +294,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437) -> byte
         call(0)
         code.extend(b"\x89\xc3\x6a\0")
         code.extend(b"\x68" + struct.pack("<I", base + count_rva))
-        code.extend(b"\x68" + struct.pack("<I", len(data)))
-        code.extend(b"\x68" + struct.pack("<I", base + 0x3000) + b"\x53")
+        code.extend(b"\x55\x57\x53")
         call(1)
         code.extend(b"\x85\xc0")
         branch(b"\x0f\x84", "write_failed")
@@ -217,6 +318,15 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437) -> byte
 def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     """Return generated guest executables for the current persona snapshot."""
     code_page = oem_code_page(persona["locale"])
-    return {name: console_text_exe(is_x64, enumeration_text(name, persona),
-                                   code_page=code_page)
-            for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe")}
+    result = {}
+    for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
+                 "route.exe", "tzutil.exe"):
+        commands = ({"ipconfig.exe": ("/all",),
+                     "route.exe": ("print", "print -4"),
+                     "tzutil.exe": ("/g",)}.get(name, ()))
+        variants = {argument: enumeration_text(name, persona, argument)
+                    for argument in commands}
+        result[name] = console_text_exe(
+            is_x64, enumeration_text(name, persona), code_page=code_page,
+            variants=variants)
+    return result

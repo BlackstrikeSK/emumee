@@ -1,5 +1,6 @@
 """Generated enumeration programs execute as guest children from persona data."""
 
+import ipaddress
 import json
 import tempfile
 import unittest
@@ -36,9 +37,51 @@ class EnumerationProgramTests(unittest.TestCase):
                                     item["success"] and item["api"].endswith("CreateProcessW")
                                     for item in report["virtual_process_events"]))
 
+    def test_winexec_ipconfig_all_uses_guest_persona(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            for command in (b"ipconfig.exe /all\0",
+                            b'"C:\\Windows\\System32\\ipconfig.exe" /all\0'):
+                with self.subTest(arch=arch, command=command), tempfile.TemporaryDirectory() as directory:
+                    persona = load_persona(None)
+                    parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                    parent[0x700:0x900] = b"\0" * 0x200
+                    parent[0x700:0x700 + len(command)] = command
+                    payload = bytes(parent)
+                    result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                        persona, Path(directory), [], 10, 100_000)
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["console_output"]["stdout"],
+                                     enumeration_text("ipconfig.exe", persona, "/all"))
+
+    def test_winexec_route_and_timezone_queries_use_custom_persona(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            for name, arguments in (("route.exe", "print -4"),
+                                    ("tzutil.exe", "/g")):
+                with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    custom = root / "persona.json"
+                    custom.write_text(json.dumps({
+                        "timezone": "W. Europe Standard Time",
+                        "utc_offset_minutes": 60,
+                        "network_adapter": {"ipv4": "192.168.8.42",
+                                            "gateway": "192.168.8.1"},
+                    }), encoding="utf-8")
+                    persona = load_persona(custom)
+                    parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                    parent[0x700:0x900] = b"\0" * 0x200
+                    command = f"{name} {arguments}\0".encode("ascii")
+                    parent[0x700:0x700 + len(command)] = command
+                    payload = bytes(parent)
+                    result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                        persona, root / "run", [], 10, 100_000)
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["console_output"]["stdout"],
+                                     enumeration_text(name, persona, arguments))
+
     def test_generated_programs_run_as_guest_children_on_both_architectures(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
-            for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe"):
+            for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe",
+                         "getmac.exe", "route.exe", "tzutil.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -46,6 +89,8 @@ class EnumerationProgramTests(unittest.TestCase):
                         "hostname": "DESKTOP-TEST432",
                         "user_name": "Morgan",
                         "windows_build": 26100,
+                        "timezone": "W. Europe Standard Time",
+                        "utc_offset_minutes": 60,
                         "processes": ["System", "explorer.exe", "OneDrive.exe"],
                         "network_adapter": {"name": "Office Ethernet",
                                             "ipv4": "192.168.8.42",
@@ -78,6 +123,21 @@ class EnumerationProgramTests(unittest.TestCase):
         ipconfig = enumeration_text("ipconfig.exe", persona)
         self.assertIn(persona["network_adapter"]["ipv4"], ipconfig)
         self.assertIn(persona["network_adapter"]["gateway"], ipconfig)
+        detailed = enumeration_text("ipconfig.exe", persona, "/all")
+        getmac = enumeration_text("getmac.exe", persona)
+        self.assertIn(persona["network_adapter"]["mac"], detailed)
+        self.assertIn(persona["network_adapter"]["mac"], getmac)
+        self.assertIn(persona["network_adapter"]["guid"], getmac)
+        route = enumeration_text("route.exe", persona, "print -4")
+        self.assertIn(persona["network_adapter"]["gateway"], route)
+        self.assertIn(str(persona["network_adapter"]["if_index"]), route)
+        subnet = ipaddress.IPv4Network(
+            (persona["network_adapter"]["ipv4"],
+             persona["network_adapter"]["prefix_length"]), strict=False)
+        self.assertIn(str(subnet.network_address), route)
+        self.assertIn(str(subnet.netmask), route)
+        self.assertEqual(enumeration_text("tzutil.exe", persona, "/g"),
+                         persona["timezone"] + "_dstoff\r\n")
         systeminfo = enumeration_text("systeminfo.exe", persona)
         self.assertIn(persona["hostname"], systeminfo)
         self.assertIn(str(persona["windows_build"]), systeminfo)
@@ -86,17 +146,25 @@ class EnumerationProgramTests(unittest.TestCase):
             self.assertIn(process["name"], tasklist)
             self.assertIn(str(process["pid"]), tasklist)
 
-    def test_unmodeled_switches_fail_without_persona_output(self):
+    def test_ipconfig_all_and_unmodeled_switches(self):
         persona = load_persona(None)
         for arch in ("x86", "x64"):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
                 image = enumeration_programs(arch == "x64", persona)["ipconfig.exe"]
-                result = run_native(image, inspect_pe(image, "ipconfig.exe"), persona,
-                                    Path(directory), [], 10, 100_000,
-                                    guest_args=["/all"])
-                self.assertFalse(result["errors"])
-                self.assertEqual(result["guest_exit_code"], 87)
-                self.assertEqual(result["console_output"]["stdout"], "")
+                for argument in ("/all", "/ALL", "/release"):
+                    with self.subTest(argument=argument):
+                        result = run_native(image, inspect_pe(image, "ipconfig.exe"),
+                                            persona, Path(directory) / argument[1:],
+                                            [], 10, 100_000, guest_args=[argument])
+                        self.assertFalse(result["errors"])
+                        if argument.casefold() == "/all":
+                            self.assertEqual(result["guest_exit_code"], 0)
+                            self.assertEqual(result["console_output"]["stdout"],
+                                             enumeration_text("ipconfig.exe", persona,
+                                                              "/all"))
+                        else:
+                            self.assertEqual(result["guest_exit_code"], 87)
+                            self.assertEqual(result["console_output"]["stdout"], "")
 
     def test_non_ascii_owner_uses_persona_console_code_page(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -112,6 +180,42 @@ class EnumerationProgramTests(unittest.TestCase):
             self.assertEqual(result["guest_exit_code"], 0)
             self.assertIn("Registered Owner:          Jörg",
                           result["console_output"]["stdout"])
+
+    def test_route_print_reads_persona_and_add_is_rejected(self):
+        persona = load_persona(None)
+        for arch in ("x86", "x64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                image = enumeration_programs(arch == "x64", persona)["route.exe"]
+                for index, argument in enumerate(("print", "print -4", "add 0.0.0.0")):
+                    result = run_native(image, inspect_pe(image, "route.exe"), persona,
+                                        Path(directory) / str(index), [], 10, 100_000,
+                                        guest_args=argument.split())
+                    self.assertFalse(result["errors"])
+                    if argument.startswith("print"):
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text("route.exe", persona, argument))
+                    else:
+                        self.assertEqual(result["guest_exit_code"], 87)
+                        self.assertEqual(result["console_output"]["stdout"], "")
+
+    def test_tzutil_query_runs_in_guest_and_mutating_command_fails(self):
+        persona = load_persona(None)
+        for arch in ("x86", "x64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                image = enumeration_programs(arch == "x64", persona)["tzutil.exe"]
+                for argument in ("/g", "/s"):
+                    result = run_native(image, inspect_pe(image, "tzutil.exe"), persona,
+                                        Path(directory) / argument[1:], [], 10, 100_000,
+                                        guest_args=[argument])
+                    self.assertFalse(result["errors"])
+                    if argument == "/g":
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text("tzutil.exe", persona, "/g"))
+                    else:
+                        self.assertEqual(result["guest_exit_code"], 87)
+                        self.assertEqual(result["console_output"]["stdout"], "")
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

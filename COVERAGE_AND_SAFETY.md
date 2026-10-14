@@ -3,16 +3,24 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`systeminfo.exe`, and `tasklist.exe` files in guest System32, alongside the
-existing generated `hostname.exe` and `whoami.exe`. Their PE instructions call
-guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `route.exe`, and `tzutil.exe` files
+in guest System32, alongside the
+existing generated `hostname.exe` and `whoami.exe`. The six newer PE instructions call
+guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; the
+`ipconfig /all` dispatcher also calls guest `lstrcmpiA`. Their
 output bytes are derived only from the selected persona. Direct guest child
 launches through `WinExec` on both architectures printed custom persona values,
 matched the generated output exactly, and added a guest child entry point.
 The `tasklist` rows use the same names, PIDs, and session mapping as the persona
-process configuration. A supplied `/all` argument to generated `ipconfig.exe`
-exited 87 without output on both architectures; other switches are likewise
-unmodeled. These are bounded no-switch guest utilities, separate from the real
+process configuration. Generated `ipconfig.exe /all` prints the persona's
+hostname, adapter description, MAC address, DHCP flag, IPv4 settings, and DNS
+servers. Bare-name and quoted full-path `WinExec` launches reached that output
+on both architectures. A supplied `/release` argument exited 87 without output;
+other switches are likewise unmodeled. Generated `route.exe print` and
+`route.exe print -4` print the persona's IP Helper route snapshot; `route add`
+exits 87 without changing guest or host routes. Generated `tzutil.exe /g`
+prints the configured fixed-offset time zone; `/s` exits 87. `getmac.exe`, `systeminfo.exe`,
+and `tasklist.exe` currently support their no-switch view only. These are bounded guest utilities, separate from the real
 Microsoft binaries staged in earlier compatibility probes. They do not read or
 launch host binaries, and process or network changes made after run setup are
 not reflected in their initial snapshots.
@@ -39,7 +47,7 @@ Successful guest registry writes now remain visible when a configured key is reo
 
 The guest now models the documented `GetIfTable`, `GetIpAddrTable`, and `GetIpNetTable` buffer contracts. The interface row reports the persona Ethernet index, MTU, MAC, description, and 1 Gbit/s speed. The IPv4 address row uses the same address, mask, and index as the adapter and route models. The neighbor table contains a static subnet broadcast mapping; it does not invent a gateway MAC, and returns `ERROR_NO_DATA` for a `/31` network. These are bounded one-interface subsets; loopback and real network traffic counters remain unmodeled. The table layouts and size/error paths follow Microsoft's [GetIfTable](https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getiftable), [GetIpAddrTable](https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getipaddrtable), and [GetIpNetTable](https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getipnettable) documentation. Focused source tests cover both pointer widths, exact row bytes, null and short buffers, unmapped outputs, custom persona addresses, and the `/31` case.
 
-A bounded `msvcrt._strupr` model uppercases a guest string in place using single-byte CP1252 mappings and checks write access before changing the buffer. A locally staged x64 Microsoft `route.exe print -4` source probe advanced past its former `_strupr` blocker and printed the interface and route-table headings, then stopped at undocumented `nsi.NsiAllocateAndGetTable`; a `FormatMessageW` insert also remains unsupported on its error path. Route listing is not verified. A source x64 `ipconfig.exe` regression at `output/real-ipconfig-network-table-regression` printed the persona Ethernet address, mask, and gateway with no recorded errors. The 65 focused network, CRT, and persona tests pass. Microsoft binaries are local test inputs and are not distributed.
+A bounded `msvcrt._strupr` model uppercases a guest string in place using single-byte CP1252 mappings and checks write access before changing the buffer. A locally staged x64 Microsoft `route.exe print -4` source probe advanced past its former `_strupr` blocker and printed the interface and route-table headings, then stopped at undocumented `nsi.NsiAllocateAndGetTable`; a `FormatMessageW` insert also remains unsupported on its error path. The staged Microsoft binary's route listing is not verified. A source x64 `ipconfig.exe` regression at `output/real-ipconfig-network-table-regression` printed the persona Ethernet address, mask, and gateway with no recorded errors. The 65 focused network, CRT, and persona tests pass. Microsoft binaries are local test inputs and are not distributed.
 
 ## 2026-10-14 guest IPv4 routes and API-set DLL loading
 

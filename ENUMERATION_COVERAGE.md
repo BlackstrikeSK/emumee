@@ -33,6 +33,7 @@ and shared mutable Windows state are not modeled. See
 | [`nslookup.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/nslookup) | Yes | Noninteractive A, AAAA, and PTR queries against the offline guest DNS catalog; IPv4 reverse lookup; optional explicit primary persona DNS server |
 | [`ping.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/ping) | Yes | IPv4 address or offline DNS name, optional `-4`, `-n 1..16`, `-l 0..4096`, and `-w 0..60000`; replies from guest identity or explicit ICMP fixtures |
 | [`tracert.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/tracert) | Yes | IPv4 address or offline DNS name, `-d`, `-4`, `-h 1..255`, `-w 0..60000`; three probes per hop, offline PTR names, configured router replies and silent hops |
+| [`pathping.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/pathping) | Yes | IPv4 route discovery, independent router echo statistics, `-n`, `-4`, `-h`, `-q`, `-p`, `-w`, offline names and persona loss patterns |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
@@ -74,7 +75,7 @@ but it is not included by default unless the table above says so.
 | `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
 | `ping.exe` beyond the listed forms | IPv6, continuous probing, other IP options, and error replies | ICMPv6, errors other than TTL expiry in transit, fragmentation, and additional flags remain unmodeled; unsupported command forms exit 87. |
 | `tracert.exe` beyond the listed forms | IPv6, source routing, and other IP options | ICMPv6, source address/route selection, ECMP, and non-TTL ICMP errors remain unmodeled; unsupported flags exit 87. |
-| `pathping.exe` | Route discovery and hop statistics | Per-hop loss measurement and its command parser are still needed. Not included by default. |
+| `pathping.exe` beyond the listed forms | IPv6, source address and loose source route selection | Parallel probe scheduling, correlated forwarding loss, and topology changes are not modeled. |
 | `nslookup.exe` beyond the listed forms | Other record types, search suffixes, other servers, and interactive commands | SRV, MX, TXT, CNAME chains, recursive resolution, and interactive mode remain unmodeled; unsupported command forms exit 87. |
 | `cmdkey.exe` beyond `/list` | Target filters and credential changes | A dynamic guest credential store and command parser; unsupported forms exit 87. |
 | `klist.exe` beyond the listed forms | Other logon IDs, sessions, `tgt`, bindings, and cache changes | More guest LSA session and cache models are needed. Encoded tickets and usable keys are not modeled; unsupported forms exit 87. |
@@ -198,6 +199,38 @@ exit 87. Traceroute uses no raw socket, resolver, or host executable. Its ICMP
 events include destination, requested TTL, status, and responding router address,
 and advance only virtual time. The generated x86/x64 PEs are built with
 [`tools/build_guest_tracert.ps1`](tools/build_guest_tracert.ps1).
+
+Guest `pathping.exe` discovers up to 30 hops by default, retrying a silent hop
+up to three times. It then sends 100 echo requests to each discovered address.
+The supported case-sensitive switches accept `-` or `/`: `n` disables PTR
+lookups, `4` selects IPv4, `h` accepts 1..255, `q` accepts 1..1000 queries,
+and `p` and `w` accept 0..60000 milliseconds (defaults 250 and 3000).
+No arguments or `/?` prints help. Unsupported forms exit 87, name/API failures
+exit 1, and a completed bounded trace exits 0 regardless of reachability.
+
+An ICMP destination fixture can optionally supply `reply_pattern`, a nonempty
+list of at most 1024 booleans. Valid destination echo probes cycle through
+this pattern in order, independently per process and address. False entries
+time out; true entries still obey `responds` and the configured RTT/timeout.
+TTL-expired hop responses do not consume the destination's pattern. Patterns
+also affect `ping.exe` and `tracert.exe` destination probes. Process exit clears
+the counters. Set separate `icmp_responses` entries for discovered routers to
+control their echo responses: a TTL-expired router fixture does not itself
+enable direct pings to that router.
+
+Pathping's Source to Here loss and RTT come from its actual modeled echo
+results. Its This Node/Link columns infer sustained downstream loss using
+suffix minima of measured loss counts, and local loss from the remainder.
+Unknown hops leave affected link estimates unknown. These estimates cannot
+establish a physical link fault or correlated packet forwarding behavior.
+The model schedules probes sequentially and advances virtual time for replies,
+timeouts, and `p`; it does not reproduce Windows' parallel timing. Large query
+sets can exhaust the existing instruction, time, or trace budgets and are
+reported as incomplete. The PowerShell bridge allows 60 seconds and ten
+million instructions for pathping; network observations beyond 2048 are
+explicitly flagged as truncated. No host wait, executable, DNS resolver, or
+socket is used. See [the loss persona](examples/loss-persona.json) and
+[`tools/build_guest_pathping.ps1`](tools/build_guest_pathping.ps1).
 
 The utility supports `nslookup <name>`, `-type=A`, `-type=AAAA`, `-type=PTR`, and
 IPv4 reverse lookups. An explicit server must be the configured primary guest

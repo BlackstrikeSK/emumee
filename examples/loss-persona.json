@@ -1,0 +1,19 @@
+{
+  "hostname": "LOSS-PC-42",
+  "clock_utc": "2026-10-14T12:00:00Z",
+  "dns_records": [
+    {"name": "loss.example", "type": "A", "data": "203.0.113.9", "ttl": 60},
+    {"name": "1.1.168.192.in-addr.arpa", "type": "PTR", "data": "router.example", "ttl": 60}
+  ],
+  "icmp_responses": [
+    {
+      "address": "203.0.113.9", "round_trip_ms": 10, "ttl": 57,
+      "reply_pattern": [true, true, false, true, false],
+      "hops": [{"address": "192.168.1.1", "round_trip_ms": 1, "ttl": 64}]
+    },
+    {
+      "address": "192.168.1.1", "round_trip_ms": 1, "ttl": 64,
+      "reply_pattern": [true, false, false, false]
+    }
+  ]
+}

@@ -9,7 +9,7 @@
 #include <icmpapi.h>
 #include <windns.h>
 
-static WCHAR image[1024], args[9][256], number[12], target[256];
+static WCHAR image[1024], args[17][256], number[12], target[256];
 static BYTE request[32], reply[4200];
 static IP_OPTION_INFORMATION options;
 
@@ -98,6 +98,7 @@ static int reverse_name(IPAddr ip, WCHAR *name) {
     return count != 0;
 }
 
+#ifndef EMUMEE_ROUTE_HELPERS_ONLY
 void WINAPI entry(void) {
     const WCHAR *cursor = GetCommandLineW();
     DWORD argc = 0, max_hops = 30, timeout = 4000, flags = 0;
@@ -181,4 +182,5 @@ void WINAPI entry(void) {
     print(L"\r\nTrace complete.\r\n");
     ExitProcess(0);
 }
+#endif
 

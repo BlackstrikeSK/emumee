@@ -110,7 +110,7 @@ Linux `whoami` or `hostname` when Windows enumeration tools are unavailable.
 that option it uses the default Windows persona. The validated persona is
 limited to 4 MiB in transfer, and never becomes an image layer or host mount.
 
-All 41 bundled utilities listed in [the enumeration inventory](ENUMERATION_COVERAGE.md)
+All 42 bundled utilities listed in [the enumeration inventory](ENUMERATION_COVERAGE.md)
 are exposed as native Linux shims. Each shim invokes the guest's isolated
 Python and Emumee CPU emulator with the generated x64 Windows PE and original
 argument array. There is no host process, host resolver, arbitrary PE path,
@@ -126,6 +126,15 @@ probes and four offline DNS queries, with no network use and no execution
 errors. The external observer finished; command coverage remains partial.
 Evidence is `output/tracert-package/powershell-demo-verification.json` and
 dashboard run `20261014T233621Z-4a046654`.
+
+The pathping counterpart is `examples/powershell-pathping.ps1` with
+`--persona examples/loss-persona.json`. Its constructed command uses four
+queries per known hop and prints measured 75% router loss and 50% destination
+loss. The final rebuilt CLI and live dashboard retained all ten ICMP probes
+and the evaluated argument array, with zero network use and no run errors.
+Evidence is `output/pathping-package/powershell-demo-verification.json` and
+dashboard run `20261014T235327Z-98731d0f`. Inferred link figures do not establish
+a physical network fault.
 
 The guest bootstrap sets persona COMPUTERNAME, USERNAME, USERDOMAIN (the local
 account's computer name), USERPROFILE, SystemRoot, and windir values. Native

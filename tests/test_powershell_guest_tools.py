@@ -31,6 +31,7 @@ COMMANDS = {
     'wbadmin.exe':['get','versions'], 'wevtutil.exe':['el'], 'where.exe':['hostname.exe'],
     'whoami.exe':['/all'], 'wmic.exe':['os','get','Version','/value'],
     'tracert.exe':['-d','-h','1','localhost'],
+    'pathping.exe':['-n','-h','1','-q','2','-p','0','localhost'],
 }
 
 
@@ -215,6 +216,26 @@ whoami.exe
         self.assertEqual([e['request_ttl'] for e in echoes],[ttl for ttl in range(1,33) for _ in range(3)])
         self.assertTrue(all(e['network_used'] is False for e in echoes))
         self.assertIn('Trace complete.',report['console_output']['stdout'])
+
+    def test_pathping_measures_persona_loss_and_shows_evaluated_arguments(self):
+        from tests.test_pathping import persona
+        report,run=self.execute("& ('path'+'ping.exe') -n -h 2 -q 4 -p 0 -w 20 loss.example",persona())
+        self.assertEqual(report['errors'],[])
+        self.assertEqual(report['guest_exit_code'],0)
+        models=[c for c in report['command_events'] if c['capture']=='guest_windows_emulation']
+        self.assertEqual(len(models),1)
+        self.assertEqual(models[0]['command'],'pathping.exe')
+        self.assertEqual(models[0]['unbound_arguments'],['-n','-h','2','-q','4','-p','0','-w','20','loss.example'])
+        self.assertTrue(models[0]['persona_matches_baseline'])
+        echoes=[e for e in report['network_events'] if e['event']=='guest_icmp_echo']
+        self.assertEqual(len(echoes),10)
+        self.assertTrue(all(e['network_used'] is False for e in echoes))
+        self.assertIn('3/4 = 75%',report['console_output']['stdout'])
+        client=create_app(run.parent).test_client()
+        page=client.get(f'/runs/{run.name}?commands_page=2')
+        self.assertEqual(page.status_code,200)
+        for value in ('pathping.exe','loss.example','3/4 = 75%','Source to Here'):
+            self.assertIn(value,page.get_data(as_text=True))
 
 
 if __name__=='__main__':

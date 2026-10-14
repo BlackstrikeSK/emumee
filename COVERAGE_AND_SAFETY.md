@@ -5,7 +5,7 @@
 The experimental `powershell` CLI accepts supplied scripts inside Docker
 Desktop's offline Linux VM. It captures evaluated parameters from a pinned,
 instrumented engine and native exec arguments through an external observer.
-Its required guest-tools build exposes all 41 bundled Windows enumeration
+Its required guest-tools build exposes all 42 bundled Windows enumeration
 utilities through the same persona-backed x64 PE CPU/API models inside the
 guest. Dynamic command names, nested evaluation, splatting, native argument
 boundaries, offline DNS/ICMP, timeout retention, and the dashboard have been
@@ -16,6 +16,27 @@ tamper resistance is not established. See
 [POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md) for evidence and limits.
 
 ## Worker build receipt and packaged utility assets
+
+On 2026-10-15 (Europe/Berlin), pathping and deterministic ICMP reply patterns
+passed **89 source/integration tests** and **85 packaged utility cases** (42
+utilities on each architecture plus source CLI ping). After correcting an
+overflow in the displayed duration estimate, the final artifacts passed four
+native pathping tests, the PowerShell loss/dashboard integration test, two
+packaged routed-loss cases, and the CLI/live-dashboard example. Evidence is
+`output/pathping-verification.log`,
+`output/pathping-package/final-85/verification.json`,
+`output/pathping-final-native-tests.log`,
+`output/pathping-final-container-tests.log`,
+`output/pathping-package/final-routed/verification.json`, and
+`output/pathping-package/powershell-demo-verification.json`.
+The final worker SHA-256 is
+`4110c1052d927f0d5c447dd4ccded65f4c4d3d2a8b65fe9168e907ea0c06a0d6`;
+its receipt matches current source and all 20 native assets. The scoped scan
+found zero explicit AppContainer SID grants, private broker journals, or
+packaged worker processes across 600 directories and 9,889 files
+(`output/pathping-package/cleanup-scan.txt`). Link-loss attribution remains an
+estimate derived from offline probe outcomes; parallel Windows probe timing
+and correlated forwarding loss are not modeled.
 
 The offline traceroute addition passed **84 source/integration tests** on
 2026-10-14 UTC, including all 41 utilities called from confined PowerShell,

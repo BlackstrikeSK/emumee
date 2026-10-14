@@ -25,7 +25,7 @@ def validate_icmp_responses(persona):
     seen = set()
     for record in records:
         if (not isinstance(record, dict) or not {"address", "round_trip_ms", "ttl"} <= set(record) or
-                set(record) - {"address", "round_trip_ms", "ttl", "hops", "responds"} or
+                set(record) - {"address", "round_trip_ms", "ttl", "hops", "responds", "reply_pattern"} or
                 not isinstance(record["address"], str) or type(record["round_trip_ms"]) is not int or
                 not 0 <= record["round_trip_ms"] <= 60000 or type(record["ttl"]) is not int or
                 not 1 <= record["ttl"] <= 255 or type(record.get("responds", True)) is not bool):
@@ -39,6 +39,10 @@ def validate_icmp_responses(persona):
                 _broadcast(persona, address) or address in seen):
             raise ValueError("Persona icmp_responses address is duplicate, reserved, or guest-owned")
         seen.add(address)
+        pattern = record.get("reply_pattern", [True])
+        if (not isinstance(pattern, list) or not 1 <= len(pattern) <= 1024 or
+                any(type(reply) is not bool for reply in pattern)):
+            raise ValueError("Persona icmp_responses reply_pattern must contain 1..1024 booleans")
         hops = record.get("hops", [])
         if not isinstance(hops, list) or len(hops) > 254:
             raise ValueError("Persona icmp_responses hops must contain at most 254 entries")
@@ -64,6 +68,7 @@ class GuestICMP:
         self.clock = clock
         self.responses = {r["address"]: r for r in persona["icmp_responses"]}
         self.handles = set()
+        self.reply_counters = {}
         self.next_handle = 0xE6100000
         self.events = []
         self.read_guard = None
@@ -161,6 +166,14 @@ class GuestICMP:
                     reply_host, reply_status = response["address"], IP_TTL_EXPIRED_TRANSIT
             elif not response.get("responds", True):
                 response = None
+            elif "reply_pattern" in response:
+                key = self._owner(emu), host
+                index = self.reply_counters.get(key, 0)
+                self.reply_counters[key] = index + 1
+                pattern = response["reply_pattern"]
+                event["reply_pattern_index"] = index % len(pattern)
+                if not pattern[index % len(pattern)]:
+                    response = None
         elapsed = response["round_trip_ms"] if response is not None else timeout
         success = response is not None and elapsed <= timeout
         if self.clock is not None:
@@ -182,3 +195,4 @@ class GuestICMP:
 
     def cleanup_process(self, _emu, process):
         self.handles = {entry for entry in self.handles if entry[0] != id(process)}
+        self.reply_counters = {key: value for key, value in self.reply_counters.items() if key[0] != id(process)}

@@ -45,7 +45,8 @@ def emulate(program: str, arguments: list[str], persona_path: Path) -> tuple[dic
     with tempfile.TemporaryDirectory(prefix='emumee-tool-', dir='/tmp') as directory:
         with open(os.devnull, 'w') as silent, contextlib.redirect_stdout(silent), contextlib.redirect_stderr(silent):
             result = run_native(image, inspect_pe(image, name), persona, Path(directory), [],
-                                30 if name == 'tracert.exe' else 10,
+                                60 if name == 'pathping.exe' else 30 if name == 'tracert.exe' else 10,
+                                10_000_000 if name == 'pathping.exe' else
                                 2_000_000 if name == 'tracert.exe' else 500_000, guest_args=arguments)
         with (Path(directory) / result['engine_report']).open('rb') as stream:
             raw_report = stream.read(16 * 1024 * 1024 + 1)

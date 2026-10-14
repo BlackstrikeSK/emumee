@@ -58,7 +58,7 @@ but it is not included by default unless the table above says so.
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
 | `wmic.exe` beyond the listed views | More aliases, properties, filters, and formats | WMI COM providers, remote targets, changes, and arbitrary WQL remain unmodeled. Unsupported requests exit 87. |
-| `auditpol.exe` beyond the listed forms | Named category/subcategory filters, per-user policy, options, ACLs, and changes | Guest audit policy APIs, an effective-token permission check, and dynamic policy changes remain unmodeled. Unsupported forms exit 87. |
+| `auditpol.exe` beyond the listed forms | Named category/subcategory filters, per-user policy, options, ACLs, and changes | An effective-token permission check and dynamic policy changes remain unmodeled. Unsupported command forms exit 87. |
 | `w32tm.exe` | Time service configuration and peer status | Guest Windows Time service state and peer metadata. Not included by default. |
 | `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
 | `ping.exe`, `tracert.exe`, `pathping.exe` | Network reachability and route discovery | Guest ICMP and route-hop simulation, with attempted operations logged. Not included by default. |
@@ -98,7 +98,30 @@ unless this flag or the persona admin flag is set. Category and subcategory
 names can be listed without that grant. This permission view does not evaluate
 Windows policy security descriptors or current-token elevation. Text and CSV
 derive from the same snapshot; host policy is never read. Names are English,
-and the real Windows audit policy API family is still a separate coverage gap.
+and policy mutation, per-user policy, SACLs, and security descriptors remain
+separate coverage gaps.
+
+Guest `AuditQuerySystemPolicy` returns the same settings as contiguous
+`AUDIT_POLICY_INFORMATION` records, in the requested GUID order. Guest
+`AuditEnumerateCategories`, `AuditEnumerateSubCategories`, ANSI/Unicode
+category/subcategory name lookup, and category GUID/ID conversion share the
+same category catalog. These APIs use the same static read-permission view as
+the command. Responses are bounded, allocated in guest memory, owned by the
+requesting guest process, and released by `AuditFree` or process exit. Invalid
+or foreign pointers cannot release another guest process's response. The
+current model rejects `AuditSetSystemPolicy` with `ERROR_NOT_SUPPORTED`.
+
+Build and run the harmless x86/x64 API fixtures with:
+
+```powershell
+.\tools\build_audit_api_probe.ps1
+.venv\Scripts\python.exe -m tools.verify_audit_api
+```
+
+The verifier uses CPU emulation for both direct and child execution and saves
+evidence under `output/audit-api-verification`. Fixture executables are never
+started as host processes. See Microsoft's [policy query API](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-auditquerysystempolicy)
+and [policy record layout](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/ns-ntsecapi-audit_policy_information).
 
 For example:
 

@@ -30,6 +30,7 @@ from .network_adapter import GuestNetworkAdapter
 from .feature_config import GuestFeatureConfiguration
 from .cpu import VirtualCPU
 from .identity import GuestIdentity
+from .audit import GuestAudit
 from .guest_programs import hostname_exe
 from .enumeration_programs import enumeration_programs
 from .network import NetworkBridge
@@ -767,6 +768,7 @@ def run_native(
     guest_delay_imports = GuestDelayImports()
     guest_tokens = GuestTokens(persona)
     guest_lsa = GuestLSA(persona)
+    guest_audit = GuestAudit(persona)
     guest_network_adapter = GuestNetworkAdapter(persona)
     guest_network_adapter.network_bridge = bridge
     guest_feature_configuration = GuestFeatureConfiguration()
@@ -791,6 +793,10 @@ def run_native(
     guest_lsa.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
     guest_lsa.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
+    guest_audit.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    guest_audit.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     guest_identity.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
@@ -834,6 +840,7 @@ def run_native(
     def cleanup_guest_process(emu, process):
         bridge.cleanup_process(process)
         guest_lsa.cleanup_process(emu, process)
+        guest_audit.cleanup_process(emu, process)
         guest_identity.cleanup_process(process)
         crt_streams.cleanup_process(process)
         crt_startup.cleanup_process(process)
@@ -867,6 +874,7 @@ def run_native(
         guest_delay_imports.install(se)
         guest_tokens.install(se)
         guest_lsa.install(se)
+        guest_audit.install(se)
         # Speakeasy models the x86 MSVC operator delete decoration, while
         # modern x64 binaries import this different decoration.
         se.add_api_hook(

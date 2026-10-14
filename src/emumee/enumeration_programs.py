@@ -290,6 +290,33 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
                             f"Device Count:       {count}\r\n")
             return "\r\n".join(rows) + "\r\n"
         raise ValueError("unsupported pnputil arguments")
+    if name == "gpresult.exe":
+        argument = arguments.casefold()
+        if not argument:
+            return ("Microsoft (R) Windows (R) Operating System Group Policy Result tool\r\n"
+                    "Usage: gpresult /r [/scope user | /scope computer]\r\n")
+        scopes = {"/r": ("computer", "user"),
+                  "/scope user /r": ("user",),
+                  "/r /scope user": ("user",),
+                  "/scope computer /r": ("computer",),
+                  "/r /scope computer": ("computer",)}.get(argument)
+        if scopes is None:
+            raise ValueError("unsupported gpresult arguments")
+        hostname = persona["hostname"]
+        user = persona["user_name"]
+        rows = ["Microsoft (R) Windows (R) Operating System Group Policy Result tool",
+                f"RSOP data for {hostname}\\{user} on {hostname} : Logging Mode", ""]
+        for scope in scopes:
+            target = hostname if scope == "computer" else f"{hostname}\\{user}"
+            rows.extend((f"{scope.upper()} SETTINGS", "-----------------",
+                         f"Applied Group Policy Objects for {target}",
+                         "-------------------------------------------"))
+            names = persona["group_policy"][scope]
+            rows.extend(f"    {name}" for name in names)
+            if not names:
+                rows.append("    N/A")
+            rows.append("")
+        return "\r\n".join(rows) + "\r\n"
     if name == "bcdedit.exe":
         argument = arguments.casefold()
         if argument not in {"", "/enum", "/enum active", "/v",
@@ -699,7 +726,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
-                 "fltmc.exe", "pnputil.exe"):
+                 "fltmc.exe", "pnputil.exe", "gpresult.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -729,6 +756,8 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "fltmc.exe": ("filters", "instances", "volumes"),
                      "pnputil.exe": ("/enum-drivers", "-e", "/enum-devices",
                                      "/enum-devices /connected", "/enum-classes"),
+                     "gpresult.exe": ("/r", "/scope user /r", "/r /scope user",
+                                      "/scope computer /r", "/r /scope computer"),
                      "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)

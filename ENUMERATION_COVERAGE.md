@@ -23,6 +23,7 @@ never change host state.
 | [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | Yes | `el` and `gl <simple channel>` through guest registry APIs |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
 | [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | Yes | `/enum-drivers`, legacy `-e`, `/enum-devices`, `/enum-devices /connected`, `/enum-classes` from guest driver packages and devices |
+| [`gpresult.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult) | Yes | `/r`, `/scope user /r`, `/scope computer /r` and the equivalent `/r /scope ...` order from guest applied policy lists |
 | [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Yes | Default, `filters`, `instances`, `volumes` from guest minifilters and C: volume |
 | `tasklist.exe` | Yes | Default persona process snapshot and `/svc` service to process view |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
@@ -54,7 +55,7 @@ but it is not included by default unless the table above says so.
 | `fltmc.exe` beyond the listed forms | Named filters or instances, frames, loading, unloading, and attachment changes | A dynamic guest Filter Manager and more than one volume. |
 | `wevtutil.exe` beyond the listed forms | `qe`, `gli`, publishers, remote queries, and changes | A guest event record store and live status model; only channel names and configuration are modeled. |
 | `bcdedit.exe` beyond the listed forms | `/enum all`, other identifiers, BCD store paths, and changes | A full guest Boot Configuration Data store; the included PE currently renders two configured active entries. |
-| [`gpresult.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult) | `/r` | Guest applied policy and RSoP data for the persona user and computer. |
+| `gpresult.exe` beyond the listed forms | `/v`, `/z`, `/h`, `/x`, remote targets, and other users | Guest policy settings and RSoP details, report files, and remote policy data are not modeled. |
 | `driverquery.exe` beyond the listed forms | `/si`, combined flags, and remote queries | Signed driver data, more output modes, and `.sys` guest files remain unmodeled; driver images are not executed. |
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
@@ -149,6 +150,11 @@ instance ID with the network adapter, and each package has synthetic guest
 INF metadata under `C:\Windows\INF`. The package store is separate from the
 running-driver list used by `driverquery.exe`. Unsupported queries and change
 commands exit 87 without accessing a host device or driver store.
+
+Generated `gpresult.exe /r` reads the persona's `group_policy` computer and
+user applied-policy lists. The scope forms show only the selected list.
+Remote targets, detailed policy settings, and report file writes exit 87;
+the utility never queries host Group Policy or RSoP data.
 
 Generated `fltmc.exe` reads the persona's `minifilters` list, whose names must
 refer to running file-system driver records. The same records create guest

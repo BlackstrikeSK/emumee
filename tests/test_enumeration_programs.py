@@ -16,6 +16,63 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_gpresult_reports_only_guest_applied_policies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            config.write_text(json.dumps({
+                "hostname": "DESKTOP-GUEST1", "user_name": "Morgan",
+                "group_policy": {"computer": ["Guest Computer Baseline"],
+                                 "user": ["Guest User Baseline"]}}),
+                encoding="utf-8")
+            persona = load_persona(config)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["gpresult.exe"]
+                    pe = inspect_pe(image, "gpresult.exe")
+                    for index, (args, included, excluded) in enumerate((
+                            (["/r"], ("Guest Computer Baseline", "Guest User Baseline"), ()),
+                            (["/scope", "user", "/r"], ("Guest User Baseline",),
+                             ("Guest Computer Baseline",)),
+                            (["/r", "/scope", "computer"],
+                             ("Guest Computer Baseline",), ("Guest User Baseline",)))):
+                        result = run_native(image, pe, persona, root / f"{is_x64}-{index}",
+                                            [], 10, 100_000, guest_args=args)
+                        self.assertFalse(result["errors"])
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        output = result["console_output"]["stdout"]
+                        self.assertIn("DESKTOP-GUEST1\\Morgan", output)
+                        for value in included:
+                            self.assertIn(value, output)
+                        for value in excluded + ("Local Group Policy",):
+                            self.assertNotIn(value, output)
+                    result = run_native(image, pe, persona, root / f"{is_x64}-remote",
+                                        [], 10, 100_000,
+                                        guest_args=["/s", "host", "/r"])
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["guest_exit_code"], 87)
+                    self.assertEqual(result["console_output"]["stdout"], "")
+
+    def test_winexec_launches_guest_gpresult(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"gpresult.exe /r\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("Local Group Policy", result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\gpresult.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_pnputil_reports_guest_packages_and_devices(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -35,6 +35,24 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_group_policy_accepts_bounded_local_policy_lists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            path.write_text(json.dumps({"group_policy": {
+                "computer": ["Guest Computer Baseline"],
+                "user": ["Guest User Baseline"]}}), encoding="utf-8")
+            policy = load_persona(path)["group_policy"]
+            self.assertEqual(policy["computer"], ["Guest Computer Baseline"])
+            self.assertEqual(policy["user"], ["Guest User Baseline"])
+            for broken in ({"user": ["bad\nname"]},
+                           {"computer": ["Repeated", "repeated"]},
+                           {"user": ["a"] * 17},
+                           {"remote": ["unsupported"]}):
+                path.write_text(json.dumps({"group_policy": broken}),
+                                encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaises(ValueError):
+                    load_persona(path)
+
     def test_pnp_inventory_links_adapter_package_and_guest_inf(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

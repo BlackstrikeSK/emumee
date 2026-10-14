@@ -62,6 +62,10 @@ DEFAULT_PERSONA = {
         "debug": False,
         "safe_boot": None,
     },
+    "group_policy": {
+        "computer": ["Local Group Policy"],
+        "user": ["Local Group Policy"],
+    },
     "locale": "en-US",
     "timezone": "Eastern Standard Time",
     "utc_offset_minutes": -240,
@@ -183,6 +187,15 @@ def load_persona(path: Path | None) -> dict:
                 raise ValueError("Unknown persona boot_config fields: " +
                                  ", ".join(sorted(unknown_boot)))
             persona["boot_config"].update(boot)
+        if "group_policy" in supplied:
+            policy = supplied.pop("group_policy")
+            if not isinstance(policy, dict):
+                raise ValueError("Persona group_policy must be an object")
+            unknown_policy = set(policy) - set(persona["group_policy"])
+            if unknown_policy:
+                raise ValueError("Unknown persona group_policy fields: " +
+                                 ", ".join(sorted(unknown_policy)))
+            persona["group_policy"].update(policy)
         custom_registry = "registry_keys" in supplied
         refresh_registry = not custom_registry
         if "drivers" in supplied and "minifilters" not in supplied:
@@ -243,6 +256,16 @@ def load_persona(path: Path | None) -> dict:
             not isinstance(boot["debug"], bool) or
             boot["safe_boot"] not in (None, "Minimal", "Network")):
         raise ValueError("Persona boot_config fields are invalid")
+    policy = persona["group_policy"]
+    for scope in ("computer", "user"):
+        entries = policy[scope]
+        if (not isinstance(entries, list) or len(entries) > 16 or
+                any(not isinstance(entry, str) or
+                    not 1 <= len(entry) <= 128 or
+                    any(ord(char) < 32 for char in entry)
+                    for entry in entries) or
+                len({entry.casefold() for entry in entries}) != len(entries)):
+            raise ValueError("Persona group_policy entries are invalid")
     adapter = persona["network_adapter"]
     if (not isinstance(adapter["guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",

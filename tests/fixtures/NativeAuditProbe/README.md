@@ -14,9 +14,9 @@ placeholder token. Run it only through Emumee with explicit offline replay:
 .\emumee.ps1 run .\tests\fixtures\NativeAuditProbe\audit_probe_x64.exe --guest-env EMUMEE_TEST=virtual --offline-replay
 ```
 
-The expected report is `partial`: `schtasks.exe` is absent from the default
-guest filesystem. Its full command is retained in `virtual_process_events`;
-this is evidence of a creation attempt, not a registered task. The registry
+The default guest now has a read-only `schtasks.exe`. The fixture's `/Create`
+attempt launches that guest PE and exits 87 without registering a task. Its
+full command and child exit are retained in `virtual_process_events`. The registry
 events retain the key, value names, types, sizes, and result codes. The binary
 value is recovered as an artifact. The Telegram URL, method, and offline denial
 are retained in both the engine network events and the broker audit log.

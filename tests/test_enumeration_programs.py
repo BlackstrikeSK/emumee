@@ -16,6 +16,52 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_schtasks_queries_use_guest_task_inventory_and_reject_create(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            custom = root / "persona.json"
+            tasks = [
+                {"name": r"\Ops\DailyInventory", "status": "Ready",
+                 "next_run_minutes": 30},
+                {"name": r"\Ops\DisabledTask", "status": "Disabled",
+                 "next_run_minutes": None},
+            ]
+            custom.write_text(json.dumps({
+                "clock_utc": "2026-10-14T12:00:00Z", "utc_offset_minutes": 60,
+                "scheduled_tasks": tasks,
+            }), encoding="utf-8")
+            persona = load_persona(custom)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["schtasks.exe"]
+                    self.assertEqual(inspect_pe(image, "schtasks.exe").architecture,
+                                     "x64" if is_x64 else "x86")
+                    for index, (args, expected) in enumerate((
+                            (["/query"], "\\Ops\\DailyInventory"),
+                            (["/query", "/fo", "LIST"], "TaskName:      \\Ops\\DailyInventory"),
+                            (["/query", "/fo", "CSV"], '"\\Ops\\DisabledTask"'),
+                            (["/query", "/tn", r"\Ops\DailyInventory"],
+                             "\\Ops\\DailyInventory"))):
+                        result = run_native(image, inspect_pe(image, "schtasks.exe"),
+                                            persona, root / f"{is_x64}-{index}", [],
+                                            10, 100_000, guest_args=args)
+                        self.assertFalse(result["errors"])
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertIn(expected, result["console_output"]["stdout"])
+                        if index == 0:
+                            self.assertIn("10/14/2026 01:30:00 PM",
+                                          result["console_output"]["stdout"])
+                            self.assertIn("N/A", result["console_output"]["stdout"])
+                        self.assertNotIn("Windows Defender Scheduled Scan",
+                                         result["console_output"]["stdout"])
+                    rejected = run_native(image, inspect_pe(image, "schtasks.exe"),
+                                          persona, root / f"{is_x64}-create", [],
+                                          10, 100_000,
+                                          guest_args=["/Create", "/TN", "HostTask"])
+                    self.assertFalse(rejected["errors"])
+                    self.assertEqual(rejected["guest_exit_code"], 87)
+                    self.assertEqual(rejected["console_output"]["stdout"], "")
+
     def test_netstat_reads_guest_tcp_table_on_both_architectures(self):
         original = GuestNetworkAdapter._get_extended_tcp_table
 
@@ -194,6 +240,7 @@ class EnumerationProgramTests(unittest.TestCase):
                                     ("net.exe", "localgroup administrators"),
                                     ("net1.exe", "user"),
                                     ("sc.exe", "query WinDefend"),
+                                    ("schtasks.exe", "/query"),
                                     ("reg.exe", r'query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"')):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
@@ -228,13 +275,14 @@ class EnumerationProgramTests(unittest.TestCase):
             for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
                          "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
                          "tzutil.exe", "query.exe", "quser.exe", "qwinsta.exe",
-                         "net.exe", "net1.exe", "sc.exe"):
+                         "net.exe", "net1.exe", "sc.exe", "schtasks.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
                     custom.write_text(json.dumps({
                         "hostname": "DESKTOP-TEST432",
                         "user_name": "Morgan",
+                        "clock_utc": "2026-10-14T12:00:00Z",
                         "windows_build": 26100,
                         "timezone": "W. Europe Standard Time",
                         "utc_offset_minutes": 60,

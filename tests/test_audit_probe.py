@@ -40,7 +40,12 @@ class AuditProbeTests(unittest.TestCase):
                      if e["event"] == "virtual_process_create"]
             self.assertEqual(len(tasks), 1)
             self.assertIn("schtasks.exe /Create", tasks[0]["command_line"])
-            self.assertFalse(tasks[0]["success"])
-            self.assertEqual(tasks[0]["reason"], "executable absent from guest filesystem")
+            self.assertTrue(tasks[0]["success"])
+            self.assertEqual(tasks[0]["path"].casefold(),
+                             r"C:\Windows\System32\schtasks.exe".casefold())
+            self.assertTrue(any(event["event"] == "virtual_process_exit" and
+                                event["pid"] == tasks[0]["pid"] and
+                                event["exit_code"] == 87
+                                for event in report["virtual_process_events"]))
             self.assertTrue(any(e.get("url") == TELEGRAM_URL for e in report["network_events"]))
             self.assertEqual(result["guest_exit_code"], 0)

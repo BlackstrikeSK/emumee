@@ -249,6 +249,42 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
             return (" USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME\r\n"
                     f">{persona['user_name']:<21} console             1  Active      none   {stamp}\r\n")
         raise ValueError("unsupported query arguments")
+    if name == "schtasks.exe":
+        selected = persona["scheduled_tasks"]
+        argument = arguments.casefold()
+        if argument.startswith("/query /tn "):
+            task_name = arguments[len("/query /tn "):].strip('"')
+            selected = [task for task in selected
+                        if task["name"].casefold() == task_name.casefold()]
+            if not selected:
+                raise ValueError("unknown guest scheduled task")
+            argument = "/query"
+        if argument not in {"", "/query", "/query /fo list", "/query /fo csv"}:
+            raise ValueError("unsupported schtasks arguments")
+        clock = VirtualClock(persona)
+
+        def next_run(task: dict) -> str:
+            minutes = task["next_run_minutes"]
+            if minutes is None:
+                return "N/A"
+            when = clock.utc + clock.offset + dt.timedelta(minutes=minutes)
+            return when.strftime("%m/%d/%Y %I:%M:%S %p")
+
+        if argument == "/query /fo csv":
+            lines = ['"TaskName","Next Run Time","Status"']
+            for task in selected:
+                lines.append(f'"{task["name"]}","{next_run(task)}","{task["status"]}"')
+            return "\r\n".join(lines) + "\r\n"
+        if argument == "/query /fo list":
+            return "".join(f"TaskName:      {task['name']}\r\n"
+                           f"Next Run Time: {next_run(task)}\r\n"
+                           f"Status:        {task['status']}\r\n\r\n"
+                           for task in selected) or "INFO: There are no scheduled tasks available.\r\n"
+        lines = ["TaskName                                 Next Run Time          Status",
+                 "======================================== ====================== ==============="]
+        lines.extend(f"{task['name']:<40} {next_run(task):<22} {task['status']}"
+                     for task in selected)
+        return "\r\n".join(lines) + "\r\n"
     if name == "sc.exe":
         if not arguments:
             return "DESCRIPTION:\r\n        SC is a command line program used for communicating with the Service Control Manager.\r\n"
@@ -489,10 +525,14 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
 def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     """Return generated guest executables for the current persona snapshot."""
     code_page = oem_code_page(persona["locale"])
+    render_persona = dict(persona)
+    if render_persona.get("clock_utc") is None:
+        render_persona["clock_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
     result = {}
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
-                 "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe"):
+                 "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
+                 "schtasks.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "arp.exe": ("-a",),
@@ -509,12 +549,17 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "sc.exe": ("query", "query state= all",
                                 *(f"query {service['name']}"
                                   for service in persona["services"][:3])),
+                     "schtasks.exe": ("/query", "/query /fo LIST", "/query /fo CSV",
+                                      *("/query /tn " +
+                                        (f'"{task["name"]}"' if " " in task["name"]
+                                         else task["name"])
+                                        for task in persona["scheduled_tasks"][:2])),
                      "tzutil.exe": ("/g",)}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
-        variants = {argument: enumeration_text(name, persona, argument)
+        variants = {argument: enumeration_text(name, render_persona, argument)
                     for argument in commands}
         result[name] = console_text_exe(
-            is_x64, enumeration_text(name, persona), code_page=code_page,
+            is_x64, enumeration_text(name, render_persona), code_page=code_page,
             variants=variants)
     arch = "x64" if is_x64 else "x86"
     result["reg.exe"] = files("emumee").joinpath(

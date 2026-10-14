@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -71,6 +71,14 @@ guest TCP connections only; `-ano` includes guest PIDs. The local address is
 the persona address and the local port is synthetic, so broker socket ports
 and host network state are not exposed. Guest socket closure and process exit
 remove rows. UDP, listening sockets, IPv6, and other switches remain open.
+
+Generated `schtasks.exe` prints the persona's bounded scheduled-task snapshot.
+It supports the default query, `/query`, `/query /fo LIST`, `/query /fo CSV`,
+and named queries for up to two ASCII task names. Custom task paths, status,
+and next-run offsets are validated before emulation; dates derive from the
+guest clock and fixed time-zone offset. An audit fixture's `/Create` command
+now launches the guest PE and exits 87 without registering a task. Task
+Scheduler APIs, task definition files, and execution remain unmodeled.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`

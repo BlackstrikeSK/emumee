@@ -541,6 +541,27 @@ class PersonaContentTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "service entries"):
                 load_persona(path)
 
+    def test_scheduled_task_inventory_validates_names_and_schedule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            task = {"name": r"\Ops\DailyInventory", "status": "Ready",
+                    "next_run_minutes": 30}
+            path.write_text(json.dumps({"scheduled_tasks": [task]}), encoding="utf-8")
+            self.assertEqual(load_persona(path)["scheduled_tasks"], [task])
+            for broken in (
+                    {**task, "name": r"\Ops\..\escape"},
+                    {**task, "name": r"\Ops\Bad:Name"},
+                    {**task, "next_run_minutes": -1},
+                    {**task, "next_run_minutes": None},
+                    {**task, "status": "Disabled"},
+                    {**task, "status": []},
+            ):
+                path.write_text(json.dumps({"scheduled_tasks": [broken]}),
+                                encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaisesRegex(
+                        ValueError, "scheduled task entries"):
+                    load_persona(path)
+
     def test_binary_virtual_files_are_bounded_and_decoded_exactly(self):
         payload = b"\0\xffPK\x03\x04\0"
         guest_path = r"C:\Users\Alex\Downloads\probe.zip"

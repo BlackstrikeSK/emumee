@@ -18,6 +18,7 @@ never change host state.
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
 | `tasklist.exe` | Yes | Default persona process snapshot |
+| [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
 | `arp.exe` | Yes | `-a` for the modeled IPv4 ARP entry |
 | `route.exe` | Yes | `print`, `print -4` |
 | `netsh.exe` | Yes | `interface ipv4 show config`, `interface ipv4 show dnsservers` |
@@ -41,7 +42,7 @@ but it is not included by default unless the table above says so.
 | --- | --- | --- |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with service, device, and driver file probes. |
-| [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | `/query` | A virtual scheduled-task store and query semantics. |
+| `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
 | `sc.exe` beyond the listed forms | More query options and service changes | A dynamic Service Control Manager model and parser. |
 
@@ -96,6 +97,13 @@ destination, and the owning guest PID. The guest table is cleared as sockets
 close or their owning process exits. It never queries the host socket table or
 reports the broker's host-assigned local port. The default and `-an` forms omit
 the PID; `-ano` includes it. Unmodeled options exit 87.
+
+Generated `schtasks.exe` lists the bounded `scheduled_tasks` persona snapshot.
+Each entry has a task path, Ready or Disabled status, and a next-run offset
+relative to the guest clock; Disabled entries show N/A. The generated program
+does not register, run, or modify tasks. Unsupported `/Create` exits 87 after
+a guest child launch, with no host Task Scheduler call. Task Scheduler APIs,
+on-disk definitions, and live scheduling are not modeled yet.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
 utility inventory. No entry in this file authorizes a guest command to execute

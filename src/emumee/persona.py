@@ -68,6 +68,10 @@ DEFAULT_PERSONA = {
         {"name": "EventLog", "display_name": "Windows Event Log",
          "process": "svchost.exe", "start": 2, "type": 32},
     ],
+    "scheduled_tasks": [
+        {"name": r"\Microsoft\Windows\Defender\Windows Defender Scheduled Scan",
+         "status": "Ready", "next_run_minutes": 480},
+    ],
     "registry_keys": [],
     "virtual_files": [],
 }
@@ -222,6 +226,30 @@ def load_persona(path: Path | None) -> dict:
                 service["type"] not in (16, 32)):
             raise ValueError("Persona service entries are invalid")
         service_names.add(service["name"].casefold())
+    tasks = persona["scheduled_tasks"]
+    if not isinstance(tasks, list) or len(tasks) > 32:
+        raise ValueError("Persona scheduled_tasks must have at most 32 entries")
+    task_names: set[str] = set()
+    for task in tasks:
+        if (not isinstance(task, dict) or
+                set(task) != {"name", "status", "next_run_minutes"} or
+                not isinstance(task["name"], str) or
+                not 2 <= len(task["name"]) <= 128 or
+                not task["name"].startswith("\\") or
+                task["name"].endswith("\\") or
+                any(not part or part in {".", ".."} for part in task["name"][1:].split("\\")) or
+                any(ord(char) < 32 or char in '/:"' for char in task["name"]) or
+                task["name"].casefold() in task_names or
+                not isinstance(task["status"], str) or
+                task["status"] not in {"Ready", "Disabled"} or
+                (task["next_run_minutes"] is not None and
+                 (not isinstance(task["next_run_minutes"], int) or
+                  isinstance(task["next_run_minutes"], bool) or
+                  not 0 <= task["next_run_minutes"] <= 10080)) or
+                (task["status"] == "Disabled" and task["next_run_minutes"] is not None) or
+                (task["status"] == "Ready" and task["next_run_minutes"] is None)):
+            raise ValueError("Persona scheduled task entries are invalid")
+        task_names.add(task["name"].casefold())
     file_names: set[str] = set()
     total_file_bytes = 0
     for item in persona["virtual_files"]:

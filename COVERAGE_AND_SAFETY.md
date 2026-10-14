@@ -1,5 +1,9 @@
 # Coverage, containment, and test plan
 
+## 2026-10-14 guest machine GUID
+
+The default persona now provides `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid` as a `REG_SZ` GUID. It is deterministically derived from the configured guest hostname, has UUID version 4 and RFC variant bits, stays stable when only the guest account name changes, and never reads the host machine's identifier. Persona tests check the default registry value, repeatability, and hostname/account overrides. A locally staged Microsoft x64 `reg.exe` query at `output/real-reg-machineguid-final/20261014T144815Z-36df05f4` returned the exact generated GUID with guest exit 0, empty stderr, zero reported errors, and zero denied operations. The Microsoft binary is not distributed.
+
 ## 2026-10-14 large native reservation probe
 
 Locally staged Microsoft x64 `sort.exe` requested a 0xFFFFE000-byte `VirtualAlloc` reservation while opening the persona shopping list. Speakeasy's installed handler maps even reserve-only requests immediately; the guest API map guard correctly stopped that 4 GiB backing attempt. The `VirtualAlloc` bridge now returns `NULL` with `ERROR_NOT_ENOUGH_MEMORY` for requests above its 32 MiB backing limit, with a failed-allocation event, instead of aborting the entire guest run. A focused test checks that the oversized request never reaches the engine. In the rebuilt package at `output/real-sort-x64-probe2/20261014T142145Z-58c61b85`, `sort.exe` continued to its error path and exited 1 without sorted output. Sparse address-space reservation remains unimplemented, so this is a resource-limit correctness fix, not `sort.exe` compatibility. The probe's error path also exposed signature-only `FormatMessageA` and NTDLL conversion handlers; their effects remain unverified.

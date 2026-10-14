@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import uuid
 
 
 DISPLAY_VERSIONS = {
@@ -167,6 +169,9 @@ def registry_keys(persona: dict) -> list[dict]:
     display = DISPLAY_VERSIONS.get(build)
     cpu = persona["cpu"]
     adapter = persona["network_adapter"]
+    machine_digest = hashlib.sha256(
+        ("emumee-machine:" + persona["hostname"].casefold()).encode("utf-8")).digest()
+    machine_guid = str(uuid.UUID(bytes=machine_digest[:16], version=4))
     subnet_mask = str(ipaddress.IPv4Network(
         (adapter["ipv4"], adapter["prefix_length"]), strict=False).netmask)
 
@@ -200,6 +205,8 @@ def registry_keys(persona: dict) -> list[dict]:
     keys = [
         entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
               *version_values),
+        entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography",
+              value("MachineGuid", machine_guid)),
         entry(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion",
               value("ProgramFilesDir", r"C:\Program Files"),
               value("ProgramFilesDir (x86)", r"C:\Program Files (x86)"),

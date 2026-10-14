@@ -6,6 +6,7 @@ import json
 import struct
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -333,6 +334,13 @@ class PersonaContentTests(unittest.TestCase):
             r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion")
         self.assertEqual(version.get_value("CurrentBuild").get_data(), "22631")
         self.assertEqual(version.get_value("DisplayVersion").get_data(), "23H2")
+        machine = registry.get_key_from_config(
+            r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography")
+        machine_guid = machine.get_value("MachineGuid").get_data()
+        self.assertEqual(uuid.UUID(machine_guid).version, 4)
+        self.assertEqual(machine_guid, next(item for item in persona["registry_keys"]
+                                            if item["path"] == r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography")
+                         ["values"][0]["data"])
         install_paths = registry.get_key_from_config(
             r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion")
         self.assertEqual(install_paths.get_value("ProgramFilesDir").get_data(),
@@ -398,10 +406,32 @@ class PersonaContentTests(unittest.TestCase):
                              'dd.MM.yyyy')
             self.assertEqual(international.get_value('sTimeFormat').get_data(),
                              'HH:mm:ss')
+            machine = registry.get_key_from_config(
+                r'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography')
+            self.assertNotEqual(machine.get_value('MachineGuid').get_data(),
+                                next(item for item in load_persona(None)['registry_keys']
+                                     if item['path'] == r'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography')
+                                ['values'][0]['data'])
             with self.assertRaisesRegex(ValueError, 'utc_offset_minutes'):
                 override.write_text(json.dumps({'utc_offset_minutes': 'invalid'}),
                                     encoding='utf-8')
                 load_persona(override)
+
+    def test_machine_guid_tracks_machine_identity_not_account_name(self):
+        key = r'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography'
+
+        def guid(persona):
+            return next(item for item in persona['registry_keys']
+                        if item['path'] == key)['values'][0]['data']
+
+        default = load_persona(None)
+        with tempfile.TemporaryDirectory() as directory:
+            override = Path(directory) / 'persona.json'
+            override.write_text(json.dumps({'user_name': 'Morgan'}), encoding='utf-8')
+            self.assertEqual(guid(load_persona(override)), guid(default))
+            override.write_text(json.dumps({'hostname': 'DESKTOP-Q3R8V2A'}),
+                                encoding='utf-8')
+            self.assertNotEqual(guid(load_persona(override)), guid(default))
 
     def test_overrides_refresh_dependent_guest_identity(self):
         with tempfile.TemporaryDirectory() as directory:

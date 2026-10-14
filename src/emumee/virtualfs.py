@@ -402,13 +402,14 @@ class VirtualFileBridge:
         emulator.add_api_hook(self._set_end_of_file, "kernel32", "SetEndOfFile", argc=1)
         emulator.add_api_hook(self._set_file_information, "kernel32",
                               "SetFileInformationByHandle", argc=4)
-        for name in ("CreateFileMappingA", "CreateFileMappingW"):
-            emulator.add_api_hook(self._create_file_mapping, "kernel32", name, argc=6)
-        for name in ("OpenFileMappingA", "OpenFileMappingW"):
-            emulator.add_api_hook(self._open_file_mapping, "kernel32", name, argc=3)
-        emulator.add_api_hook(self._map_view_of_file, "kernel32", "MapViewOfFile", argc=5)
-        emulator.add_api_hook(self._unmap_view_of_file, "kernel32", "UnmapViewOfFile", argc=1)
-        emulator.add_api_hook(self._flush_view_of_file, "kernel32", "FlushViewOfFile", argc=2)
+        for module in ("kernel32", "api-ms-win-core-memory-l1-1-0"):
+            for name in ("CreateFileMappingA", "CreateFileMappingW"):
+                emulator.add_api_hook(self._create_file_mapping, module, name, argc=6)
+            for name in ("OpenFileMappingA", "OpenFileMappingW"):
+                emulator.add_api_hook(self._open_file_mapping, module, name, argc=3)
+            emulator.add_api_hook(self._map_view_of_file, module, "MapViewOfFile", argc=5)
+            emulator.add_api_hook(self._unmap_view_of_file, module, "UnmapViewOfFile", argc=1)
+            emulator.add_api_hook(self._flush_view_of_file, module, "FlushViewOfFile", argc=2)
         for name, argc in (("ReadFile", 5), ("WriteFile", 5), ("GetFileSize", 2),
                            ("GetFileSizeEx", 2), ("SetFilePointer", 4),
                            ("SetFilePointerEx", 5)):
@@ -1188,6 +1189,32 @@ class VirtualFileBridge:
         if item is None:
             emu.set_last_error(6)  # ERROR_INVALID_HANDLE
             return 0
+        if getattr(item, "config", None):
+            configured = self._config(manager, item.path)
+            data = self._copy_source_data(item, configured)
+            if data is None or not data:
+                self.unsupported.append(f"{api_name}: configured file bytes unavailable")
+                emu.set_last_error(50)
+                return 0
+            if protection != 2 or not self.file_open_raw_access.get(handle, 0) & (
+                    0x80000000 | 0x10000000):
+                emu.set_last_error(5)
+                return 0
+            if size == 0:
+                size = len(data)
+            if size > len(data):
+                emu.set_last_error(5)
+                return 0
+            item.data = io.BytesIO(data)
+            mapped = manager.file_create_mapping(handle, name, size, protection)
+            self._register_mapping_handle(emu, mapped, inherit)
+            mapping = manager.get_mapping_from_handle(mapped)
+            mapping.size = size
+            self.events.append({"event": "virtual_mapping_create", "handle": mapped,
+                                "path": item.path, "size": size,
+                                "protection": protection, "configured": True})
+            emu.set_last_error(0)
+            return mapped
         if not isinstance(item, SharedGuestFileView):
             self.unsupported.append(f"{api_name}: non-guest file mapping")
             emu.set_last_error(50)
@@ -1419,6 +1446,39 @@ class VirtualFileBridge:
                 emu.set_last_error(5)
                 return 0
         item = mapping.backed_file
+        if getattr(item, "config", None):
+            offset = ((int(params[2]) & 0xffffffff) << 32) | (int(params[3]) & 0xffffffff)
+            length = int(params[4])
+            if (access != 4 or mapping.prot != 2 or offset % 65536 or
+                    offset >= mapping.size or length < 0 or
+                    length and length > mapping.size - offset):
+                emu.set_last_error(87)
+                return 0
+            if not length:
+                length = mapping.size - offset
+            if length > MAX_ARTIFACT or not isinstance(item.data, io.BytesIO):
+                emu.set_last_error(50)
+                return 0
+            cursor = item.data.tell()
+            item.data.seek(0)
+            try:
+                with ExitStack() as allowances:
+                    if self.api_memory_allowance is not None:
+                        for source_view in getattr(mapping, "views", {}).values():
+                            allowances.enter_context(self.api_memory_allowance(
+                                int(source_view.base), int(source_view.size), "r"))
+                    base = int(original([params[0], access, params[2], params[3], length]))
+            finally:
+                item.data.seek(cursor)
+            if base:
+                self._bind_view_to_process(emu, base)
+                self.mapped_guest_view_owners[base] = self._guest_owner(emu)
+                self.mapped_guest_views[base] = (item, offset, length, False)
+                self.mapped_guest_view_sections[base] = mapping
+                self.events.append({"event": "virtual_mapping_view", "base": base,
+                                    "path": item.path, "offset": offset,
+                                    "size": length, "writable": False})
+            return base
         if not isinstance(item, SharedGuestFileView):
             offset = ((int(params[2]) & 0xFFFFFFFF) << 32) | (int(params[3]) & 0xFFFFFFFF)
             length = int(params[4])

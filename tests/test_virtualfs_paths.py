@@ -51,6 +51,43 @@ class _Guest:
 
 
 class FullPathTests(unittest.TestCase):
+    def test_configured_file_mapping_is_read_only_and_process_owned(self):
+        path = r'C:\Users\Alex\Documents\shopping-list.txt'
+        entry = SimpleNamespace(mode='full_path', emu_path=path,
+                                path='persona-shopping')
+        item = SimpleNamespace(path=path, config=entry, data=None)
+        maps = {}
+        def create_mapping(_handle, _name, size, protection):
+            maps[0x280] = SimpleNamespace(size=size, prot=protection,
+                                          backed_file=item)
+            return 0x280
+        manager = SimpleNamespace(
+            file_handles={0x80: item}, file_maps=maps,
+            file_config=SimpleNamespace(files=[entry]),
+            file_create_mapping=create_mapping,
+            get_mapping_from_handle=lambda handle: maps.get(handle))
+        process = object()
+        errors = []
+        emu = SimpleNamespace(get_file_manager=lambda: manager,
+                              get_current_process=lambda: process,
+                              get_ptr_size=lambda: 8,
+                              set_last_error=errors.append)
+        bridge = VirtualFileBridge(r'C:\Users\Alex\Downloads', None,
+                                   {'persona-shopping': b'Milk\nCoffee\nBread\n'})
+        bridge.file_handle_owners[0x80] = {id(process)}
+        bridge.file_open_raw_access[0x80] = 0x80000000
+        call = lambda prot: bridge._create_file_mapping(
+            emu, 'api-ms-win-core-memory-l1-1-0.CreateFileMappingW',
+            lambda _params: self.fail('configured mapping reached default engine'),
+            [0x80, 0, prot, 0, 0, 0])
+        self.assertEqual(call(4), 0)
+        self.assertEqual(errors[-1], 5)
+        self.assertFalse(maps)
+        self.assertEqual(call(2), 0x280)
+        self.assertEqual(maps[0x280].size, 18)
+        self.assertEqual(item.data.getvalue(), b'Milk\nCoffee\nBread\n')
+        self.assertEqual(bridge.mapping_handle_owners[0x280], {id(process)})
+
     def test_find_data_uses_guest_file_size_for_first_and_next(self):
         path = r'C:\Users\Alex\Documents\shopping-list.txt'
         next_path = r'C:\Users\Alex\Documents\notes.txt'

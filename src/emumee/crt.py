@@ -90,6 +90,8 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._wprintf, "msvcrt", "wprintf", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._fwprintf, "msvcrt", "fwprintf", argc=2,
+                              call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fflush, "msvcrt", "fflush", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._fflush, "api-ms-win-crt-private-l1-1-0",
@@ -683,8 +685,23 @@ class LegacyCRTStreams:
 
     def _wprintf(self, emu, api_name, _original, params) -> int:
         """Bounded wide console output for literal text and %s/%S strings."""
+        return self._wide_printf(emu, api_name, params, 0)
+
+    def _fwprintf(self, emu, api_name, _original, params) -> int:
+        """Render a bounded wide format to a modeled standard FILE stream."""
+        return self._wide_printf(emu, api_name, params, 1)
+
+    def _wide_printf(self, emu, api_name, params, format_index: int) -> int:
         try:
-            format_ptr = int(params[0])
+            stream = "stdout"
+            if format_index:
+                stream_pointer = int(emu.get_func_argv(
+                    e_arch.CALL_CONV_CDECL, 1)[0])
+                index = self._standard_index(emu, stream_pointer)
+                if index not in (1, 2):
+                    raise ValueError("nonstandard FILE pointer is not modeled")
+                stream = "stdout" if index == 1 else "stderr"
+            format_ptr = int(params[format_index])
             fmt = self._string(emu, format_ptr, 2)
             parts = []
             specifiers = []
@@ -701,7 +718,10 @@ class LegacyCRTStreams:
                 if match is None:
                     raise ValueError("unsupported wide format specifier")
                 flags, width, precision, length, kind = match.groups()
-                if flags or width or precision is not None or length or kind not in "%sS":
+                if (flags or width or precision is not None or
+                        length not in (None, "l") or
+                        length == "l" and kind != "s" or
+                        kind not in "%sS"):
                     raise ValueError("unsupported wide format options")
                 cursor = match.end()
                 if kind == "%":
@@ -711,15 +731,17 @@ class LegacyCRTStreams:
                     specifiers.append((len(parts) - 1, kind))
                     if len(specifiers) > 64:
                         raise ValueError("wide format argument limit exceeded")
-            args = emu.get_func_argv(e_arch.CALL_CONV_CDECL, len(specifiers) + 1)
-            for index, (part_index, kind) in enumerate(specifiers, 1):
+            args = emu.get_func_argv(
+                e_arch.CALL_CONV_CDECL, len(specifiers) + format_index + 1)
+            for index, (part_index, kind) in enumerate(
+                    specifiers, format_index + 1):
                 parts[part_index] = self._string(emu, int(args[index]),
                                                  2 if kind == "s" else 1)
             rendered = "".join(parts)
             if len(rendered) > _MAX_OUTPUT_CHARS or self.console_write is None:
                 raise ValueError("wide console output exceeds limit or is unavailable")
             written = len(rendered.encode("utf-16le")) // 2
-            self.console_write("stdout", rendered)
+            self.console_write(stream, rendered)
             return written
         except Exception as exc:
             self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")

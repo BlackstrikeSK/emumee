@@ -13,6 +13,16 @@ MAX_ARGUMENTS = 256
 MAX_STARTUP_BYTES = 1 << 20
 
 
+def process_argv(emu, arguments: list[str]) -> list[str]:
+    """Use the active guest process image for argv[0], not another loaded PE."""
+    result = list(arguments)
+    process = emu.get_current_process()
+    path = getattr(process, "path", None)
+    if result and isinstance(path, str) and path:
+        result[0] = path
+    return result
+
+
 class CRTStartup:
     def __init__(self):
         self.unsupported: list[str] = []

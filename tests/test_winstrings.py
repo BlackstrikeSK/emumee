@@ -107,6 +107,10 @@ class WinStringTests(unittest.TestCase):
         self.assertEqual(self.emu.mem_read(0x700, 4), (4).to_bytes(4, 'little'))
         self.assertEqual(call(2), 0x80000005)
         self.assertEqual(self.emu.mem_read(0x700, 4), (2).to_bytes(4, 'little'))
+        self.assertEqual(self.api._oem_to_unicode(
+            self.emu, 'ntdll.RtlOemToUnicodeN', None,
+            [0x600, 0x100000006, 0x700, 0x500, 0x100000002]), 0)
+        self.assertEqual(self.emu.mem_read(0x600, 6), 'A\n\0'.encode('utf-16le'))
         self.emu.mem_write(0x500, b'\xff\n')
         self.assertEqual(call(6), 0xC00000BB)
         self.api.write_guard = lambda _emu, _address, _size: False

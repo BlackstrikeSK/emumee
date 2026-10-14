@@ -112,6 +112,9 @@ class GuestStrings:
 
     def _oem_to_unicode(self, emu, api_name, _original, params) -> int:
         output, capacity, written, source, count = map(int, params)
+        # These length arguments are ULONG, even when the caller is 64-bit.
+        capacity &= 0xffffffff
+        count &= 0xffffffff
         invalid = 0xC000000D  # STATUS_INVALID_PARAMETER
         if (count < 0 or count > MAX_CHARS or capacity < 0 or capacity > MAX_CHARS * 2 or
                 count and not self._access(emu, source, count) or

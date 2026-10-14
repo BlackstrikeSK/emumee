@@ -53,6 +53,27 @@ class LegacyCRTStreamsTests(unittest.TestCase):
         self.assertEqual(output, [("stdout", expected)])
         self.assertIn("unsupported wide format specifier", crt.unsupported[-1])
 
+    def test_fwprintf_routes_wide_text_to_guest_standard_stream(self):
+        emu = _Emulator(8)
+        memory = {}
+        def put(address, data):
+            memory.update({address + index: byte for index, byte in enumerate(data)})
+        put(0x1000, 'Host: %ls\n'.encode('utf-16le') + b'\0\0')
+        put(0x2000, 'DESKTOP-7F4M2Q9'.encode('utf-16le') + b'\0\0')
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        crt = LegacyCRTStreams()
+        base = crt._iob_func(emu, 'msvcrt.__iob_func', None, [])
+        observed = []
+        crt.console_write = lambda stream, value: observed.append((stream, value))
+        emu.get_func_argv = lambda _conv, count: [
+            base + 2 * 48, 0x1000, 0x2000][:count]
+        self.assertEqual(crt._fwprintf(
+            emu, 'msvcrt.fwprintf', None, [base + 2 * 48, 0x1000]),
+            len('Host: DESKTOP-7F4M2Q9\n'))
+        self.assertEqual(observed, [('stderr', 'Host: DESKTOP-7F4M2Q9\n')])
+        self.assertFalse(crt.unsupported)
+
     def test_wcsupr_uppercases_guest_buffer_in_place_with_write_guard(self):
         emu = _Emulator(8)
         memory = {}

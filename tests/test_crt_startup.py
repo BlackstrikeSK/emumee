@@ -1,8 +1,15 @@
 """Initial UCRT environment arrays remain in guest process memory."""
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from emumee.crt_startup import CRTStartup
+from emumee.crt_startup import CRTStartup, process_argv
+from emumee.native import run_native
+from emumee.pe import inspect_pe
+from emumee.persona import load_persona
+from tests.fixtures.build_native import build_crt_args
 
 
 class _Emu:
@@ -42,6 +49,31 @@ class _Emu:
 
 
 class CRTStartupTests(unittest.TestCase):
+    def test_active_guest_image_is_argv_zero_on_both_architectures(self):
+        original = CRTStartup._mainargs
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as temp:
+                observed = []
+                def capture(self, emu, api_name, params, *, wide):
+                    observed.append(emu.get_argv())
+                    return original(self, emu, api_name, params, wide=wide)
+                data = build_crt_args(machine, wide=False)
+                name = "argv_probe.exe"
+                with mock.patch.object(CRTStartup, "_mainargs", capture):
+                    result = run_native(data, inspect_pe(data, name),
+                                        load_persona(None), Path(temp), [],
+                                        10, 100_000, guest_args=["/probe"])
+                self.assertFalse(result["errors"])
+                self.assertEqual(observed, [[r"C:\Users\Alex\Downloads\argv_probe.exe",
+                                             "/probe"]])
+
+    def test_process_argv_keeps_original_when_no_process_path_exists(self):
+        source = ["ntoskrnl.exe", "/probe"]
+        emu = type("Emu", (), {"get_current_process":
+                               lambda _self: type("Process", (), {"path": ""})()})()
+        self.assertEqual(process_argv(emu, source), source)
+        self.assertIsNot(process_argv(emu, source), source)
+
     def test_private_argument_globals_return_pointer_slots(self):
         for width in (4, 8):
             with self.subTest(width=width):

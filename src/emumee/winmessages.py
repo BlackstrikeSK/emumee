@@ -125,7 +125,7 @@ def mui_message(image: bytes, message_id: int, language: int = 0) -> str | None:
                             continue
                         leaf = item.data.struct
                         size = int(leaf.Size)
-                        if size < 16 or size > 65536:
+                        if size < 16 or size > 1024 * 1024:
                             continue
                         raw = pe.get_data(int(leaf.OffsetToData), size)
                         if len(raw) != size:

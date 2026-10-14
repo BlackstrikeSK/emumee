@@ -121,6 +121,8 @@ class VirtualFileBridge:
         self.read_guard = None
         self.write_guard = None
         self.console_write_handler = None
+        self.console_open_handler = None
+        self.console_close_handler = None
         self.captured_large_write_bytes = 0
         # Per-open sharing modes, independent of Speakeasy's cloned file data.
         # A None path denotes an unlinked file that still has a live handle.
@@ -391,7 +393,11 @@ class VirtualFileBridge:
             emulator.add_api_hook(self._set_file_attributes, "kernel32", name, argc=2)
         for name in ("CreateFileA", "CreateFileW"):
             emulator.add_api_hook(self._create_file, "kernel32", name, argc=7)
+            emulator.add_api_hook(self._create_file,
+                                  "api-ms-win-core-file-l1-1-0", name, argc=7)
         emulator.add_api_hook(self._close_handle, "kernel32", "CloseHandle", argc=1)
+        emulator.add_api_hook(self._close_handle,
+                              "api-ms-win-core-handle-l1-1-0", "CloseHandle", argc=1)
         emulator.add_api_hook(self._set_end_of_file, "kernel32", "SetEndOfFile", argc=1)
         emulator.add_api_hook(self._set_file_information, "kernel32",
                               "SetFileInformationByHandle", argc=4)
@@ -488,7 +494,11 @@ class VirtualFileBridge:
                 emu.set_last_error(87)
                 return 0xFFFFFFFF
         width = 2 if api_name.endswith("W") else 1
-        path = self._path(emu.read_mem_string(int(params[0]), width)) if params[0] else ""
+        raw_path = emu.read_mem_string(int(params[0]), width) if params[0] else ""
+        if (self.console_open_handler is not None and
+                raw_path.casefold() in ("conin$", "conout$")):
+            return self.console_open_handler(emu, raw_path, params)
+        path = self._path(raw_path) if raw_path else ""
         existed = bool(path and manager.does_file_exist(path))
         access, share = int(params[1]) & 0xFFFFFFFF, int(params[2]) & 0xFFFFFFFF
         creation_attributes = int(params[5]) & 0xFFFF
@@ -610,6 +620,10 @@ class VirtualFileBridge:
                       owner_override: int | None = None,
                       force: bool = False):
         handle = int(params[0])
+        if self.console_close_handler is not None:
+            closed = self.console_close_handler(emu, handle)
+            if closed is not None:
+                return closed
         manager = emu.get_file_manager()
         if handle in getattr(manager, "file_maps", {}):
             owner = (owner_override if owner_override is not None else

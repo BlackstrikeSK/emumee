@@ -23,7 +23,7 @@ from .artifacts import ArtifactCatalog, MAX_ARTIFACT, MAX_MEMORY_SCAN
 from .clock import VirtualClock
 from .console_output import ConsoleOutput
 from .crt import LegacyCRTStreams
-from .crt_startup import CRTStartup
+from .crt_startup import CRTStartup, process_argv
 from .winenvironment import GuestEnvironmentBlocks
 from .heap_checks import GuestHeapChecks
 from .network_adapter import GuestNetworkAdapter
@@ -811,6 +811,8 @@ def run_native(
     console_output.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     virtual_files.console_write_handler = console_output.observe_write_file
+    virtual_files.console_open_handler = console_output.open_console_handle
+    virtual_files.console_close_handler = console_output.close_console_handle
     virtual_files.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
     virtual_files.write_guard = lambda emu, address, size: virtual_process._cpu_access(
@@ -1813,6 +1815,10 @@ def run_native(
         (run_dir / "worker-stage.txt").write_text("loading native module", encoding="utf-8")
         # data= avoids Speakeasy's automatic mount of the input's host directory.
         module = se.load_module(data=data, filename=info.name)
+        # Speakeasy's argv[0] walks every loaded EXE module and can select its
+        # synthetic ntoskrnl.exe instead of the running guest image.
+        original_get_argv = se.emu.get_argv
+        se.emu.get_argv = lambda: process_argv(se.emu, original_get_argv())
         # Give the hook a normal API dispatch path, which honors a guest detach
         # trampoline instead of forcing an immediate return for unknown exports.
         ntdll = se.emu.api.load_api_handler("ntdll")

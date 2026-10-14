@@ -21,6 +21,7 @@ FIND_FROMEND = 0x00800000
 class GuestStrings:
     def __init__(self):
         self.read_guard = None
+        self.write_guard = None
         self.unsupported: list[str] = []
 
     def install(self, emulator) -> None:
@@ -38,6 +39,35 @@ class GuestStrings:
         for module in ('ucrtbase', 'api-ms-win-crt-private-l1-1-0'):
             emulator.add_api_hook(self._wcschr, module, 'wcschr', argc=2,
                                   call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._trim, 'shlwapi', 'StrTrimW', argc=2)
+
+    def _trim(self, emu, api_name, _original, params) -> int:
+        target, trim_chars = map(int, params)
+        if not target:
+            return 0
+        value = self._read(emu, target, -1, True)
+        chars = self._read(emu, trim_chars, -1, True)
+        if value is None or chars is None:
+            self.unsupported.append(f'{api_name}: inaccessible or unterminated guest string')
+            return 0
+        trimmed = value.strip(chars)
+        if trimmed == value:
+            return 0
+        encoded = trimmed.encode('utf-16le') + b'\0\0'
+        mapping = emu.get_address_map(target)
+        if (mapping is None or mapping.free or
+                target + len(encoded) > int(mapping.base) + int(mapping.size) or
+                not (int(mapping.prot) & common.PERM_MEM_WRITE) or
+                self.write_guard is not None and
+                not self.write_guard(emu, target, len(encoded))):
+            self.unsupported.append(f'{api_name}: guest destination is not writable')
+            return 0
+        try:
+            emu.mem_write(target, encoded)
+        except Exception:
+            self.unsupported.append(f'{api_name}: guest destination is not writable')
+            return 0
+        return 1
 
     def _wcschr(self, emu, api_name, _original, params) -> int:
         address, wanted = map(int, params)

@@ -760,6 +760,8 @@ def run_native(
         emu, address, size, "write")
     guest_strings.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
+    guest_strings.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
     guest_tokens.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
     guest_tokens.write_guard = lambda emu, address, size: virtual_process._cpu_access(

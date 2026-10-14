@@ -27,6 +27,9 @@ class _Emu:
     def mem_read(self, address, size):
         return bytes(self.memory[address:address + size])
 
+    def mem_write(self, address, data):
+        self.memory[address:address + len(data)] = data
+
     def set_last_error(self, code):
         self.last_error = code
 
@@ -71,6 +74,21 @@ class WinStringTests(unittest.TestCase):
             self.emu, 'kernel32.lstrlenW', None, [0x100]), 9)
         self.assertEqual(self.api._length(
             self.emu, 'kernel32.lstrlenW', None, [0]), 0)
+
+    def test_strtrimw_changes_guest_buffer_only_when_needed(self):
+        self.emu.mem_write(0x500, '  Alpha Beta  \0'.encode('utf-16le'))
+        self.emu.mem_write(0x600, ' \0'.encode('utf-16le'))
+        call = lambda: self.api._trim(self.emu, 'shlwapi.StrTrimW', None,
+                                      [0x500, 0x600])
+        self.assertEqual(call(), 1)
+        self.assertEqual(self.api._read(self.emu, 0x500, -1, True), 'Alpha Beta')
+        self.assertEqual(call(), 0)
+        self.api.write_guard = lambda _emu, _address, _size: False
+        self.emu.mem_write(0x500, ' Alpha \0'.encode('utf-16le'))
+        self.assertEqual(call(), 0)
+        self.assertEqual(self.api._read(self.emu, 0x500, -1, True), ' Alpha ')
+        self.assertEqual(self.api._trim(self.emu, 'shlwapi.StrTrimW', None,
+                                        [0, 0x600]), 0)
 
     def test_compare_ascii_with_kana_and_width_flags(self):
         self.emu.memory[0x500:0x50a] = '/ALL\0'.encode('utf-16le')

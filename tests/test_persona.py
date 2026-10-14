@@ -30,6 +30,15 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_guest_path_contains_modeled_windows_directories_and_can_be_overridden(self):
+        persona = load_persona(None)
+        cfg = make_speakeasy_config(persona, "where.exe", 10, 100_000)
+        self.assertEqual(cfg["env"]["path"],
+                         r"C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem")
+        changed = make_speakeasy_config(persona, "where.exe", 10, 100_000,
+                                        guest_env={"PATH": r"C:\Tools"})
+        self.assertEqual(changed["env"]["path"], r"C:\Tools")
+
     def test_computer_name_api_set_uses_persona_dns_domain(self):
         persona = load_persona(None)
         bridge = GuestIdentity(persona)

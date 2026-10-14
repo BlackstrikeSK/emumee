@@ -50,6 +50,7 @@ class LegacyCRTStreams:
         self._ucrt_iob_by_process: dict[int, tuple[int, int]] = {}
         self._mode_by_process: dict[tuple[int, int], int] = {}
         self._errno_by_thread: dict[tuple[int, int], int] = {}
+        self._wcstok_by_thread: dict[tuple[int, int], int] = {}
         self._locale_by_process: dict[int, dict[int, str]] = {}
         self._locale_buffer_by_process: dict[int, int] = {}
         self.read_guard = None
@@ -106,6 +107,58 @@ class LegacyCRTStreams:
         for name in ("strchr", "strrchr", "wcschr", "wcsrchr"):
             emulator.add_api_hook(self._find_character, "msvcrt", name, argc=2,
                                   call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._wcstok, "msvcrt", "wcstok", argc=2,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+
+    def _wcstok(self, emu, api_name, _original, params) -> int:
+        """Legacy two-argument wcstok with guest-thread continuation state."""
+        source, delimiter = map(int, params)
+        process = emu.get_current_process()
+        if process is None or not delimiter:
+            self.unsupported.append(f"{api_name}: invalid tokenizer state or delimiter")
+            return 0
+        thread = emu.get_current_thread() if hasattr(emu, "get_current_thread") else None
+        key = (id(process), id(thread) if thread is not None else id(process))
+        address = source or self._wcstok_by_thread.get(key, 0)
+        if not address:
+            return 0
+        try:
+            encoded = self._string(emu, delimiter, 2).encode("utf-16le")
+            separators = {encoded[index:index + 2]
+                          for index in range(0, len(encoded), 2)}
+            start = 0
+            for index in range(_MAX_FORMAT_CHARS):
+                unit = self._read(emu, address + index * 2, 2)
+                if unit == b"\0\0":
+                    self._wcstok_by_thread[key] = 0
+                    return 0
+                if unit not in separators:
+                    start = index
+                    break
+            else:
+                raise ValueError("token exceeds limit")
+            for index in range(start, _MAX_FORMAT_CHARS):
+                pointer = address + index * 2
+                unit = self._read(emu, pointer, 2)
+                if unit == b"\0\0":
+                    self._wcstok_by_thread[key] = 0
+                    return address + start * 2
+                if unit in separators:
+                    mapping = emu.get_address_map(pointer)
+                    if (mapping is None or mapping.free or
+                            pointer + 2 > int(mapping.base) + int(mapping.size) or
+                            not (int(mapping.prot) & common.PERM_MEM_WRITE) or
+                            self.write_guard is not None and
+                            not self.write_guard(emu, pointer, 2)):
+                        raise ValueError("token delimiter is not writable")
+                    emu.mem_write(pointer, b"\0\0")
+                    self._wcstok_by_thread[key] = pointer + 2
+                    return address + start * 2
+            raise ValueError("token exceeds limit")
+        except Exception:
+            self._wcstok_by_thread[key] = 0
+            self.unsupported.append(f"{api_name}: inaccessible or unterminated guest string")
+            return 0
 
     def _find_character(self, emu, api_name, _original, params) -> int:
         address, value = map(int, params)
@@ -179,6 +232,9 @@ class LegacyCRTStreams:
         for key in tuple(self._errno_by_thread):
             if key[0] == owner:
                 self._errno_by_thread.pop(key, None)
+        for key in tuple(self._wcstok_by_thread):
+            if key[0] == owner:
+                self._wcstok_by_thread.pop(key, None)
 
     def _errno(self, emu, api_name, _original, _params) -> int:
         """Return stable, guest-writable CRT errno storage for this guest thread."""

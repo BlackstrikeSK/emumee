@@ -236,6 +236,7 @@ def make_speakeasy_config(persona: dict, sample_name: str, timeout: int,
         "number_of_processors": str(persona["cpu"]["cores"] *
                                     persona["cpu"]["threads_per_core"]),
         "os": "Windows_NT",
+        "path": r"C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem",
         "temp": f'C:\\Users\\{persona["user_name"]}\\AppData\\Local\\Temp\\',
         "tmp": f'C:\\Users\\{persona["user_name"]}\\AppData\\Local\\Temp\\',
         "appdata": f'C:\\Users\\{persona["user_name"]}\\AppData\\Roaming',

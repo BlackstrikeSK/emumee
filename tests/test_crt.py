@@ -30,6 +30,30 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_wcstok_splits_guest_buffer_and_scopes_continuation_to_thread(self):
+        emu = _Emulator(8)
+        memory = bytearray(0x4000)
+        emu.mem_read = lambda address, size: bytes(memory[address:address + size])
+        emu.mem_write = lambda address, data: memory.__setitem__(
+            slice(address, address + len(data)), data)
+        emu.get_address_map = lambda address: SimpleNamespace(
+            base=0, size=len(memory), prot=6, free=False)
+        first_thread, second_thread = object(), object()
+        emu.get_current_thread = lambda: first_thread
+        emu.mem_write(0x100, '  one two \0'.encode('utf-16le'))
+        emu.mem_write(0x200, ' \0'.encode('utf-16le'))
+        crt = LegacyCRTStreams()
+        call = lambda source: crt._wcstok(emu, 'msvcrt.wcstok', None,
+                                          [source, 0x200])
+        self.assertEqual(call(0x100), 0x104)
+        self.assertEqual(emu.mem_read(0x10a, 2), b'\0\0')
+        emu.get_current_thread = lambda: second_thread
+        self.assertEqual(call(0), 0)
+        emu.get_current_thread = lambda: first_thread
+        self.assertEqual(call(0), 0x10c)
+        self.assertEqual(call(0), 0)
+        self.assertEqual(crt.unsupported, [])
+
     def test_setlocale_uses_persona_and_process_owned_return_buffer(self):
         emu = _Emulator(8)
         memory = {}

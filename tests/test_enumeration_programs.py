@@ -16,6 +16,51 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_cmdkey_guest_child_lists_persona_metadata_and_rejects_changes(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "persona.json"
+                config.write_text(json.dumps({"stored_credentials": [{
+                    "target": "LegacyGeneric:target=guest.example",
+                    "user": "GuestAccount", "type": "Generic",
+                    "persistence": "Local computer"}]}), encoding="utf-8")
+                persona = load_persona(config)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"cmdkey.exe /list\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root / "child", [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                output = result["console_output"]["stdout"]
+                self.assertIn("Target: LegacyGeneric:target=guest.example", output)
+                self.assertIn("User: GuestAccount", output)
+                self.assertNotIn("* NONE *", output)
+                report = json.loads((root / "child" / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\cmdkey.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+                image = enumeration_programs(arch == "x64", persona)["cmdkey.exe"]
+                pe = inspect_pe(image, "cmdkey.exe")
+                for index, args in enumerate((["/delete:guest.example"],
+                                              ["/add:guest.example", "/user:Other"])):
+                    denied = run_native(image, pe, persona, root / f"denied-{index}",
+                                        [], 10, 100_000, guest_args=args)
+                    self.assertFalse(denied["errors"])
+                    self.assertEqual(denied["guest_exit_code"], 87)
+                    self.assertEqual(denied["console_output"]["stdout"], "")
+                empty_persona = load_persona(None)
+                empty_image = enumeration_programs(arch == "x64", empty_persona)["cmdkey.exe"]
+                empty = run_native(empty_image, inspect_pe(empty_image, "cmdkey.exe"),
+                                   empty_persona, root / "empty", [], 10, 100_000,
+                                   guest_args=["/list"])
+                self.assertEqual(empty["guest_exit_code"], 0)
+                self.assertIn("* NONE *", empty["console_output"]["stdout"])
+                self.assertNotIn("GuestAccount", empty["console_output"]["stdout"])
+
     def test_vssadmin_reports_guest_shadow_copies_and_volume(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

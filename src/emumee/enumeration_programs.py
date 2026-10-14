@@ -25,6 +25,21 @@ def _align(value: int, boundary: int) -> int:
 
 def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
+    if name == "cmdkey.exe":
+        if not arguments:
+            return "Usage: cmdkey /list\r\n"
+        if arguments.casefold() != "/list":
+            raise ValueError("unsupported cmdkey arguments")
+        credentials = persona["stored_credentials"]
+        if not credentials:
+            return "\r\nCurrently stored credentials:\r\n\r\n* NONE *\r\n"
+        rows = ["\r\nCurrently stored credentials:\r\n"]
+        for credential in credentials:
+            rows.append(f"    Target: {credential['target']}\r\n"
+                        f"    Type: {credential['type']}\r\n"
+                        f"    User: {credential['user']}\r\n"
+                        f"    {credential['persistence']} persistence\r\n")
+        return "\r\n".join(rows)
     if name in {"quser.exe", "qwinsta.exe"}:
         if arguments:
             raise ValueError("unsupported session query arguments")
@@ -793,7 +808,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
                  "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
-                 "vssadmin.exe"):
+                 "vssadmin.exe", "cmdkey.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -826,6 +841,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "gpresult.exe": ("/r", "/scope user /r", "/r /scope user",
                                       "/scope computer /r", "/r /scope computer"),
                      "dsregcmd.exe": ("/status",),
+                     "cmdkey.exe": ("/list",),
                      "vssadmin.exe": ("list shadows", "list shadows /for=C:",
                                       "list shadows /for=C:\\", "list volumes",
                                       "list providers"),

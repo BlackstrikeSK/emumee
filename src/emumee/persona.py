@@ -56,6 +56,7 @@ DEFAULT_PERSONA = {
     "current_dir": "C:\\Users\\Alex\\Downloads",
     "volume_guid": DEFAULT_VOLUME_GUID,
     "shadow_copies": [],
+    "stored_credentials": [],
     "boot_config": {
         "loader_guid": "{17f03c5e-781a-429f-90d7-5f6a8e1472c3}",
         "description": "Windows 11",
@@ -291,6 +292,24 @@ def load_persona(path: Path | None) -> dict:
                 shadow_set_times[set_key] != shadow["created_utc"]):
             raise ValueError("Persona shadow copy set creation times differ")
         shadow_set_times[set_key] = shadow["created_utc"]
+    credentials = persona["stored_credentials"]
+    if not isinstance(credentials, list) or len(credentials) > 32:
+        raise ValueError("Persona stored_credentials must have at most 32 entries")
+    credential_targets: set[tuple[str, str]] = set()
+    for credential in credentials:
+        if (not isinstance(credential, dict) or
+                set(credential) != {"target", "user", "type", "persistence"} or
+                any(not isinstance(credential[field], str) or
+                    not 1 <= len(credential[field]) <= 256 or
+                    any(ord(char) < 32 for char in credential[field])
+                    for field in ("target", "user")) or
+                credential["type"] not in ("Generic", "Domain Password") or
+                credential["persistence"] not in ("Session", "Local computer", "Enterprise")):
+            raise ValueError("Persona stored credential entries are invalid")
+        key = (credential["target"].casefold(), credential["type"])
+        if key in credential_targets:
+            raise ValueError("Persona stored credential targets are duplicated")
+        credential_targets.add(key)
     boot = persona["boot_config"]
     if (not isinstance(boot["loader_guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",

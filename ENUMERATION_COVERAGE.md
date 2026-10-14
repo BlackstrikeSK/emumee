@@ -11,6 +11,7 @@ never change host state.
 | Guest program | Included by default | Modeled read commands |
 | --- | --- | --- |
 | `hostname.exe` | Yes | Default hostname |
+| [`cmdkey.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/cmdkey) | Yes | `/list` from guest stored credential metadata, with no password data |
 | `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
 | [`fsutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-fsinfo) | Yes | `fsinfo drives`, `fsinfo drivetype C:`, and `fsinfo volumeinfo C:` for the guest volume |
 | [`mountvol.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mountvol) | Yes | Default volume listing and `C:\ /L` from the guest volume GUID |
@@ -50,6 +51,11 @@ but it is not included by default unless the table above says so.
 
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
+| `cmdkey.exe` beyond `/list` | Target filters and credential changes | A dynamic guest credential store and command parser; unsupported forms exit 87. |
+| [`klist.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/klist) | Default ticket list, `tickets`, `sessions`, and `query_bind` | Not included. Needs guest logon IDs and Kerberos cache metadata consistent with the LSA model. |
+| [`nltest.exe`](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/cc731935%28v%3Dws.11%29) | `/domain_trusts`, `/dclist`, and `/dsgetdc` | Not included. Needs explicit guest domain, trust, site, and controller records; discovery must not query host DNS or domain services. Availability depends on Windows installation. |
+| [`manage-bde.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-status) | `-status`, `-status C:` | Not included. Needs guest BitLocker and volume capacity state. |
+| [`wbadmin.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wbadmin-get-versions) | `get versions` | Not included. Needs guest backup catalog and permission behavior; no host or remote backup access. |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
 | `mountvol.exe` beyond the listed forms | Other volume mount points and changes | Multiple volumes and mount mutations remain unmodeled. |
@@ -64,6 +70,11 @@ but it is not included by default unless the table above says so.
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
 | `sc.exe` beyond the listed forms | More query options and service changes | A dynamic Service Control Manager model and parser. |
+
+Generated `cmdkey.exe /list` reads only the persona's `stored_credentials`
+metadata: target, user, type, and persistence. The default guest has no stored
+credentials. The schema accepts no password field, and the utility never
+opens a host credential store. Add and delete operations exit 87.
 
 The included generated `arp.exe -a` uses the broadcast row from the guest
 `GetIpNetTable` model; it does not invent a gateway hardware address. A locally

@@ -35,6 +35,21 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_stored_credentials_accept_metadata_and_reject_secrets_or_duplicates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            entry = {"target": "LegacyGeneric:target=guest.example",
+                     "user": "GuestAccount", "type": "Generic",
+                     "persistence": "Local computer"}
+            path.write_text(json.dumps({"stored_credentials": [entry]}), encoding="utf-8")
+            self.assertEqual(load_persona(path)["stored_credentials"], [entry])
+            for records in ([{**entry, "password": "unsupported"}],
+                            [{**entry, "target": "bad\nline"}],
+                            [entry, entry], [entry] * 33):
+                path.write_text(json.dumps({"stored_credentials": records}), encoding="utf-8")
+                with self.subTest(records=records), self.assertRaises(ValueError):
+                    load_persona(path)
+
     def test_shadow_copy_metadata_is_bounded_and_validated(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

@@ -17,6 +17,14 @@ INTERNATIONAL_FORMATS = {
     "fr-fr": ("dd/MM/yyyy", "HH:mm:ss"),
 }
 
+OEM_CODE_PAGES = {
+    "en-us": 437, "en-gb": 850, "de-de": 850, "fr-fr": 850,
+}
+
+
+def oem_code_page(locale: str) -> int:
+    return OEM_CODE_PAGES.get(locale.casefold(), 437)
+
 
 def desktop_files(user_name: str, hostname: str) -> list[dict[str, str]]:
     home = rf"C:\Users\{user_name}"

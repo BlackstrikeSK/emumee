@@ -16,6 +16,19 @@ class _Emulator:
 
 
 class ThreadUILanguageTests(unittest.TestCase):
+    def test_console_filter_call_is_thread_owned(self):
+        model = ThreadUILanguage({"locale": "en-US"})
+        emu = _Emulator()
+        self.assertEqual(model._set_preferred(
+            emu, "kernel32.SetThreadPreferredUILanguages", None,
+            [0x100, 0, 0]), 1)
+        self.assertIn(id(emu.thread), model._console_filter_threads)
+        self.assertEqual(emu.last_error, 0)
+        self.assertEqual(model._set_preferred(
+            emu, "kernel32.SetThreadPreferredUILanguages", None,
+            [0x100, 1, 0]), 0)
+        self.assertEqual(emu.last_error, 87)
+
     def test_api_set_alias_registers_persona_language_hooks(self):
         hooks = []
         class Registrar:
@@ -24,6 +37,8 @@ class ThreadUILanguageTests(unittest.TestCase):
         ThreadUILanguage({'locale': 'en-US'}).install(Registrar())
         self.assertIn(('api-ms-win-core-localization-l1-2-0',
                        'SetThreadUILanguage', 1), hooks)
+        self.assertIn(('ext-ms-win-fsutilext-ulib-l1-1-0',
+                       'SetThreadUILanguageStub', 1), hooks)
 
     def test_zero_selects_persona_language_and_state_is_per_thread(self):
         model = ThreadUILanguage({"locale": "de-DE"})

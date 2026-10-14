@@ -4126,6 +4126,18 @@ class EmumeeAcceptance(unittest.TestCase):
         self.assertEqual((file.data.getvalue(), view.tell()), (b"ABC", 3))
         self.assertEqual(errors, [])
 
+    def test_api_set_write_file_reaches_guest_console_capture(self):
+        observed = []
+        manager = SimpleNamespace(file_handles={})
+        emu = SimpleNamespace(get_file_manager=lambda: manager)
+        bridge = VirtualFileBridge(self.persona["current_dir"],
+                                   ArtifactCatalog(self.root / "artifacts"))
+        bridge.console_write_handler = lambda *args: observed.append(args[1:])
+        self.assertEqual(bridge._closed_file_operation(
+            emu, "api-ms-win-core-file-l1-1-0.WriteFile", lambda _params: 1,
+            [0xF002, 0x3000, 7, 0x4000, 0]), 1)
+        self.assertEqual(observed, [(0xF002, 0x3000, 7, 0x4000)])
+
     def test_overlapped_guest_file_io_fails_visibly(self):
         handle = 0x305
         file = GuestFile(None, r"C:\Users\Alex\Downloads\overlapped.bin", data=b"AB")

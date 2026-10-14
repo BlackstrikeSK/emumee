@@ -27,6 +27,7 @@ from dncil.cil.body.reader import read_method_body_from_bytes
 
 from .artifacts import ArtifactCatalog, MAX_ARTIFACT, MAX_MEMORY_SCAN
 from .console_output import ConsoleOutput
+from .persona_content import oem_code_page
 from .network import MAX_HEADER_CHARS, MAX_TRANSFER, NetworkBridge, NetworkDenied
 from .pe import SampleInfo
 
@@ -185,7 +186,7 @@ class ManagedRunner:
         self.events: list[dict] = []
         self.stdout: list[str] = []
         self.stdout_chars = 0
-        self.console_output = ConsoleOutput()
+        self.console_output = ConsoleOutput(oem_code_page(persona["locale"]))
         self.files: dict[str, bytes] = {}
         self.file_display_paths: dict[str, str] = {}
         self.directories: set[str] = set()

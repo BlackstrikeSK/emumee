@@ -404,6 +404,9 @@ class VirtualFileBridge:
                            ("GetFileSizeEx", 2), ("SetFilePointer", 4),
                            ("SetFilePointerEx", 5)):
             emulator.add_api_hook(self._closed_file_operation, "kernel32", name, argc=argc)
+        for name in ("ReadFile", "WriteFile"):
+            emulator.add_api_hook(self._closed_file_operation,
+                                  "api-ms-win-core-file-l1-1-0", name, argc=5)
 
     def _get_volume_information(self, emu, api_name, original, params):
         root_ptr, label_ptr, label_size, serial_ptr, component_ptr, flags_ptr, fs_ptr, fs_size = (
@@ -1539,6 +1542,10 @@ class VirtualFileBridge:
         return 0
 
     def _closed_file_operation(self, emu, api_name, original, params):
+        # Speakeasy may report a core-file API-set import under its contract
+        # name even when it dispatches this kernel32 hook.
+        if api_name.startswith("api-ms-win-core-file-"):
+            api_name = "kernel32." + api_name.rsplit(".", 1)[-1]
         handle = int(params[0])
         if not self._file_handle_allowed(emu, api_name, handle):
             if api_name in ("kernel32.ReadFile", "kernel32.WriteFile") and params[3]:

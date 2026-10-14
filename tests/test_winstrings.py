@@ -33,8 +33,15 @@ class _Emu:
     def set_last_error(self, code):
         self.last_error = code
 
+    def get_ptr_size(self):
+        return 8
+
 
 class WinStringTests(unittest.TestCase):
+    def test_default_ansi_code_page_has_no_dbcs_lead_bytes(self):
+        self.assertEqual(GuestStrings._is_dbcs_lead_byte(
+            None, 'kernel32.IsDBCSLeadByte', None, [0x89]), 0)
+
     def setUp(self):
         self.emu = _Emu()
         self.api = GuestStrings()
@@ -89,6 +96,48 @@ class WinStringTests(unittest.TestCase):
         self.assertEqual(self.api._read(self.emu, 0x500, -1, True), ' Alpha ')
         self.assertEqual(self.api._trim(self.emu, 'shlwapi.StrTrimW', None,
                                         [0, 0x600]), 0)
+
+    def test_rtl_oem_to_unicode_ascii_and_bounded_truncation(self):
+        self.emu.mem_write(0x500, b'A\n')
+        call = lambda capacity: self.api._oem_to_unicode(
+            self.emu, 'ntdll.RtlOemToUnicodeN', None,
+            [0x600, capacity, 0x700, 0x500, 2])
+        self.assertEqual(call(6), 0)
+        self.assertEqual(self.emu.mem_read(0x600, 6), 'A\n\0'.encode('utf-16le'))
+        self.assertEqual(self.emu.mem_read(0x700, 4), (4).to_bytes(4, 'little'))
+        self.assertEqual(call(2), 0x80000005)
+        self.assertEqual(self.emu.mem_read(0x700, 4), (2).to_bytes(4, 'little'))
+        self.emu.mem_write(0x500, b'\xff\n')
+        self.assertEqual(call(6), 0xC00000BB)
+        self.api.write_guard = lambda _emu, _address, _size: False
+        self.assertEqual(call(6), 0xC000000D)
+
+    def test_api_set_presence_reads_counted_guest_namespace(self):
+        name = 'ext-ms-win-fsutilext-ulib-l1-1-0'.encode('utf-16le')
+        self.emu.mem_write(0x500, name)
+        self.emu.mem_write(0x400, len(name).to_bytes(2, 'little') +
+                           len(name).to_bytes(2, 'little') + b'\0' * 4 +
+                           (0x500).to_bytes(8, 'little'))
+        self.assertEqual(self.api._api_set_presence(
+            self.emu, 'api-ms-win-core-apiquery-l1-1-0.ApiSetQueryApiSetPresence',
+            None, [0x400, 0x600]), 0)
+        self.assertEqual(self.emu.mem_read(0x600, 1), b'\x01')
+        self.assertEqual(self.emu.last_error, 0)
+        self.api.write_guard = lambda _emu, _address, _size: False
+        self.assertEqual(self.api._api_set_presence(
+            self.emu, 'api-ms-win-core-apiquery-l1-1-0.ApiSetQueryApiSetPresence',
+            None, [0x400, 0x600]), 0xC000000D)
+        self.assertEqual(self.emu.last_error, 87)
+
+    def test_char_to_oem_a_copies_ascii_into_guest_buffer(self):
+        self.emu.mem_write(0x500, b'Coffee\0')
+        call = lambda: self.api._char_to_oem_a(
+            self.emu, 'ext-ms-win-ntuser-chartranslation-l1-1-0.CharToOemA',
+            None, [0x500, 0x600])
+        self.assertEqual(call(), 1)
+        self.assertEqual(self.emu.mem_read(0x600, 7), b'Coffee\0')
+        self.api.write_guard = lambda _emu, _address, _size: False
+        self.assertEqual(call(), 0)
 
     def test_compare_ascii_with_kana_and_width_flags(self):
         self.emu.memory[0x500:0x50a] = '/ALL\0'.encode('utf-16le')

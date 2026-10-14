@@ -30,6 +30,52 @@ class _Emulator:
 
 
 class LegacyCRTStreamsTests(unittest.TestCase):
+    def test_strncpy_s_copies_and_terminates_bounded_guest_string(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.mem_write(0x1000, b'Coffee beans\0')
+        crt = LegacyCRTStreams()
+        call = lambda cap, count: crt._strncpy_s(
+            emu, 'msvcrt.strncpy_s', None, [0x2000, cap, 0x1000, count])
+        self.assertEqual(call(32, 5), 0)
+        self.assertEqual(emu.mem_read(0x2000, 6), b'Coffee'[:5] + b'\0')
+        self.assertEqual(call(4, 5), 34)
+        self.assertEqual(emu.mem_read(0x2000, 1), b'\0')
+        self.assertEqual(call(4, (1 << 64) - 1), 80)
+        self.assertEqual(emu.mem_read(0x2000, 4), b'Cof\0')
+        crt.write_guard = lambda *_args: False
+        self.assertEqual(call(32, 5), 22)
+
+    def test_isatty_uses_guest_standard_handles(self):
+        process = SimpleNamespace(get_std_handle=lambda value: {
+            0xFFFFFFF6: 0xF001, 0xFFFFFFF5: 0xF002,
+            0xFFFFFFF4: 0xBEEF}[value])
+        emu = SimpleNamespace(get_current_process=lambda: process)
+        crt = LegacyCRTStreams()
+        call = lambda descriptor: crt._isatty(emu, 'msvcrt._isatty', None,
+                                              [descriptor])
+        self.assertEqual(call(0), 1)
+        self.assertEqual(call(1), 1)
+        self.assertEqual(call(2), 0)
+        self.assertEqual(call(3), 0)
+
+    def test_strcspn_stops_at_first_rejected_guest_byte(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.mem_write(0x1000, b'Coffee\nMilk\0')
+        emu.mem_write(0x1100, b'\r\n\0')
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._strcspn(emu, 'msvcrt.strcspn', None,
+                                      [0x1000, 0x1100]), 6)
+
     def test_towupper_preserves_nonconvertible_code_units(self):
         crt = LegacyCRTStreams()
         call = lambda value: crt._towupper(None, 'msvcrt.towupper', None, [value])
@@ -92,6 +138,84 @@ class LegacyCRTStreamsTests(unittest.TestCase):
         self.assertNotEqual(query(0, 0), first)
         crt.cleanup_process(previous)
         self.assertNotIn(id(previous), crt._locale_by_process)
+
+    def test_wsetlocale_shares_categories_and_returns_wide_guest_string(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.mem_write(0x1000, 'de-DE\0'.encode('utf-16le'))
+        crt = LegacyCRTStreams('de-DE')
+        wide = lambda category, pointer: crt._setlocale(
+            emu, 'msvcrt._wsetlocale', None, [category, pointer])
+        narrow = lambda category, pointer: crt._setlocale(
+            emu, 'msvcrt.setlocale', None, [category, pointer])
+        wide_ptr = wide(0, 0x1000)
+        self.assertEqual(emu.mem_read(wide_ptr, 12), 'de-DE\0'.encode('utf-16le'))
+        narrow_ptr = narrow(0, 0)
+        self.assertNotEqual(wide_ptr, narrow_ptr)
+        self.assertEqual(emu.mem_read(narrow_ptr, 6), b'de-DE\0')
+        self.assertEqual(wide(0, 0), wide_ptr)
+        emu.mem_write(0x1100, '.OCP\0'.encode('utf-16le'))
+        self.assertEqual(wide(0, 0x1100), wide_ptr)
+        emu.mem_write(0x1200, '.850\0'.encode('utf-16le'))
+        crt.oem_code_page = 850
+        self.assertEqual(wide(2, 0x1200), wide_ptr)
+
+    def test_wcsspn_counts_only_leading_accepted_wide_units(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.mem_write(0x1000, '  /name\0'.encode('utf-16le'))
+        emu.mem_write(0x1100, ' /\0'.encode('utf-16le'))
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._wcsspn(emu, 'msvcrt.wcsspn', None,
+                                     [0x1000, 0x1100]), 3)
+
+    def test_swprintf_s_formats_bounded_wide_decimal(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.get_address_map = lambda address: SimpleNamespace(
+            base=0, size=0x100000000, prot=6, free=False)
+        emu.get_func_argv = lambda _conv, count: [0x3000, 8, 0x2000, 25][:count]
+        emu.mem_free = lambda _address: None
+        emu.mem_write(0x2000, '.%d\0'.encode('utf-16le'))
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._swprintf_s(emu, 'msvcrt.swprintf_s', None,
+                                         [0x3000, 8, 0x2000]), 3, crt.unsupported)
+        self.assertEqual(emu.mem_read(0x3000, 8), '.25\0'.encode('utf-16le'))
+        self.assertEqual(crt.unsupported, [])
+
+    def test_snwprintf_s_accepts_truncate_sentinel_and_stack_argument(self):
+        emu = _Emulator(8)
+        memory = {}
+        emu.mem_write = lambda address, data: memory.update(
+            {address + index: byte for index, byte in enumerate(data)})
+        emu.mem_read = lambda address, size: bytes(
+            memory[address + index] for index in range(size))
+        emu.get_address_map = lambda address: SimpleNamespace(
+            base=0, size=0x100000000, prot=6, free=False)
+        emu.get_func_argv = lambda _conv, count: [
+            0x3000, 12, (1 << 64) - 1, 0x2000, 437][:count]
+        emu.mem_free = lambda _address: None
+        emu.mem_write(0x2000, '.%d\0'.encode('utf-16le'))
+        crt = LegacyCRTStreams()
+        self.assertEqual(crt._snwprintf_s(emu, 'msvcrt._snwprintf_s', None,
+                                          [0x3000, 12, (1 << 64) - 1, 0x2000]), 4,
+                         crt.unsupported)
+        self.assertEqual(emu.mem_read(0x3000, 10), '.437\0'.encode('utf-16le'))
+        self.assertEqual(crt._snwprintf_s(emu, 'msvcrt._snwprintf_s', None,
+                                          [0x3000, 4, (1 << 64) - 1, 0x2000]), -1)
+        self.assertEqual(emu.mem_read(0x3000, 8), '.43\0'.encode('utf-16le'))
 
     def test_private_crt_exit_records_guest_status_and_stops(self):
         process = SimpleNamespace(pid=1234)

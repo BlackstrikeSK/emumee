@@ -44,8 +44,9 @@ def _legacy_iob_image(pointer_size: int) -> bytes:
 class LegacyCRTStreams:
     """Return stable guest FILE pointers without borrowing host CRT state."""
 
-    def __init__(self, locale: str = "en-US"):
+    def __init__(self, locale: str = "en-US", oem_code_page: int = 437):
         self.persona_locale = locale
+        self.oem_code_page = oem_code_page
         self._iob_by_process: dict[int, int] = {}
         self._ucrt_iob_by_process: dict[int, tuple[int, int]] = {}
         self._mode_by_process: dict[tuple[int, int], int] = {}
@@ -53,6 +54,7 @@ class LegacyCRTStreams:
         self._wcstok_by_thread: dict[tuple[int, int], int] = {}
         self._locale_by_process: dict[int, dict[int, str]] = {}
         self._locale_buffer_by_process: dict[int, int] = {}
+        self._wlocale_buffer_by_process: dict[int, int] = {}
         self.read_guard = None
         self.write_guard = None
         self.console_write = None
@@ -62,6 +64,8 @@ class LegacyCRTStreams:
         emulator.add_api_hook(self._iob_func, "msvcrt", "__iob_func", argc=0,
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._setlocale, "msvcrt", "setlocale", argc=2,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._setlocale, "msvcrt", "_wsetlocale", argc=2,
                               call_conv=e_arch.CALL_CONV_CDECL)
         for module in ("msvcrt", "ucrtbase"):
             emulator.add_api_hook(self._acrt_iob_func, module, "__acrt_iob_func", argc=1,
@@ -111,6 +115,156 @@ class LegacyCRTStreams:
                               call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._towupper, "msvcrt", "towupper", argc=1,
                               call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._wcsspn, "msvcrt", "wcsspn", argc=2,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._swprintf_s, "msvcrt", "swprintf_s", argc=3,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._snwprintf_s, "msvcrt", "_snwprintf_s", argc=4,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._isatty, "msvcrt", "_isatty", argc=1,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._strcspn, "msvcrt", "strcspn", argc=2,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+        emulator.add_api_hook(self._strncpy_s, "msvcrt", "strncpy_s", argc=4,
+                              call_conv=e_arch.CALL_CONV_CDECL)
+
+    def _strncpy_s(self, emu, api_name, _original, params) -> int:
+        destination, capacity, source, count = map(int, params)
+        truncate = count == (1 << (emu.get_ptr_size() * 8)) - 1
+        if not destination or not source or not 0 < capacity <= _MAX_OUTPUT_CHARS:
+            self.unsupported.append(f"{api_name}: invalid guest string arguments")
+            return 22  # EINVAL
+        try:
+            if self.write_guard is not None and not self.write_guard(
+                    emu, destination, capacity):
+                raise ValueError("guest CRT write denied")
+            limit = capacity - 1 if truncate else min(count, capacity)
+            output = bytearray()
+            terminated = False
+            for index in range(limit):
+                unit = self._read(emu, source + index, 1)[0]
+                if unit == 0:
+                    terminated = True
+                    break
+                output.append(unit)
+            if truncate and not terminated and len(output) == capacity - 1:
+                terminated = self._read(emu, source + len(output), 1)[0] == 0
+            if not truncate and len(output) == capacity:
+                emu.mem_write(destination, b"\0")
+                return 34  # ERANGE: no room for the terminator
+            emu.mem_write(destination, bytes(output) + b"\0")
+            return 80 if truncate and not terminated else 0  # STRUNCATE
+        except Exception:
+            self.unsupported.append(f"{api_name}: inaccessible guest string")
+            return 22
+
+    def _strcspn(self, emu, api_name, _original, params) -> int:
+        source, rejected = map(int, params)
+        try:
+            charset = set(self._string(emu, rejected, 1).encode("latin-1"))
+            for index in range(_MAX_FORMAT_CHARS):
+                unit = self._read(emu, source + index, 1)[0]
+                if unit == 0 or unit in charset:
+                    return index
+        except Exception:
+            self.unsupported.append(f"{api_name}: inaccessible guest string")
+            return 0
+        self.unsupported.append(f"{api_name}: guest string exceeds limit")
+        return 0
+
+    def _isatty(self, emu, api_name, _original, params) -> int:
+        descriptor = int(params[0])
+        process = emu.get_current_process()
+        if process is None or descriptor not in (0, 1, 2):
+            return 0
+        standard = (0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4)
+        console_handles = (0xF001, 0xF002, 0xF003)
+        return int(int(process.get_std_handle(standard[descriptor])) ==
+                   console_handles[descriptor])
+
+    def _swprintf_s(self, emu, api_name, _original, params) -> int:
+        """Bounded wide varargs formatting using the shared CRT formatter."""
+        return self._format_wide_varargs(emu, api_name, params, 3)
+
+    def _snwprintf_s(self, emu, api_name, _original, params) -> int:
+        buffer, size, count, format_ptr = map(int, params)
+        truncate = count == (1 << (emu.get_ptr_size() * 8)) - 1
+        if not 0 < size <= _MAX_OUTPUT_CHARS or (not truncate and count < 0):
+            self.unsupported.append(f"{api_name}: invalid size or count")
+            return -1
+        limit = size if truncate else min(size, count + 1)
+        return self._format_wide_varargs(emu, api_name,
+                                         [buffer, limit, format_ptr], 4,
+                                         truncate=truncate)
+
+    def _format_wide_varargs(self, emu, api_name, params,
+                             fixed_count: int, truncate: bool = False) -> int:
+        temporary = 0
+        try:
+            buffer, count, format_ptr = map(int, params)
+            if not buffer or not 0 < count <= _MAX_OUTPUT_CHARS:
+                raise ValueError("invalid destination or count")
+            fmt = self._string(emu, format_ptr, 2)
+            arguments = 0
+            cursor = 0
+            while cursor < len(fmt):
+                if fmt[cursor] != "%":
+                    cursor += 1
+                    continue
+                match = _FORMAT_SPEC.match(fmt, cursor)
+                if match is None:
+                    raise ValueError("unsupported format specifier")
+                _flags, width, precision, _length, kind = match.groups()
+                if kind != "%":
+                    arguments += 1 + (width == "*") + (precision == "*")
+                cursor = match.end()
+            if arguments > 64:
+                raise ValueError("format argument limit exceeded")
+            mapping = emu.get_address_map(buffer)
+            if (mapping is None or mapping.free or
+                    buffer + count * 2 > int(mapping.base) + int(mapping.size) or
+                    not (int(mapping.prot) & common.PERM_MEM_WRITE) or
+                    self.write_guard is not None and
+                    not self.write_guard(emu, buffer, count * 2)):
+                raise ValueError("guest destination is not writable")
+            raw = list(emu.get_func_argv(e_arch.CALL_CONV_CDECL,
+                                         fixed_count + arguments))
+            pointer_size = emu.get_ptr_size()
+            temporary = emu.mem_map(max(pointer_size, arguments * pointer_size),
+                                    perms=common.PERM_MEM_RW, tag="api.msvcrt.varargs",
+                                    process=emu.get_current_process())
+            values = raw[fixed_count:] or [0]
+            emu.mem_write(temporary, b"".join(
+                (int(value) & ((1 << (pointer_size * 8)) - 1)).to_bytes(pointer_size, "little")
+                for value in values))
+            result = self._vsnwprintf(emu, api_name, None,
+                                      [buffer, count, format_ptr, temporary])
+            if result < 0:
+                emu.mem_write(buffer + (count - 1) * 2 if truncate else buffer,
+                              b"\0\0")
+            return result
+        except Exception as exc:
+            self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
+            return -1
+        finally:
+            if temporary:
+                emu.mem_free(temporary)
+
+    def _wcsspn(self, emu, api_name, _original, params) -> int:
+        source, allowed = map(int, params)
+        try:
+            charset = set(self._string(emu, allowed, 2))
+            for index in range(_MAX_FORMAT_CHARS):
+                unit = self._read(emu, source + index * 2, 2)
+                if unit == b"\0\0":
+                    return index
+                if unit.decode("utf-16le", errors="surrogatepass") not in charset:
+                    return index
+        except Exception:
+            self.unsupported.append(f"{api_name}: inaccessible guest string")
+            return 0
+        self.unsupported.append(f"{api_name}: guest string exceeds limit")
+        return 0
 
     def _towupper(self, emu, api_name, _original, params) -> int:
         value = int(params[0])
@@ -235,6 +389,7 @@ class LegacyCRTStreams:
         self._ucrt_iob_by_process.pop(owner, None)
         self._locale_by_process.pop(owner, None)
         self._locale_buffer_by_process.pop(owner, None)
+        self._wlocale_buffer_by_process.pop(owner, None)
         for key in tuple(self._mode_by_process):
             if key[0] == owner:
                 self._mode_by_process.pop(key, None)
@@ -270,6 +425,7 @@ class LegacyCRTStreams:
 
     def _setlocale(self, emu, api_name, _original, params) -> int:
         category, pointer = map(int, params)
+        wide = api_name.rsplit(".", 1)[-1] == "_wsetlocale"
         process = emu.get_current_process()
         if process is None or category not in range(6):
             self.unsupported.append(f"{api_name}: locale category unsupported")
@@ -279,11 +435,12 @@ class LegacyCRTStreams:
                                                          for index in range(1, 6)})
         if pointer:
             try:
-                requested = self._string(emu, pointer, 1)
+                requested = self._string(emu, pointer, 2 if wide else 1)
             except Exception:
                 self.unsupported.append(f"{api_name}: guest locale string unreadable")
                 return 0
-            selected = self.persona_locale if requested == "" else requested
+            selected = (self.persona_locale if requested in
+                        ("", ".OCP", ".ACP", f".{self.oem_code_page}") else requested)
             if selected not in ("C", self.persona_locale):
                 self.unsupported.append(f"{api_name}: locale {selected!r} unsupported")
                 return 0
@@ -300,22 +457,26 @@ class LegacyCRTStreams:
             result = ";".join(f"{name}={categories[index]}"
                               for index, name in enumerate(names, 1))
         try:
-            encoded = (result + "\0").encode("ascii", errors="strict")
+            encoded = (result + "\0").encode("utf-16le" if wide else "ascii",
+                                             errors="strict")
         except UnicodeEncodeError:
             self.unsupported.append(f"{api_name}: non-ASCII locale unsupported")
             return 0
-        if len(encoded) > 512:
+        limit = 1024 if wide else 512
+        if len(encoded) > limit:
             self.unsupported.append(f"{api_name}: locale result too long")
             return 0
-        address = self._locale_buffer_by_process.get(owner)
+        buffers = self._wlocale_buffer_by_process if wide else self._locale_buffer_by_process
+        address = buffers.get(owner)
         if address is None:
             try:
-                address = emu.mem_map(512, perms=common.PERM_MEM_RW,
-                                      tag="api.msvcrt.locale", process=process)
+                address = emu.mem_map(limit, perms=common.PERM_MEM_RW,
+                                      tag="api.msvcrt.wlocale" if wide else "api.msvcrt.locale",
+                                      process=process)
             except Exception:
                 self.unsupported.append(f"{api_name}: locale buffer allocation failed")
                 return 0
-            self._locale_buffer_by_process[owner] = address
+            buffers[owner] = address
         try:
             emu.mem_write(address, encoded)
         except Exception:

@@ -16,6 +16,10 @@ FIND_STARTSWITH = 0x00100000
 FIND_ENDSWITH = 0x00200000
 FIND_FROMSTART = 0x00400000
 FIND_FROMEND = 0x00800000
+PRESENT_API_SETS = frozenset({
+    'ext-ms-win-fsutilext-ulib-l1-1-0',
+    'ext-ms-win-ntuser-chartranslation-l1-1-0',
+})
 
 
 class GuestStrings:
@@ -40,6 +44,101 @@ class GuestStrings:
             emulator.add_api_hook(self._wcschr, module, 'wcschr', argc=2,
                                   call_conv=e_arch.CALL_CONV_CDECL)
         emulator.add_api_hook(self._trim, 'shlwapi', 'StrTrimW', argc=2)
+        emulator.add_api_hook(self._oem_to_unicode, 'ntdll',
+                              'RtlOemToUnicodeN', argc=5)
+        emulator.add_api_hook(self._api_set_presence,
+                              'api-ms-win-core-apiquery-l1-1-0',
+                              'ApiSetQueryApiSetPresence', argc=2)
+        for module in ('user32', 'ext-ms-win-ntuser-chartranslation-l1-1-0'):
+            emulator.add_api_hook(self._char_to_oem_a, module, 'CharToOemA', argc=2)
+        for module in ('kernel32', 'api-ms-win-core-localization-l1-2-0'):
+            emulator.add_api_hook(self._is_dbcs_lead_byte, module,
+                                  'IsDBCSLeadByte', argc=1)
+
+    @staticmethod
+    def _is_dbcs_lead_byte(_emu, _api_name, _original, params) -> int:
+        # The default persona uses a single-byte ANSI code page.
+        return 0
+
+    def _char_to_oem_a(self, emu, api_name, _original, params) -> int:
+        source, output = map(int, params)
+        value = self._read(emu, source, -1, False)
+        if value is None or not value.isascii():
+            self.unsupported.append(f'{api_name}: non-ASCII or inaccessible source')
+            return 0
+        encoded = value.encode('ascii') + b'\0'
+        if not self._writable(emu, output, len(encoded)):
+            self.unsupported.append(f'{api_name}: guest destination is not writable')
+            return 0
+        try:
+            emu.mem_write(output, encoded)
+        except Exception:
+            self.unsupported.append(f'{api_name}: guest destination is not writable')
+            return 0
+        return 1
+
+    def _api_set_presence(self, emu, api_name, _original, params) -> int:
+        namespace, output = map(int, params)
+        pointer_size = emu.get_ptr_size()
+        header_size = 16 if pointer_size == 8 else 8
+        if (not self._access(emu, namespace, header_size) or
+                not self._writable(emu, output, 1)):
+            emu.set_last_error(ERROR_INVALID_PARAMETER)
+            return 0xC000000D
+        try:
+            header = emu.mem_read(namespace, header_size)
+            length = int.from_bytes(header[:2], 'little')
+            maximum = int.from_bytes(header[2:4], 'little')
+            pointer = int.from_bytes(header[8:16] if pointer_size == 8
+                                     else header[4:8], 'little')
+            if (length == 0 or length & 1 or length > maximum or
+                    length > MAX_CHARS * 2 or not self._access(emu, pointer, length)):
+                raise ValueError('invalid Unicode namespace')
+            name = emu.mem_read(pointer, length).decode('utf-16le').casefold()
+            if not name.startswith(('api-ms-win-', 'ext-ms-win-')):
+                raise ValueError('invalid API-set namespace')
+            present = name in PRESENT_API_SETS
+            if not present:
+                self.unsupported.append(f'{api_name}: namespace {name} unavailable')
+            emu.mem_write(output, b'\x01' if present else b'\x00')
+        except (ValueError, UnicodeError, OverflowError):
+            emu.set_last_error(ERROR_INVALID_PARAMETER)
+            return 0xC000000D
+        except Exception:
+            emu.set_last_error(ERROR_INVALID_PARAMETER)
+            return 0xC000000D
+        emu.set_last_error(0)
+        return 0
+
+    def _oem_to_unicode(self, emu, api_name, _original, params) -> int:
+        output, capacity, written, source, count = map(int, params)
+        invalid = 0xC000000D  # STATUS_INVALID_PARAMETER
+        if (count < 0 or count > MAX_CHARS or capacity < 0 or capacity > MAX_CHARS * 2 or
+                count and not self._access(emu, source, count) or
+                written and not self._writable(emu, written, 4)):
+            return invalid
+        try:
+            raw = emu.mem_read(source, count) if count else b''
+        except Exception:
+            return invalid
+        if not raw.isascii():
+            self.unsupported.append(f'{api_name}: non-ASCII OEM code page unavailable')
+            return 0xC00000BB  # STATUS_NOT_SUPPORTED
+        units = min(count, capacity // 2)
+        truncated = units < count
+        encoded = raw[:units].decode('ascii').encode('utf-16le')
+        image = encoded + (b'\0\0' if not truncated and capacity >= len(encoded) + 2
+                           else b'')
+        if image and not self._writable(emu, output, len(image)):
+            return invalid
+        try:
+            if image:
+                emu.mem_write(output, image)
+            if written:
+                emu.mem_write(written, len(encoded).to_bytes(4, 'little'))
+        except Exception:
+            return invalid
+        return 0x80000005 if truncated else 0  # STATUS_BUFFER_OVERFLOW or SUCCESS
 
     def _trim(self, emu, api_name, _original, params) -> int:
         target, trim_chars = map(int, params)
@@ -94,6 +193,17 @@ class GuestStrings:
                 not (int(mapping.prot) & common.PERM_MEM_READ)):
             return False
         return self.read_guard is None or bool(self.read_guard(emu, address, size))
+
+    def _writable(self, emu, address: int, size: int) -> bool:
+        if not address or size <= 0:
+            return False
+        mapping = emu.get_address_map(address)
+        if (mapping is None or mapping.free or
+                address < int(mapping.base) or
+                address + size > int(mapping.base) + int(mapping.size) or
+                not (int(mapping.prot) & common.PERM_MEM_WRITE)):
+            return False
+        return self.write_guard is None or bool(self.write_guard(emu, address, size))
 
     def _read(self, emu, address: int, count: int, wide: bool) -> str | None:
         if not address or count < -1 or count > MAX_CHARS:

@@ -34,7 +34,7 @@ from .guest_programs import hostname_exe, whoami_exe
 from .network import NetworkBridge
 from .pe import InvalidSample, SampleInfo, inspect_pe
 from .persona import make_speakeasy_config, materialize_virtual_files
-from .persona_content import desktop_directories
+from .persona_content import desktop_directories, oem_code_page
 from .virtualfs import VirtualFileBridge
 from .virtualprocess import (PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
                              VirtualProcessBridge)
@@ -43,6 +43,7 @@ from .ui_language import ThreadUILanguage
 from .winmessages import WinMessages
 from .version_info import GuestVersionInfo
 from .winstrings import GuestStrings
+from .delay_imports import GuestDelayImports
 from .tokens import GuestTokens
 from .lsa import GuestLSA
 
@@ -244,9 +245,11 @@ def _primary_exit_code(entry_points: list[dict], process_events: list[dict]) -> 
 
 
 def _primary_entry_return(entry_points: list[dict]) -> int | None:
-    if not entry_points or entry_points[0].get("error"):
+    primary = next((entry for entry in entry_points
+                    if entry.get("ep_type") == "module_entry"), None)
+    if primary is None or primary.get("error"):
         return None
-    value = entry_points[0].get("ret_val")
+    value = primary.get("ret_val")
     try:
         result = int(value, 0) if isinstance(value, str) else int(value)
     except (TypeError, ValueError):
@@ -741,13 +744,14 @@ def run_native(
     virtual_process = VirtualProcessBridge(catalog, persona_sources)
     for observer in (bridge, virtual_files, virtual_registry, virtual_process):
         observer.events = _PositionedEvents(se, event_sequence)
-    console_output = ConsoleOutput()
-    crt_streams = LegacyCRTStreams(persona["locale"])
+    console_output = ConsoleOutput(oem_code_page(persona["locale"]))
+    crt_streams = LegacyCRTStreams(persona["locale"], oem_code_page(persona["locale"]))
     crt_startup = CRTStartup()
     guest_environment = GuestEnvironmentBlocks()
     ui_language = ThreadUILanguage(persona)
     win_messages = WinMessages(persona["locale"])
     guest_strings = GuestStrings()
+    guest_delay_imports = GuestDelayImports()
     guest_tokens = GuestTokens(persona)
     guest_lsa = GuestLSA()
     guest_network_adapter = GuestNetworkAdapter(persona)
@@ -761,6 +765,10 @@ def run_native(
     guest_strings.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
     guest_strings.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
+    guest_delay_imports.read_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "read")
+    guest_delay_imports.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     guest_tokens.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
@@ -839,6 +847,7 @@ def run_native(
         win_messages.install(se)
         version_info.install(se)
         guest_strings.install(se)
+        guest_delay_imports.install(se)
         guest_tokens.install(se)
         guest_lsa.install(se)
         # Speakeasy models the x86 MSVC operator delete decoration, while
@@ -2363,6 +2372,7 @@ def run_native(
         errors.extend(ui_language.unsupported)
         errors.extend(win_messages.unsupported)
         errors.extend(guest_strings.unsupported)
+        errors.extend(guest_delay_imports.unsupported)
         errors.extend(guest_lsa.unsupported)
         errors.extend(guest_network_adapter.unsupported)
         errors.extend(guest_feature_configuration.unsupported)

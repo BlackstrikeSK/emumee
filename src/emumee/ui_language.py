@@ -23,12 +23,30 @@ class ThreadUILanguage:
             self.unsupported.append(
                 f"UI language for persona locale {persona['locale']!r} is unknown; using en-US")
         self._by_thread: dict[int, int] = {}
+        self._console_filter_threads: set[int] = set()
 
     def install(self, emulator) -> None:
         for module in ("kernel32", "api-ms-win-core-localization-l1-2-0"):
             emulator.add_api_hook(self._set, module, "SetThreadUILanguage", argc=1)
             emulator.add_api_hook(self._get, module, "GetThreadUILanguage", argc=0)
             emulator.add_api_hook(self._user, module, "GetUserDefaultUILanguage", argc=0)
+            emulator.add_api_hook(self._set_preferred, module,
+                                  "SetThreadPreferredUILanguages", argc=3)
+        emulator.add_api_hook(self._set,
+                              "ext-ms-win-fsutilext-ulib-l1-1-0",
+                              "SetThreadUILanguageStub", argc=1)
+
+    def _set_preferred(self, emu, api_name, _original, params) -> int:
+        flags, languages, count = map(int, params)
+        if flags == 0x100 and not languages and not count:  # MUI_CONSOLE_FILTER
+            thread = emu.get_current_thread()
+            if thread is not None:
+                self._console_filter_threads.add(id(thread))
+            emu.set_last_error(0)
+            return 1
+        self.unsupported.append(f"{api_name}: language list or flags unsupported")
+        emu.set_last_error(87)
+        return 0
 
     def _set(self, emu, api_name, _original, params) -> int:
         requested = int(params[0])

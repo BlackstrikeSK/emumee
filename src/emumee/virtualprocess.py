@@ -1889,6 +1889,17 @@ class VirtualProcessBridge:
 
     def _virtual_alloc(self, emu, api_name, original, params):
         address, size = (int(value) for value in params[:2])
+        # The installed handler maps even MEM_RESERVE requests immediately.
+        # Refuse allocations outside our backing limit as an ordinary Win32
+        # failure before they reach the guarded engine map.
+        if not 0 < size <= MAX_ARTIFACT:
+            emu.set_last_error(87 if size <= 0 else 8)  # INVALID_PARAMETER / NOT_ENOUGH_MEMORY
+            self.events.append({"event": "virtual_process_allocate", "api": api_name,
+                                "requested_address": address, "size": size,
+                                "allocation_type": int(params[2]),
+                                "protection": int(params[3]), "success": False,
+                                "reason": "invalid or excessive allocation size"})
+            return 0
         process = emu.get_current_process()
         if address and self._owner_conflict(emu, address, size, process):
             emu.set_last_error(487)

@@ -1,5 +1,11 @@
 # Coverage, containment, and test plan
 
+## 2026-10-14 large native reservation probe
+
+Locally staged Microsoft x64 `sort.exe` requested a 0xFFFFE000-byte `VirtualAlloc` reservation while opening the persona shopping list. Speakeasy's installed handler maps even reserve-only requests immediately; the guest API map guard correctly stopped that 4 GiB backing attempt. The `VirtualAlloc` bridge now returns `NULL` with `ERROR_NOT_ENOUGH_MEMORY` for requests above its 32 MiB backing limit, with a failed-allocation event, instead of aborting the entire guest run. A focused test checks that the oversized request never reaches the engine. In the rebuilt package at `output/real-sort-x64-probe2/20261014T142145Z-58c61b85`, `sort.exe` continued to its error path and exited 1 without sorted output. Sparse address-space reservation remains unimplemented, so this is a resource-limit correctness fix, not `sort.exe` compatibility. The probe's error path also exposed signature-only `FormatMessageA` and NTDLL conversion handlers; their effects remain unverified.
+
+The x64 `tree.com` probe at `output/real-tree-x64-probe1/20261014T141725Z-50e12e9f` accepted the native PE image but produced no tree listing. A staged x64 `find.exe` probe at `output/real-find-x64-probe1/20261014T142229Z-ca84d110` likewise returned from its entry point without search output. Neither utility is counted as functionally supported on that evidence. Microsoft binaries are local test inputs only and are not distributed.
+
 ## 2026-10-14 profile paths and expandable registry values
 
 The default desktop persona now has 47 deterministic virtual files, including calendar, contact, household, receipt, download, and OneDrive documents. Its Program Files, Common Files, Windows INF/Media, and default profile directories are represented alongside matching environment and registry paths. HKLM `CurrentVersion` now has Program Files and Common Files values; `ProfileList` has its common profile roots. HKCU and HKLM shell-folder values include Start Menu, Programs, Startup, Recent, and SendTo paths. These are a consistent modeled desktop snapshot, not evidence that Windows installed or used the files.

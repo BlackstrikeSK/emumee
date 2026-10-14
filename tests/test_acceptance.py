@@ -2266,6 +2266,21 @@ class EmumeeAcceptance(unittest.TestCase):
                                               [0x1000, 0, 0x8000]), 0)
         self.assertEqual(errors[-1], 487)
 
+    def test_virtual_alloc_oversized_reserve_returns_win32_failure(self):
+        bridge = VirtualProcessBridge(ArtifactCatalog(self.root / "artifacts"))
+        errors = []
+        emu = SimpleNamespace(set_last_error=errors.append)
+
+        def forbidden(_params):
+            self.fail("oversized reserve reached the engine")
+
+        self.assertEqual(bridge._virtual_alloc(
+            emu, "kernel32.VirtualAlloc", forbidden,
+            [0, 0xFFFFE000, 0x2000, 4]), 0)
+        self.assertEqual(errors, [8])
+        self.assertEqual(bridge.events[-1]["reason"],
+                         "invalid or excessive allocation size")
+
     def test_virtual_free_ex_executes_in_both_native_architectures(self):
         for arch in ("x86", "x64"):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as folder:

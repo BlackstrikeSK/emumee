@@ -16,6 +16,60 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_nltest_guest_child_reports_persona_domain_and_failure_exit_codes(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "persona.json"
+                config.write_text(json.dumps({"domain": "corp.example", "domain_discovery": {
+                    "netbios_name": "CORP", "site_name": "Client-Site", "controllers": [
+                        {"name": "dc1.corp.example", "address": "192.168.1.10",
+                         "site_name": "DC-Site", "pdc": True}], "trusts": [
+                        {"netbios_name": "PARTNER", "dns_name": "partner.example",
+                         "direction": "Bidirectional"}]}}), encoding="utf-8")
+                persona = load_persona(config)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"nltest.exe /dsgetdc:corp.example\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root / "child", [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                for value in ("dc1.corp.example", "192.168.1.10", "Client-Site", "DC-Site"):
+                    self.assertIn(value, result["console_output"]["stdout"])
+                report = json.loads((root / "child" / result["engine_report"]).read_text())
+                self.assertEqual(report["network_events"], [])
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\nltest.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+                image = enumeration_programs(arch == "x64", persona)["nltest.exe"]
+                for index, (args, expected) in enumerate((
+                        (["/domain_trusts"], "PARTNER partner.example"),
+                        (["/dclist:CORP"], "dc1.corp.example [PDC]"),
+                        (["/dsgetdc:CORP"], "192.168.1.10"))):
+                    query = run_native(image, inspect_pe(image, "nltest.exe"), persona,
+                                       root / f"query-{index}", [], 10, 100_000, guest_args=args)
+                    self.assertEqual(query["guest_exit_code"], 0)
+                    self.assertFalse(query["errors"])
+                    self.assertIn(expected, query["console_output"]["stdout"])
+                for index, args in enumerate((["/server:host", "/dsgetdc:corp.example"],
+                                              ["/sc_change_pwd:corp.example"])):
+                    denied = run_native(image, inspect_pe(image, "nltest.exe"), persona,
+                                        root / f"denied-{index}", [], 10, 100_000, guest_args=args)
+                    self.assertEqual(denied["guest_exit_code"], 87)
+                    self.assertEqual(denied["console_output"]["stdout"], "")
+                empty_persona = load_persona(None)
+                empty_image = enumeration_programs(arch == "x64", empty_persona)["nltest.exe"]
+                failed = run_native(empty_image, inspect_pe(empty_image, "nltest.exe"),
+                                    empty_persona, root / "empty", [], 10, 100_000,
+                                    guest_args=["/dsgetdc:WORKGROUP"])
+                self.assertFalse(failed["errors"])
+                self.assertEqual(failed["guest_exit_code"], 1355)
+                self.assertIn("ERROR_NO_SUCH_DOMAIN", failed["console_output"]["stdout"])
+                self.assertNotIn("dc1.corp.example", failed["console_output"]["stdout"])
+
     def test_klist_guest_child_uses_persona_cache_and_rejects_ticket_requests(self):
         ticket = {"server": "HTTP/guest.example", "realm": "GUEST.EXAMPLE",
                   "encryption_type": 18, "session_key_type": 17, "flags": 0x40a10000,

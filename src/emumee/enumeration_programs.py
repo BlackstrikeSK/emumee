@@ -26,6 +26,49 @@ def _align(value: int, boundary: int) -> int:
 
 def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
+    if name == "nltest.exe":
+        argument = arguments.casefold()
+        if not argument:
+            return "Usage: nltest /domain_trusts | /dclist:<domain> | /dsgetdc:<domain>\r\n"
+        discovery = persona["domain_discovery"]
+        domain = persona["domain"]
+        netbios = discovery["netbios_name"] or domain.split(".")[0][:15].upper()
+        forest = discovery["forest_name"] or domain
+        if argument == "/domain_trusts":
+            if not persona["device_registration"]["domain_joined"]:
+                return "DsEnumerateDomainTrusts failed: Status = 1355 0x54b ERROR_NO_SUCH_DOMAIN\r\n"
+            root_flag = " (Forest Tree Root)" if forest.casefold() == domain.casefold() else ""
+            rows = ["List of domain trusts:",
+                    f"    0: {netbios} {domain} (NT 5){root_flag} (Primary Domain)"]
+            for index, trust in enumerate(discovery["trusts"], 1):
+                flags = {"Inbound": "Direct Inbound", "Outbound": "Direct Outbound",
+                         "Bidirectional": "Direct Inbound Direct Outbound"}[trust["direction"]]
+                rows.append(f"    {index}: {trust['netbios_name']} {trust['dns_name']} (NT 5) ({flags})")
+            return "\r\n".join(rows) + "\r\nThe command completed successfully\r\n"
+        command, separator, target = argument.partition(":")
+        if not separator or command not in {"/dclist", "/dsgetdc"} or target not in {
+                domain.casefold(), netbios.casefold()}:
+            raise ValueError("unsupported nltest arguments")
+        controllers = discovery["controllers"]
+        if not controllers:
+            return "Getting DC name failed: Status = 1355 0x54b ERROR_NO_SUCH_DOMAIN\r\n"
+        controller = next((value for value in controllers if value["pdc"]), controllers[0])
+        if command == "/dclist":
+            rows = [f"Get list of DCs in domain '{domain}' from '\\\\{controller['name']}'."]
+            for value in controllers:
+                pdc = " [PDC]" if value["pdc"] else ""
+                rows.append(f"    {value['name']}{pdc} [DS] Site: {value['site_name']}")
+            return "\r\n".join(rows) + "\r\nThe command completed successfully\r\n"
+        flags = "PDC " if controller["pdc"] else ""
+        return (f"           DC: \\\\{controller['name']}\r\n"
+                f"      Address: \\\\{controller['address']}\r\n"
+                f"     Dom Guid: {discovery['guid']}\r\n"
+                f"     Dom Name: {domain}\r\n"
+                f"  Forest Name: {forest}\r\n"
+                f" Dc Site Name: {controller['site_name']}\r\n"
+                f"Our Site Name: {discovery['site_name']}\r\n"
+                f"        Flags: {flags}DS LDAP KDC WRITABLE DNS_DC DNS_DOMAIN DNS_FOREST\r\n"
+                "The command completed successfully\r\n")
     if name == "klist.exe":
         if arguments.casefold() not in {"", "tickets"}:
             raise ValueError("unsupported klist arguments")
@@ -632,9 +675,15 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
 
 def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
                      variants: dict[str, str] | None = None,
+                     exit_codes: dict[str, int] | None = None,
                      max_text: int = _MAX_TEXT) -> bytes:
     """Build a PE that selects bounded guest text by exact command argument."""
     variants = variants or {}
+    exit_codes = exit_codes or {}
+    if (set(exit_codes) - {"", *variants} or
+            any(not isinstance(value, int) or isinstance(value, bool) or
+                not 0 <= value <= 0xffffffff for value in exit_codes.values())):
+        raise ValueError("guest utility exit codes are invalid")
     if len(variants) > 5 or any(not key or not key.isascii() or "\0" in key
                                for key in variants):
         raise ValueError("guest utility argument variants are invalid")
@@ -643,6 +692,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
     output_records = []
     for argument, text in outputs:
         encoded = text.encode(f"cp{code_page}", errors="replace")
+        data.extend(struct.pack("<I", exit_codes.get(argument, 0)))
         output_records.append((argument, 0x3000 + len(data), len(encoded)))
         data.extend(encoded)
     argument_rvas = {}
@@ -802,7 +852,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
         call(1)
         code.extend(b"\x85\xc0")
         branch(b"\x0f\x84", "write_failed")
-        code.extend(b"\x31\xc9")
+        code.extend(b"\x8b\x4f\xfc")  # Exit code stored before selected output.
         call(2)
         label("write_failed")
         code.extend(b"\xb9\x01\0\0\0")
@@ -816,7 +866,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
         call(1)
         code.extend(b"\x85\xc0")
         branch(b"\x0f\x84", "write_failed")
-        code.extend(b"\x6a\0")
+        code.extend(b"\xff\x77\xfc")
         call(2)
         label("write_failed")
         code.extend(b"\x6a\x01")
@@ -839,13 +889,16 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     render_persona = dict(persona)
     if render_persona.get("clock_utc") is None:
         render_persona["clock_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    nltest_domains = tuple(dict.fromkeys((persona["domain"],
+        persona["domain_discovery"]["netbios_name"] or
+        persona["domain"].split(".")[0][:15].upper())))
     result = {}
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
                  "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
-                 "vssadmin.exe", "cmdkey.exe", "manage-bde.exe", "klist.exe"):
+                 "vssadmin.exe", "cmdkey.exe", "manage-bde.exe", "klist.exe", "nltest.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -880,6 +933,9 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "dsregcmd.exe": ("/status",),
                      "cmdkey.exe": ("/list",),
                      "klist.exe": ("tickets",),
+                     "nltest.exe": ("/domain_trusts", *(f"/{command}:{domain}"
+                                      for command in ("dclist", "dsgetdc")
+                                      for domain in nltest_domains)),
                      "manage-bde.exe": ("-status", "-status C:"),
                      "vssadmin.exe": ("list shadows", "list shadows /for=C:",
                                       "list shadows /for=C:\\", "list volumes",
@@ -888,9 +944,17 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)
                     for argument in commands}
+        exit_codes = {}
+        if name == "nltest.exe":
+            for argument in commands:
+                available = (persona["device_registration"]["domain_joined"]
+                             if argument == "/domain_trusts" else
+                             bool(persona["domain_discovery"]["controllers"]))
+                if not available:
+                    exit_codes[argument] = 1355
         result[name] = console_text_exe(
             is_x64, enumeration_text(name, render_persona), code_page=code_page,
-            variants=variants,
+            variants=variants, exit_codes=exit_codes,
             max_text=256 * 1024 if name == "pnputil.exe" else _MAX_TEXT)
     arch = "x64" if is_x64 else "x86"
     result["reg.exe"] = files("emumee").joinpath(

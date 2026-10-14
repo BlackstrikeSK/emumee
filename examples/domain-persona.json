@@ -1,0 +1,24 @@
+{
+  "domain": "corp.example",
+  "domain_discovery": {
+    "guid": "{a63ed21e-128d-42e8-bacf-12f2fa420213}",
+    "netbios_name": "CORP",
+    "forest_name": "corp.example",
+    "site_name": "Guest-Site",
+    "controllers": [
+      {
+        "name": "dc1.corp.example",
+        "address": "192.168.1.10",
+        "site_name": "Guest-Site",
+        "pdc": true
+      }
+    ],
+    "trusts": [
+      {
+        "netbios_name": "PARTNER",
+        "dns_name": "partner.example",
+        "direction": "Bidirectional"
+      }
+    ]
+  }
+}

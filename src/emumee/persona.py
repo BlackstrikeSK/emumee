@@ -28,6 +28,11 @@ DEFAULT_VOLUME_FREE_BYTES = 320 * 1024 ** 3
 DEFAULT_PERSONA = {
     "hostname": "DESKTOP-7F4M2Q9",
     "domain": "WORKGROUP",
+    "domain_discovery": {
+        "guid": "{a63ed21e-128d-42e8-bacf-12f2fa420213}",
+        "netbios_name": None, "forest_name": None,
+        "site_name": "Default-First-Site-Name", "controllers": [], "trusts": [],
+    },
     "user_name": "Alex",
     "user_is_admin": False,
     "user_sid": "S-1-5-21-1243773969-3482195721-2078146024-1001",
@@ -215,6 +220,11 @@ def load_persona(path: Path | None) -> dict:
             if not isinstance(kerberos, dict) or set(kerberos) - set(persona["kerberos"]):
                 raise ValueError("Persona kerberos fields are invalid")
             persona["kerberos"].update(kerberos)
+        if "domain_discovery" in supplied:
+            discovery = supplied.pop("domain_discovery")
+            if not isinstance(discovery, dict) or set(discovery) - set(persona["domain_discovery"]):
+                raise ValueError("Persona domain_discovery fields are invalid")
+            persona["domain_discovery"].update(discovery)
         if "group_policy" in supplied:
             policy = supplied.pop("group_policy")
             if not isinstance(policy, dict):
@@ -404,6 +414,57 @@ def load_persona(path: Path | None) -> dict:
             registration["azure_ad_prt"] and not (
                 registration["azure_ad_joined"] or registration["workplace_joined"])):
         raise ValueError("Persona device_registration fields are inconsistent")
+    discovery = persona["domain_discovery"]
+    dns_pattern = r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?"
+    if (not isinstance(persona["domain"], str) or
+            not re.fullmatch(dns_pattern, persona["domain"]) or
+            not isinstance(discovery["guid"], str) or
+            not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}", discovery["guid"]) or
+            discovery["netbios_name"] is not None and (
+                not isinstance(discovery["netbios_name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_-]{1,15}", discovery["netbios_name"])) or
+            discovery["forest_name"] is not None and (
+                not isinstance(discovery["forest_name"], str) or
+                not re.fullmatch(dns_pattern, discovery["forest_name"])) or
+            not isinstance(discovery["site_name"], str) or
+            not re.fullmatch(r"[A-Za-z0-9_. -]{1,64}", discovery["site_name"]) or
+            any(not isinstance(discovery[field], list) or len(discovery[field]) > 16
+                for field in ("controllers", "trusts"))):
+        raise ValueError("Persona domain_discovery fields are invalid")
+    if (discovery["controllers"] or discovery["trusts"]) and not registration["domain_joined"]:
+        raise ValueError("Persona domain discovery records require a joined domain")
+    controller_names: set[str] = set()
+    for controller in discovery["controllers"]:
+        if (not isinstance(controller, dict) or
+                set(controller) != {"name", "address", "site_name", "pdc"} or
+                not isinstance(controller["name"], str) or
+                not re.fullmatch(dns_pattern, controller["name"]) or
+                controller["name"].casefold() in controller_names or
+                not isinstance(controller["address"], str) or
+                not isinstance(controller["site_name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_. -]{1,64}", controller["site_name"]) or
+                not isinstance(controller["pdc"], bool)):
+            raise ValueError("Persona domain controller metadata is invalid")
+        try:
+            address = ipaddress.IPv4Address(controller["address"])
+            if address.is_multicast or address.is_loopback or address.is_unspecified:
+                raise ValueError("invalid controller address")
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Persona domain controller address is invalid") from exc
+        controller_names.add(controller["name"].casefold())
+    if sum(controller["pdc"] for controller in discovery["controllers"]) > 1:
+        raise ValueError("Persona has more than one primary domain controller")
+    trust_names: set[str] = {persona["domain"].casefold()}
+    for trust in discovery["trusts"]:
+        if (not isinstance(trust, dict) or set(trust) != {"netbios_name", "dns_name", "direction"} or
+                not isinstance(trust["netbios_name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_-]{1,15}", trust["netbios_name"]) or
+                not isinstance(trust["dns_name"], str) or
+                not re.fullmatch(dns_pattern, trust["dns_name"]) or
+                trust["dns_name"].casefold() in trust_names or
+                trust["direction"] not in ("Inbound", "Outbound", "Bidirectional")):
+            raise ValueError("Persona domain trust metadata is invalid")
+        trust_names.add(trust["dns_name"].casefold())
     adapter = persona["network_adapter"]
     if (not isinstance(adapter["guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",

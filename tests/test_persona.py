@@ -36,6 +36,24 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_domain_discovery_requires_bounded_consistent_guest_records(self):
+        controller = {"name": "dc1.corp.example", "address": "192.168.1.10",
+                      "site_name": "Guest-Site", "pdc": True}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            path.write_text(json.dumps({"domain": "corp.example", "domain_discovery": {
+                "controllers": [controller]}}), encoding="utf-8")
+            self.assertEqual(load_persona(path)["domain_discovery"]["controllers"], [controller])
+            for broken in ({"domain_discovery": {"controllers": [controller]}},
+                           {"domain": "corp.example", "domain_discovery": {
+                               "controllers": [controller, {**controller, "name": "dc2.corp.example"}]}},
+                           {"domain": "corp.example", "domain_discovery": {
+                               "controllers": [{**controller, "address": "host.example"}]}},
+                           {"domain_discovery": {"site_name": "bad\nline"}}):
+                path.write_text(json.dumps(broken), encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaises(ValueError):
+                    load_persona(path)
+
     def test_kerberos_ticket_metadata_validates_types_times_and_bounds(self):
         ticket = {"server": "HTTP/guest.example", "realm": "GUEST.EXAMPLE",
                   "encryption_type": 18, "session_key_type": 17, "flags": 0x40a10000,

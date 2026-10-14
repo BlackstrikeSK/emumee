@@ -13,6 +13,7 @@ never change host state.
 | `hostname.exe` | Yes | Default hostname |
 | [`cmdkey.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/cmdkey) | Yes | `/list` from guest stored credential metadata, with no password data |
 | [`klist.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/klist) | Yes | Default and `tickets` from guest Kerberos cache metadata |
+| [`nltest.exe`](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/cc731935%28v%3Dws.11%29) | Yes | `/domain_trusts`, `/dclist:<persona domain>`, and `/dsgetdc:<persona domain>` with DNS and NetBIOS aliases |
 | [`manage-bde.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-status) | Yes | `-status` and `-status C:` from guest capacity and BitLocker metadata |
 | `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
 | [`fsutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-fsinfo) | Yes | `fsinfo drives`, `fsinfo drivetype C:`, and `fsinfo volumeinfo C:` for the guest volume |
@@ -55,7 +56,7 @@ but it is not included by default unless the table above says so.
 | --- | --- | --- |
 | `cmdkey.exe` beyond `/list` | Target filters and credential changes | A dynamic guest credential store and command parser; unsupported forms exit 87. |
 | `klist.exe` beyond the listed forms | Other logon IDs, sessions, `tgt`, bindings, and cache changes | More guest LSA session and cache models are needed. Encoded tickets and usable keys are not modeled; unsupported forms exit 87. |
-| [`nltest.exe`](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/cc731935%28v%3Dws.11%29) | `/domain_trusts`, `/dclist`, and `/dsgetdc` | Not included. Needs explicit guest domain, trust, site, and controller records; discovery must not query host DNS or domain services. Availability depends on Windows installation. |
+| `nltest.exe` beyond the listed forms | Other domains, server targets, discovery flags, secure channels, and changes | Dynamic domain services and Windows domain APIs remain unmodeled; unsupported forms exit 87. |
 | `manage-bde.exe` beyond the listed forms | Protection error-level flags, other volumes, conversion progress, protector details, and changes | Full BitLocker state and key material are not modeled; unsupported forms exit 87. |
 | [`wbadmin.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wbadmin-get-versions) | `get versions` | Not included. Needs guest backup catalog and permission behavior; no host or remote backup access. |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
@@ -86,6 +87,15 @@ persona user, and output times use its UTC offset. Ticket requests and purge
 commands exit 87 without contacting an authentication server. LSA packages
 other than Kerberos, cache query variants, other logon IDs, and usable ticket
 or key material remain unsupported.
+
+Generated `nltest.exe` reads only the persona's `domain_discovery` controller,
+site, forest, GUID, and directional trust metadata for its configured joined
+domain. It performs no DNS lookup or domain-server connection. Missing guest
+controller data returns `ERROR_NO_SUCH_DOMAIN` and exit code 1355; the default
+workgroup guest has no controllers or trusts. Windows domain APIs, secure
+channels, other targets, and discovery flags remain unmodeled.
+See [the domain persona example](examples/domain-persona.json) for the record
+format; its addresses and names are guest metadata and are never contacted.
 
 Generated `manage-bde.exe -status` reports the guest C: volume as unlocked,
 with either fully encrypted or fully decrypted state from `bitlocker` metadata.

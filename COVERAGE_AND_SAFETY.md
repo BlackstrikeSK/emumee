@@ -5,6 +5,7 @@
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
 `cmdkey.exe`,
 `klist.exe`,
+`nltest.exe`,
 `manage-bde.exe`,
 `getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `pnputil.exe`, `gpresult.exe`, `dsregcmd.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `vssadmin.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
@@ -40,6 +41,11 @@ also returned by guest LSA current-session ticket-cache queries. Both native
 pointer widths have bounded in-buffer strings and process-owned response
 buffers. The default cache is empty; ticket requests and changes exit 87.
 Encoded tickets and usable keys are not modeled.
+`nltest.exe` reports configured domain controllers and trusts without DNS or
+network discovery. Supported domain aliases come from the persona's DNS and
+NetBIOS names. Missing controller records return exit code 1355; unsupported
+targets and change commands exit 87. The generator stores a status per output
+view, so a modeled domain failure is distinguishable from a successful query.
 `manage-bde.exe -status` and `-status C:` read guest capacity and BitLocker
 metadata. `GetDiskFreeSpaceExA/W` uses the same configured capacity and free
 space for guest directories on C:. Output buffers are validated before writes;

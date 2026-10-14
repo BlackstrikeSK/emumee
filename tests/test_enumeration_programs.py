@@ -5,15 +5,81 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from emumee.enumeration_programs import enumeration_programs, enumeration_text
 from emumee.native import run_native
+from emumee.network_adapter import GuestNetworkAdapter
 from emumee.pe import inspect_pe
 from emumee.persona import load_persona, make_speakeasy_config
 from tests.fixtures.build_native import build_host_process_probe, build_host_winexec_probe
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_netstat_reads_guest_tcp_table_on_both_architectures(self):
+        original = GuestNetworkAdapter._get_extended_tcp_table
+
+        def with_guest_connection(model, emu, api_name, prior, params):
+            model.network_bridge.connected_tcp[17] = {
+                "local_port": 49152, "remote_ip": "203.0.113.7",
+                "remote_port": 443, "pid": 9876,
+            }
+            return original(model, emu, api_name, prior, params)
+
+        for is_x64 in (False, True):
+            with self.subTest(arch="x64" if is_x64 else "x86"), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                custom = root / "persona.json"
+                custom.write_text(json.dumps({"network_adapter": {
+                    "ipv4": "10.10.4.22", "gateway": "10.10.4.1"}}), encoding="utf-8")
+                persona = load_persona(custom)
+                image = enumeration_programs(is_x64, persona)["netstat.exe"]
+                self.assertEqual(inspect_pe(image, "netstat.exe").architecture,
+                                 "x64" if is_x64 else "x86")
+                with patch.object(GuestNetworkAdapter, "_get_extended_tcp_table",
+                                  with_guest_connection):
+                    result = run_native(image, inspect_pe(image, "netstat.exe"),
+                                        persona, root / "connected", [], 10, 100_000,
+                                        guest_args=["-ano"])
+                self.assertFalse(result["errors"])
+                self.assertEqual(result["guest_exit_code"], 0)
+                output = result["console_output"]["stdout"]
+                for part in ("10.10.4.22:49152", "203.0.113.7:443", "ESTABLISHED", "9876"):
+                    self.assertIn(part, output)
+                empty = run_native(image, inspect_pe(image, "netstat.exe"), persona,
+                                   root / "empty", [], 10, 100_000,
+                                   guest_args=["-ano"])
+                self.assertFalse(empty["errors"])
+                self.assertEqual(empty["guest_exit_code"], 0)
+                self.assertNotIn("203.0.113.7", empty["console_output"]["stdout"])
+                unsupported = run_native(image, inspect_pe(image, "netstat.exe"), persona,
+                                         root / "unsupported", [], 10, 100_000,
+                                         guest_args=["-b"])
+                self.assertFalse(unsupported["errors"])
+                self.assertEqual(unsupported["guest_exit_code"], 87)
+                self.assertEqual(unsupported["console_output"]["stdout"], "")
+
+    def test_winexec_launches_guest_netstat(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"netstat.exe -ano\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("Active Connections", result["console_output"]["stdout"])
+                self.assertIn("PID", result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\netstat.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_where_reads_guest_search_path_without_host_files(self):
         for is_x64 in (False, True):
             with self.subTest(arch="x64" if is_x64 else "x86"), tempfile.TemporaryDirectory() as directory:

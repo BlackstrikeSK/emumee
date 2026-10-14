@@ -56,6 +56,10 @@ class NetworkBridge:
         self.events: list[dict] = []
         self.unsupported: list[str] = []
         self.broker_sockets: dict[int, int] = {}
+        self.socket_types: dict[int, int] = {}
+        self.socket_owners: dict[int, int] = {}
+        self.connected_tcp: dict[int, dict] = {}
+        self.next_guest_tcp_port = 49152
         self.http_fetched: set[int] = set()
         self.http_ready: set[int] = set()
         self.http_metadata: dict[int, dict] = {}
@@ -179,6 +183,10 @@ class NetworkBridge:
         try:
             handle = original(params)
             self.broker_sockets[handle] = self.rpc.call("socket_open", af=af, type=typ)
+            self.socket_types[handle] = typ
+            process = emu.get_current_process() if hasattr(emu, "get_current_process") else None
+            if process is not None:
+                self.socket_owners[handle] = id(process)
         except OSError as exc:
             self.events.append({"event": "network_error", "api": api_name, "error": str(exc)})
             return 0xFFFFFFFF
@@ -197,7 +205,19 @@ class NetworkBridge:
                 raise NetworkDenied("Network broker unavailable or guest socket unknown")
             self.rpc.call("socket_connect", socket=ident, host=host, port=port)
             self.events.append({"event": "connect", "host": host, "port": port, "api": api_name})
-            return original(params)
+            result = original(params)
+            if result == 0 and self.socket_types.get(handle) == socket.SOCK_STREAM:
+                process = emu.get_current_process() if hasattr(emu, "get_current_process") else None
+                self.connected_tcp[handle] = {
+                    "local_port": self.next_guest_tcp_port,
+                    "remote_ip": host,
+                    "remote_port": port,
+                    "pid": int(process.pid) if process is not None else 0,
+                }
+                self.next_guest_tcp_port += 1
+                if self.next_guest_tcp_port > 65535:
+                    self.next_guest_tcp_port = 49152
+            return result
         except (OSError, ValueError) as exc:
             self.events.append({"event": "network_error", "api": api_name, "error": str(exc)})
             return 0xFFFFFFFF
@@ -248,12 +268,30 @@ class NetworkBridge:
     def _close(self, emu, api_name, original, params):
         handle = int(params[0])
         ident = self.broker_sockets.pop(handle, None)
+        self.socket_types.pop(handle, None)
+        self.socket_owners.pop(handle, None)
+        self.connected_tcp.pop(handle, None)
         if ident is not None and self.rpc:
             try:
                 self.rpc.call("socket_close", socket=ident)
             except OSError as exc:
                 self.events.append({"event": "network_error", "api": api_name, "error": str(exc)})
         return original(params)
+
+    def cleanup_process(self, process) -> None:
+        for handle, owner in tuple(self.socket_owners.items()):
+            if owner != id(process):
+                continue
+            self.socket_owners.pop(handle, None)
+            self.socket_types.pop(handle, None)
+            self.connected_tcp.pop(handle, None)
+            ident = self.broker_sockets.pop(handle, None)
+            if ident is not None and self.rpc is not None:
+                try:
+                    self.rpc.call("socket_close", socket=ident)
+                except OSError as exc:
+                    self.events.append({"event": "network_error", "api": "process_exit",
+                                        "error": str(exc)})
 
     def _deny_inbound(self, emu, api_name, original, params):
         self.events.append({"event": "network_denied", "api": api_name, "reason": "inbound networking disabled"})

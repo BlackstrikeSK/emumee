@@ -14,6 +14,7 @@ never change host state.
 | `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
+| [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
 | `tasklist.exe` | Yes | Default persona process snapshot |
@@ -38,7 +39,7 @@ but it is not included by default unless the table above says so.
 
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
-| [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | `-ano` | Guest socket, listener, and PID state that changes during the run. |
+| `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with service, device, and driver file probes. |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | `/query` | A virtual scheduled-task store and query semantics. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
@@ -87,6 +88,14 @@ guest `GetCurrentDirectoryW`, `GetEnvironmentVariableW`, and
 file name, searches at most 32 guest `PATH` directories, and prints only paths
 found in the virtual filesystem. Wildcards, recursive searches, multiple
 patterns, and switches are not modeled.
+
+The included `netstat.exe` is compiled from repository C source and calls a
+guest-only `GetExtendedTcpTable` model. Successful outbound TCP connections
+appear with the persona IPv4 address, a synthetic guest local port, the guest
+destination, and the owning guest PID. The guest table is cleared as sockets
+close or their owning process exits. It never queries the host socket table or
+reports the broker's host-assigned local port. The default and `-an` forms omit
+the PID; `-ano` includes it. Unmodeled options exit 87.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
 utility inventory. No entry in this file authorizes a guest command to execute

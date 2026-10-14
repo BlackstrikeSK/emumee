@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import ctypes
 import ipaddress
+import socket
 import struct
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 import speakeasy.common as common
 
 from emumee.network_adapter import (GuestNetworkAdapter, _MibIfRow,
                                     _fixed_layouts, _layouts)
+from emumee.network import NetworkBridge
+from emumee.artifacts import ArtifactCatalog
 from emumee.feature_config import GuestFeatureConfiguration
 from emumee.persona import load_persona
 
@@ -49,6 +54,32 @@ class MemoryEmulator:
 
 
 class GuestNetworkAdapterTests(unittest.TestCase):
+    def test_guest_tcp_connection_tracks_virtual_port_and_process_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = NetworkBridge(ArtifactCatalog(Path(directory) / "artifacts"))
+            calls = []
+            bridge.rpc = SimpleNamespace(call=lambda operation, **fields:
+                                         calls.append((operation, fields)))
+            process = SimpleNamespace(pid=9876)
+            bridge.broker_sockets[10] = 42
+            bridge.socket_types[10] = socket.SOCK_STREAM
+            bridge.socket_owners[10] = id(process)
+            sockaddr = b"\x02\x00\x01\xbb\xcb\x00\x71\x07" + b"\0" * 8
+            emu = SimpleNamespace(mem_read=lambda _pointer, _size: sockaddr,
+                                  get_current_process=lambda: process)
+            self.assertEqual(bridge._connect(emu, "ws2_32.connect", lambda _args: 0,
+                                             [10, 100]), 0)
+            self.assertEqual(bridge.connected_tcp[10], {
+                "local_port": 49152, "remote_ip": "203.0.113.7",
+                "remote_port": 443, "pid": 9876,
+            })
+            bridge.cleanup_process(process)
+            self.assertFalse(bridge.connected_tcp)
+            self.assertFalse(bridge.broker_sockets)
+            self.assertEqual(calls, [("socket_connect", {
+                "socket": 42, "host": "203.0.113.7", "port": 443}),
+                ("socket_close", {"socket": 42})])
+
     def test_mib_interface_and_arp_tables_follow_persona_and_bound_writes(self):
         for width in (4, 8):
             with self.subTest(width=width):
@@ -328,6 +359,35 @@ class GuestNetworkAdapterTests(unittest.TestCase):
                 self.assertEqual(model._get_adapters_addresses(
                     emu, "iphlpapi.GetAdaptersAddresses", None, params), expected)
                 self.assertEqual(emu.mem_read(0x11000, 16), b"\0" * 16)
+
+    def test_extended_tcp_table_uses_guest_connection_and_persona_address(self):
+        for width in (4, 8):
+            with self.subTest(width=width):
+                emu = MemoryEmulator(width)
+                persona = load_persona(None)
+                persona["network_adapter"]["ipv4"] = "10.10.4.22"
+                model = GuestNetworkAdapter(persona)
+                model.network_bridge = SimpleNamespace(connected_tcp={17: {
+                    "local_port": 49152, "remote_ip": "203.0.113.7",
+                    "remote_port": 443, "pid": 9876,
+                }})
+                size_ptr, buffer = 0x10100, 0x11000
+                emu.mem_write(size_ptr, struct.pack("<I", 0))
+                params = [0, size_ptr, 0, 2, 5, 0]
+                self.assertEqual(model._get_extended_tcp_table(
+                    emu, "iphlpapi.GetExtendedTcpTable", None, params), 122)
+                self.assertEqual(struct.unpack("<I", emu.mem_read(size_ptr, 4))[0], 28)
+                emu.mem_write(size_ptr, struct.pack("<I", 28))
+                params[0] = buffer
+                self.assertEqual(model._get_extended_tcp_table(
+                    emu, "iphlpapi.GetExtendedTcpTable", None, params), 0)
+                self.assertEqual(emu.mem_read(buffer, 28),
+                                 struct.pack("<II4s4s4s4sI", 1, 5,
+                                             b"\x0a\x0a\x04\x16", b"\xc0\x00\x00\x00",
+                                             b"\xcb\x00\x71\x07", b"\x01\xbb\x00\x00", 9876))
+                self.assertEqual(model._get_extended_tcp_table(
+                    emu, "iphlpapi.GetExtendedTcpTable", None,
+                    [buffer, size_ptr, 0, 23, 5, 0]), 50)
 
 
 class GuestFeatureConfigurationTests(unittest.TestCase):

@@ -760,6 +760,7 @@ def run_native(
     guest_tokens = GuestTokens(persona)
     guest_lsa = GuestLSA()
     guest_network_adapter = GuestNetworkAdapter(persona)
+    guest_network_adapter.network_bridge = bridge
     guest_feature_configuration = GuestFeatureConfiguration()
     win_messages.guest_images = version_info.images
     win_messages.current_dir = persona["current_dir"]
@@ -823,6 +824,7 @@ def run_native(
     virtual_files.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     def cleanup_guest_process(emu, process):
+        bridge.cleanup_process(process)
         guest_lsa.cleanup_process(emu, process)
         guest_identity.cleanup_process(process)
         crt_streams.cleanup_process(process)

@@ -115,6 +115,7 @@ class _MibIfRow(ctypes.Structure):
 class GuestNetworkAdapter:
     def __init__(self, persona: dict):
         self.persona = persona
+        self.network_bridge = None
         self.read_guard = None
         self.write_guard = None
         self.events: list[dict] = []
@@ -128,6 +129,8 @@ class GuestNetworkAdapter:
                               "GetIpAddrTable", argc=3)
         emulator.add_api_hook(self._get_ip_forward_table, "iphlpapi",
                               "GetIpForwardTable", argc=3)
+        emulator.add_api_hook(self._get_extended_tcp_table, "iphlpapi",
+                              "GetExtendedTcpTable", argc=6)
         emulator.add_api_hook(self._get_adapters_addresses, "iphlpapi",
                               "GetAdaptersAddresses", argc=5)
         emulator.add_api_hook(self._convert_length_to_ipv4_mask, "iphlpapi",
@@ -285,6 +288,27 @@ class GuestNetworkAdapter:
         row.bDescr[:len(description)] = description
         image = struct.pack("<I", 1) + bytes(row)
         return self._write_mib_table(emu, api_name, params, image)
+
+    def _get_extended_tcp_table(self, emu, api_name, _original, params) -> int:
+        if len(params) != 6:
+            return ERROR_INVALID_PARAMETER
+        _table, _size, ordered, family, table_class, reserved = map(int, params)
+        if family != 2 or table_class != 5 or reserved:
+            return ERROR_NOT_SUPPORTED
+        connections = list(self.network_bridge.connected_tcp.values()) if self.network_bridge else []
+        if ordered:
+            connections.sort(key=lambda item: (item["remote_ip"], item["remote_port"],
+                                               item["local_port"]))
+        connections = connections[:128]
+        image = bytearray(struct.pack("<I", len(connections)))
+        local_ip = ipaddress.IPv4Address(self.persona["network_adapter"]["ipv4"]).packed
+        for connection in connections:
+            local_port = int(connection["local_port"]).to_bytes(2, "big") + b"\0\0"
+            remote_port = int(connection["remote_port"]).to_bytes(2, "big") + b"\0\0"
+            remote_ip = ipaddress.IPv4Address(connection["remote_ip"]).packed
+            image.extend(struct.pack("<I4s4s4s4sI", 5, local_ip, local_port,
+                                     remote_ip, remote_port, connection["pid"]))
+        return self._write_mib_table(emu, api_name, params[:3], bytes(image))
 
     def _get_ip_net_table(self, emu, api_name, _original, params) -> int:
         adapter = self.persona["network_adapter"]

@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -64,6 +64,13 @@ name in the current directory and up to 32 guest `PATH` entries. It adds `.exe`
 when no extension is supplied. A real host file in the guest current directory
 was absent from the guest lookup on both architectures; a persona virtual file
 in that same directory was found. Wildcards, `/r`, and multiple names exit 87.
+
+The included `netstat.exe` reads a guest-owned IPv4 TCP table through
+`GetExtendedTcpTable`. The default, `-an`, and `-ano` forms show live outbound
+guest TCP connections only; `-ano` includes guest PIDs. The local address is
+the persona address and the local port is synthetic, so broker socket ports
+and host network state are not exposed. Guest socket closure and process exit
+remove rows. UDP, listening sockets, IPv6, and other switches remain open.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`

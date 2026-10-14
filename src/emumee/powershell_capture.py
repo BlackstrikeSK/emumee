@@ -95,12 +95,53 @@ def engine_command_events(events: list[dict]) -> list[dict]:
     return result
 
 
+def guest_tool_event(event: dict, program_names: list[str], persona_sha256: str) -> tuple[dict, list[dict]]:
+    """Guest model payloads cannot claim external provenance or kernel argv."""
+    raw = bytes.fromhex(event['data_hex'])
+    if len(raw) > 65536:
+        raise ValueError('Guest utility record exceeds limit')
+    record = json.loads(raw)
+    if (not isinstance(record, dict) or record.get('event') != 'guest_windows_enumeration' or
+            record.get('program') not in program_names or not isinstance(record.get('arguments'), list) or
+            len(record['arguments']) > 64 or any(not isinstance(a, str) or len(a) > 16000 for a in record['arguments']) or
+            any(not isinstance(record.get(k), str) or not re.fullmatch('[a-f0-9]{64}', record[k]) for k in ('persona_sha256', 'pe_sha256')) or
+            type(record.get('guest_exit_code')) is not int or not 0 <= record['guest_exit_code'] <= 0xffffffff or
+            record.get('network_broker_available') is not False or record.get('architecture') != 'x64' or
+            not isinstance(record.get('network_events'), list) or len(record['network_events']) > 16 or
+            any(not isinstance(e, dict) or not isinstance(e.get('event'), str) for e in record['network_events']) or
+            not isinstance(record.get('errors'), list) or len(record['errors']) > 8 or
+            any(not isinstance(e, str) or len(e) > 2048 for e in record['errors'])):
+        raise ValueError('Guest utility record is malformed')
+    command = {'event': 'powershell_command_invocation', 'command': record['program'],
+               'command_type': 'EmulatedWindowsApplication', 'phase': 'emulation_finished',
+               'capture': 'guest_windows_emulation', 'provenance': 'in_process_data',
+               'guest_pid': event['pid'], 'observer_sequence': event['sequence'],
+               'bound_parameters': {}, 'unbound_arguments': record['arguments'],
+               'persona_sha256': record['persona_sha256'], 'pe_sha256': record['pe_sha256'],
+               'persona_matches_baseline': record['persona_sha256'] == persona_sha256,
+               'reported_guest_exit_code': record['guest_exit_code'], 'errors': record['errors']}
+    network = [{**e, 'capture': 'guest_windows_emulation', 'provenance': 'in_process_data',
+                'network_used': False, 'guest_tool_program': record['program'],
+                'observer_sequence': event['sequence'], 'guest_pid': event['pid']}
+               for e in record['network_events']]
+    return command, network
+
+
 def observer_image(image: str, payload: bytes, engine_payload: bytes | None = None) -> str:
     """Bake the trusted observer into a layer; runtime root stays read-only."""
+    base = json.loads(docker('image', 'inspect', image))[0]
+    reference = image
+    if re.fullmatch(r'sha256:[a-f0-9]{64}', image):
+        # BuildKit treats a raw image ID in FROM as a registry repository name.
+        # A private content-derived tag plus layer verification keeps this local.
+        reference = 'emumee-pwsh-runtime-base:' + image[7:]
+        docker('image', 'tag', image, reference)
+        if json.loads(docker('image', 'inspect', reference))[0]['Id'] != image:
+            raise ValueError('Runtime base image tag does not match its immutable ID')
     digest = hashlib.sha256(image.encode("ascii") + payload + (engine_payload or b"")).hexdigest()
     tag = "emumee-pwsh-exec-observer:" + digest[:32]
     archive = io.BytesIO()
-    dockerfile = (f"FROM {image}\nCOPY --chmod=0555 observer /observer\n" +
+    dockerfile = (f"FROM {reference}\nCOPY --chmod=0555 observer /observer\n" +
                   (f"COPY --chmod=0444 engine.dll {ENGINE_HOME}/System.Management.Automation.dll\n" if engine_payload else "") +
                   f"LABEL org.emumee.observer.build={digest}\n").encode("ascii")
     with tarfile.open(fileobj=archive, mode="w") as tar:
@@ -119,6 +160,8 @@ def observer_image(image: str, payload: bytes, engine_payload: bytes | None = No
     info = json.loads(docker("image", "inspect", tag))[0]
     if info["Config"].get("Labels", {}).get("org.emumee.observer.build") != digest:
         raise RuntimeError("Observer image label verification failed")
+    if info['RootFS']['Layers'][:len(base['RootFS']['Layers'])] != base['RootFS']['Layers']:
+        raise RuntimeError('Observer runtime does not extend the verified base layers')
     return info["Id"]
 
 

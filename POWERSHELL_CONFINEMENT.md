@@ -2,28 +2,50 @@
 
 Emumee has an experimental `powershell` command for supplied `.ps1` files.
 It runs PowerShell 7.5.12 inside Docker Desktop's Linux VM using the pinned,
-instrumented engine and an external native-process observer. It does not run
-host `powershell.exe` or `pwsh.exe`. The PE worker's `CreateProcess` path still
+instrumented engine, guest Windows enumeration tools, and an external
+native-process observer. It does not run host `powershell.exe` or `pwsh.exe`.
+The PE worker's `CreateProcess` path still
 rejects managed child PEs; it does not route PowerShell into this separate mode.
 
 ## Supplied scripts
 
 Build the observer and instrumented engine using the commands in the
 instrumented-engine section below. Docker Desktop must be running its Linux
-backend, with the pinned SDK image already pulled. Then run:
+backend, with the pinned SDK image already pulled. Build the Windows utility
+bridge from trusted project sources and a local wheel:
+
+```powershell
+.\tools\build_powershell_guest_tool_shim.ps1
+.venv\Scripts\python.exe -m pip wheel . --no-deps --no-build-isolation --wheel-dir output\powershell-guest-tools\wheel
+.venv\Scripts\python.exe -m tools.build_powershell_guest_tools `
+  --wheel output\powershell-guest-tools\wheel\emumee-0.1.0-py3-none-any.whl `
+  --shim output\powershell-guest-tools\shim `
+  --output output\powershell-guest-tools\build.json
+```
+
+This explicit build stage downloads Debian Python/venv packages and pinned
+Python dependencies. Its context contains only the wheel, shim, requirements,
+bootstrap, and Dockerfile. Submitted scripts and personas do not enter the
+image. The build manifest records the image ID, input hashes, utility list,
+and installed dependency versions. Runtime verifies its image labels and the
+derived observer image's base layers. Execution itself remains offline.
+
+Then run:
 
 ```powershell
 .venv\Scripts\python.exe -m emumee powershell examples\powershell-capture.ps1 `
   --observer output\powershell-exec-observer\observer `
   --instrumented-engine output\powershell-instrumented-engine\System.Management.Automation.dll `
+  --guest-tools-build output\powershell-guest-tools\build.json `
   --output output\powershell-dashboard-probe --timeout 60
 ```
 
 The script is limited to 1 MiB and the deadline to 1–300 seconds. Only the
-selected file enters the guest, through a length-prefixed observer stdin
-channel after the private authentication key. No source directory is mounted;
-script bytes are written to `/work/input.ps1` in a fresh temporary filesystem,
-and are never added to an image layer. Host environment variables and profiles
+selected file and validated Windows persona enter the guest through a bounded
+channel on observer stdin after the private authentication key. Script bytes
+are written to `/work/input.ps1` and persona JSON to `/work/persona.json` in a
+fresh temporary filesystem. They are never added to an image layer, and no
+source directory is mounted. Host environment variables and profiles
 are not passed into PowerShell. Both the script and native descendants execute
 inside the guest. The runtime root is read-only, network mode is `none`, all
 capabilities are dropped, and no-new-privileges is enabled. It uses private PID
@@ -60,7 +82,8 @@ returns 0 for an observed zero PowerShell exit without run errors, 1 for a
 recorded execution error or timeout, and 2 for setup/reporting failures.
 
 **Remaining requirements:** this is Linux PowerShell, with Linux identity and
-native binaries. Windows persona APIs and Windows utilities are not integrated.
+native binaries underneath the Windows utility bridge. General Windows APIs,
+PowerShell's Windows providers, and persistent shared Windows state are not integrated.
 Arbitrary .NET method calls are not fully observed. Engine parameter records
 are guest-generated and can be forged or bypassed; authenticated transport
 does not prove their truth. Native argv snapshots can race concurrent mutation
@@ -76,8 +99,75 @@ opt-in because they require the built artifacts and running Docker Desktop:
 
 ```powershell
 $env:EMUMEE_POWERSHELL_INTEGRATION = '1'
-.venv\Scripts\python.exe -m unittest tests.test_powershell tests.test_powershell_exec_observer tests.test_command_dashboard -q
+.venv\Scripts\python.exe -m unittest tests.test_powershell_guest_tools tests.test_powershell tests.test_powershell_exec_observer tests.test_command_dashboard tests.test_persona -q
 ```
+
+### Windows enumeration bridge
+
+The PowerShell CLI requires `--guest-tools-build`; it does not silently use
+Linux `whoami` or `hostname` when Windows enumeration tools are unavailable.
+`--persona <file.json>` accepts the same overrides as PE analysis. Without
+that option it uses the default Windows persona. The validated persona is
+limited to 4 MiB in transfer, and never becomes an image layer or host mount.
+
+All 40 bundled utilities listed in [the enumeration inventory](ENUMERATION_COVERAGE.md)
+are exposed as native Linux shims. Each shim invokes the guest's isolated
+Python and Emumee CPU emulator with the generated x64 Windows PE and original
+argument array. There is no host process, host resolver, arbitrary PE path,
+or live network broker fallback. Utilities retain their documented supported
+forms and error behavior. `examples/powershell-persona.ps1` exercises identity,
+adapter, registry, DNS, and ICMP queries through these same models.
+
+The guest bootstrap sets persona COMPUTERNAME, USERNAME, USERDOMAIN (the local
+account's computer name), USERPROFILE, SystemRoot, and windir values. Native
+shim names are placed first in guest PATH; `.exe` aliases provide PowerShell's
+case-insensitive lookup. A guest C: drive maps the System32 and Wbem utility
+paths to the same shims. This drive is a utility namespace, not a complete
+Windows filesystem or registry provider. Direct .NET Windows path handling
+still follows the underlying Linux runtime.
+
+Each utility starts with a fresh Windows persona, process, registry, file,
+and clock snapshot. Changes do not persist into the next utility invocation,
+and the utility's process list does not include the Linux PowerShell process.
+Native code that deliberately bypasses the shims can still inspect the Linux
+guest. Complete Windows environment fidelity remains open.
+
+Utility result records use `guest_windows_emulation`, distinct from external
+kernel exec observations. They contain the program and arguments, generated
+PE hash, persona hash, full Windows exit code, and bounded model network events.
+DNS and ICMP observations enter the dashboard timeline with `network_used: false`.
+Linux native exit status exposes only the low eight bits of the Windows code;
+the full code remains visible in the utility record. A known shim that starts
+without returning a valid model record is reported as incomplete.
+
+Persona hash comparisons flag ordinary modification of the guest persona file.
+The file and these records remain guest-accessible; arbitrary guest code can
+forge model data or output. The comparison is diagnostic, not attestation.
+Malformed model payloads cannot claim kernel provenance and do not discard
+independent native-exec evidence.
+
+### Verified Windows utility bridge (2026-10-14 UTC)
+
+The 67-test combined gate passed with Docker integration enabled. A custom
+persona completed supported queries through all 40 utilities, plus a second
+`whoami.exe` invocation through `Start-Process`. The test verified every
+reported PE hash against the generated bytes and every persona hash against
+the supplied snapshot. It also checked mixed-case `.exe` lookup, System32
+and Wbem paths, offline ICMP, and container removal. Local evidence is
+`output/powershell-persona-gate/20261014T223205Z-6bc2cd3b`.
+
+Separate live cases checked alternate identity, IPv4, registry, DNS, ping,
+environment values, unsupported-argument exit 87, full Windows exit 1355
+with Linux status 75, and detection of a modified guest persona file.
+Existing timeout, console-budget, network-denial, malformed-engine-record,
+filesystem-isolation, dashboard, and persona-validation tests also passed.
+
+A separate CLI run of `examples/powershell-persona.ps1` used OFFICE-PS-42,
+Morgan, and 192.168.1.148. All six utility calls reported the supplied persona,
+exit 0, and no run errors. The live dashboard displayed their reported Windows
+exit codes and persona comparisons, together with registry, DNS, and ICMP
+observations. Evidence is
+`output/powershell-dashboard-probe/20261014T223525Z-b4e9d826`.
 
 The sections below document the earlier fixed feasibility probes and the
 engine build used by the supplied-script mode.

@@ -8,6 +8,13 @@ reads the current guest registry. All listed utilities except
 `hostname.exe` reject unmodeled arguments with exit code 87. Guest commands
 never change host state.
 
+The experimental PowerShell CLI can call all bundled utilities through native
+Linux shims and the same x64 PE CPU/API models inside its offline guest. It
+requires a trusted guest-tools build and accepts the same persona overrides.
+Each call starts from a fresh snapshot; complete Windows PowerShell providers
+and shared mutable Windows state are not modeled. See
+[PowerShell confinement](POWERSHELL_CONFINEMENT.md#windows-enumeration-bridge).
+
 | Guest program | Included by default | Modeled read commands |
 | --- | --- | --- |
 | `hostname.exe` | Yes | Default hostname |

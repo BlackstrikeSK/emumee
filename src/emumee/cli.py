@@ -821,6 +821,8 @@ def main(argv: list[str] | None = None) -> int:
     p_powershell.add_argument("sample", help="PowerShell .ps1 file (up to 1 MiB)")
     p_powershell.add_argument("--observer", required=True, help="Trusted Linux observer built with tools/build_powershell_exec_observer.ps1")
     p_powershell.add_argument("--instrumented-engine", required=True, help="Trusted pinned engine DLL with its .build.json evidence")
+    p_powershell.add_argument("--guest-tools-build", required=True, help="Build JSON for guest Windows enumeration shims and CPU emulator")
+    p_powershell.add_argument("--persona", help="Windows persona override JSON; requires --guest-tools-build")
     p_powershell.add_argument("--output", help="Dashboard report directory (default: ./output)")
     p_powershell.add_argument("--timeout", type=int, default=60, help="Container deadline in seconds (1..300)")
     p_powershell.set_defaults(func=_powershell)
@@ -842,7 +844,9 @@ def _powershell(args: argparse.Namespace) -> int:
     from .powershell import run_script, save_script_run
     try:
         report = run_script(Path(args.sample), Path(args.observer), Path(args.instrumented_engine),
-                            timeout=args.timeout)
+                            timeout=args.timeout,
+                            guest_tools_build=Path(args.guest_tools_build) if args.guest_tools_build else None,
+                            persona_path=Path(args.persona) if args.persona else None)
         run_dir = save_script_run(report, _output_root(args.output))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)

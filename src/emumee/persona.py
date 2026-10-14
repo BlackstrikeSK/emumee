@@ -188,13 +188,17 @@ def virtual_file_bytes(entry: dict) -> bytes:
     return content
 
 
-def load_persona(path: Path | None) -> dict:
+def load_persona(path: Path | None, *, document: dict | None = None) -> dict:
+    if path is not None and document is not None:
+        raise ValueError("Supply one persona source")
     persona = copy.deepcopy(DEFAULT_PERSONA)
     previous_adapter_description = persona["network_adapter"]["description"]
     refresh_registry = False
     custom_files = False
-    if path is not None:
-        supplied = json.loads(path.read_text(encoding="utf-8"))
+    if path is not None or document is not None:
+        supplied = copy.deepcopy(document) if document is not None else json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(supplied, dict):
+            raise ValueError("Persona overrides must be an object")
         unknown = set(supplied) - set(persona)
         if unknown:
             raise ValueError(f"Unknown persona fields: {', '.join(sorted(unknown))}")

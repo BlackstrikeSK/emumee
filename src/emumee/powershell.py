@@ -6,6 +6,7 @@ import datetime as dt
 import base64
 import hashlib
 import json
+import re
 import secrets
 import subprocess
 import threading
@@ -14,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from .powershell_capture import (SDK_IMAGE, SOURCE_COMMIT, command_events, docker,
-                                engine_command_events, observer_image, verified_events)
+                                engine_command_events, guest_tool_event, observer_image, verified_events)
 from .reports import ENGINE_INTEGRITY, valid_summary
 
 MAX_SCRIPT = 1024 * 1024
@@ -37,7 +38,7 @@ def _read_bounded(path: Path, limit: int) -> bytes:
     return content
 
 
-def configuration_checks(info: dict) -> dict:
+def configuration_checks(info: dict, *, persona_mode=False) -> dict:
     host, config = info['HostConfig'], info['Config']
     return {
         'network_none': host['NetworkMode'] == 'none',
@@ -60,7 +61,7 @@ def configuration_checks(info: dict) -> dict:
             '/tmp': 'rw,nosuid,nodev,noexec,size=16m,mode=1777'},
         'logging_disabled': host['LogConfig']['Type'] == 'none',
         'trusted_entrypoint': config.get('Entrypoint') is None,
-        'expected_command': config['Cmd'] == ['/observer', '--script'],
+        'expected_command': config['Cmd'] == ['/observer', '--script-persona' if persona_mode else '--script'],
     }
 
 
@@ -133,10 +134,22 @@ def _attach(name: str, input_bytes: bytes, timeout: int) -> tuple[bytes, bytes, 
     return bytes(buffers[0]), bytes(buffers[1]), reason
 
 
-def project_trace(events: list[dict]) -> tuple[list[dict], list[dict], dict, list[str]]:
+def project_trace(events: list[dict], *, guest_tools=None, persona_sha256='') -> tuple[list[dict], list[dict], dict, list[str]]:
     commands = command_events(events)
     errors = []
+    model_network = []
     for event in events:
+        if event['event'] == 'guest_tool_record':
+            try:
+                command, network = guest_tool_event(event, guest_tools or [], persona_sha256)
+                commands.append(command)
+                model_network.extend(network)
+                if not command['persona_matches_baseline']:
+                    errors.append(f"Guest Windows persona changed before invocation at observer sequence {event['sequence']}")
+                errors.extend(command['errors'])
+            except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
+                errors.append(f"Rejected malformed guest utility record at observer sequence {event['sequence']}")
+            continue
         if event['event'] != 'guest_engine_record':
             continue
         try:
@@ -144,6 +157,13 @@ def project_trace(events: list[dict]) -> tuple[list[dict], list[dict], dict, lis
         except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
             errors.append(f"Rejected malformed engine record at observer sequence {event['sequence']}")
     commands.sort(key=lambda c: c['observer_sequence'])
+    if guest_tools:
+        reported = {c['guest_pid'] for c in commands if c['capture'] == 'guest_windows_emulation'}
+        for command in commands:
+            if (command['capture'] == 'external_linux_ptrace' and command.get('path', '').startswith(
+                    ('/opt/emumee/bin/', '/opt/emumee/windows/Windows/System32/')) and
+                    command['guest_pid'] not in reported):
+                errors.append(f"Guest Windows utility did not return a valid emulation record: {command['command']}")
     for number, command in enumerate(commands, 1):
         command['sequence'] = number
     network = [{**event, 'event': 'network_denied', 'api': 'linux.syscall',
@@ -151,6 +171,7 @@ def project_trace(events: list[dict]) -> tuple[list[dict], list[dict], dict, lis
                 'reason': 'Network syscall denied before execution'}
                for event in events if event['event'] == 'native_syscall_denied' and
                event['syscall_number'] in {41, 42, 43, 44, 45, 46, 47, 49, 50, 53, 288, 299, 307}]
+    network.extend(model_network)
     console = {'stdout': '', 'stderr': '', 'stdout_truncated': False, 'stderr_truncated': False}
     for fd, field in ((1, 'stdout'), (2, 'stderr')):
         writes = [event for event in events if event['event'] == 'native_console_write' and event['fd'] == fd]
@@ -160,12 +181,34 @@ def project_trace(events: list[dict]) -> tuple[list[dict], list[dict], dict, lis
     return commands, network, console, errors
 
 
-def run_script(sample: Path, observer: Path, instrumented_engine: Path, *, timeout=60) -> dict:
+def run_script(sample: Path, observer: Path, instrumented_engine: Path, *, timeout=60,
+               guest_tools_build: Path | None = None, persona_path: Path | None = None) -> dict:
     if type(timeout) is not int or not 1 <= timeout <= 300:
         raise ValueError('PowerShell timeout must be 1..300 seconds')
     if sample.suffix.lower() != '.ps1':
         raise ValueError('PowerShell input must be a .ps1 file')
     source = _read_bounded(sample, MAX_SCRIPT)
+    if persona_path and not guest_tools_build:
+        raise ValueError('A Windows persona requires --guest-tools-build')
+    guest_tools = None
+    persona = None
+    persona_bytes = b''
+    persona_sha256 = ''
+    if guest_tools_build:
+        from .persona import load_persona
+        guest_tools = json.loads(_read_bounded(guest_tools_build, 65536))
+        if (not isinstance(guest_tools, dict) or guest_tools.get('schema') != 1 or guest_tools.get('sdk_image') != SDK_IMAGE or
+                not isinstance(guest_tools.get('image_id'), str) or not re.fullmatch(r'sha256:[a-f0-9]{64}', guest_tools['image_id']) or
+                any(not isinstance(guest_tools.get(k), str) or not re.fullmatch('[a-f0-9]{64}', guest_tools[k])
+                    for k in ('build_sha256', 'wheel_sha256')) or
+                not isinstance(guest_tools.get('program_names'), list) or not 1 <= len(guest_tools['program_names']) <= 128 or
+                any(not isinstance(n, str) or not re.fullmatch('[a-z0-9-]+[.]exe', n) for n in guest_tools['program_names'])):
+            raise ValueError('Invalid guest tools build evidence')
+        persona = load_persona(persona_path)
+        persona_bytes = json.dumps(persona, ensure_ascii=True, separators=(',', ':')).encode('ascii')
+        if len(persona_bytes) > 4 * 1024 * 1024:
+            raise ValueError('Windows persona exceeds the guest transfer limit')
+        persona_sha256 = hashlib.sha256(persona_bytes).hexdigest()
     payload = _read_bounded(observer, 16 * 1024 * 1024)
     if payload[:6] != b'\x7fELF\x02\x01':
         raise ValueError('Observer must be a trusted built Linux x86-64 ELF')
@@ -180,7 +223,17 @@ def run_script(sample: Path, observer: Path, instrumented_engine: Path, *, timeo
     base = json.loads(docker('image', 'inspect', SDK_IMAGE))[0]
     if base['Os'] != 'linux' or base['Architecture'] != 'amd64':
         raise ValueError('Pinned Linux amd64 SDK image is required')
-    image = observer_image(SDK_IMAGE, payload, engine_payload)
+    runtime_base = SDK_IMAGE
+    if guest_tools:
+        tool_info = json.loads(docker('image', 'inspect', guest_tools['image_id']))[0]
+        labels = tool_info['Config'].get('Labels', {})
+        if (tool_info['Id'] != guest_tools['image_id'] or tool_info['Os'] != 'linux' or tool_info['Architecture'] != 'amd64' or
+                labels.get('org.emumee.guest-tools.schema') != '1' or
+                labels.get('org.emumee.guest-tools.build') != guest_tools['build_sha256'] or
+                labels.get('org.emumee.guest-tools.wheel') != guest_tools['wheel_sha256']):
+            raise ValueError('Guest tools image does not match build evidence')
+        runtime_base = guest_tools['image_id']
+    image = observer_image(runtime_base, payload, engine_payload)
     name = 'emumee-powershell-' + uuid.uuid4().hex
     # The script travels through observer stdin into tmpfs; never a bind mount or image layer.
     created = False
@@ -193,15 +246,19 @@ def run_script(sample: Path, observer: Path, instrumented_engine: Path, *, timeo
                '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777',
                '--env=HOME=/work', '--env=POWERSHELL_TELEMETRY_OPTOUT=1',
                '--env=DOTNET_CLI_TELEMETRY_OPTOUT=1', '--env=DOTNET_EnableDiagnostics=0',
-               '--env=OPENSSL_CONF=/dev/null', '--entrypoint=', image, '/observer', '--script', timeout=90)
+               '--env=OPENSSL_CONF=/dev/null', '--entrypoint=', image, '/observer',
+               '--script-persona' if guest_tools else '--script', timeout=90)
         created = True
         info = json.loads(docker('inspect', name))[0]
-        checks = configuration_checks(info)
+        checks = configuration_checks(info, persona_mode=bool(guest_tools))
         if not all(checks.values()):
             raise RuntimeError('Container configuration failed checks: ' + ', '.join(k for k, v in checks.items() if not v))
         key = secrets.token_bytes(32)
         started = dt.datetime.now(dt.timezone.utc).isoformat()
-        raw, stderr, stop_reason = _attach(name, key + len(source).to_bytes(4, 'big') + source, timeout)
+        input_bytes = key + len(source).to_bytes(4, 'big') + source
+        if guest_tools:
+            input_bytes += len(persona_bytes).to_bytes(4, 'big') + persona_bytes
+        raw, stderr, stop_reason = _attach(name, input_bytes, timeout)
         state = json.loads(docker('inspect', name))[0]['State']
         if state['Running']:
             raise RuntimeError('Container still running after attach ended')
@@ -216,7 +273,8 @@ def run_script(sample: Path, observer: Path, instrumented_engine: Path, *, timeo
             events = []
             errors.append('Observer trace rejected: ' + str(error))
         complete = bool(events and events[-1]['event'] == 'observer_finished')
-        commands, network, console, parse_errors = project_trace(events)
+        commands, network, console, parse_errors = project_trace(events,
+            guest_tools=guest_tools['program_names'] if guest_tools else None, persona_sha256=persona_sha256)
         errors.extend(parse_errors)
         if not complete:
             errors.append('Observer lifecycle did not finish; retained records are incomplete')
@@ -230,17 +288,23 @@ def run_script(sample: Path, observer: Path, instrumented_engine: Path, *, timeo
         root_exit = events[-1].get('root_exit_code') if complete else None
         if root_exit is not None and root_exit != 0:
             errors.append(f'PowerShell exited with code {root_exit}')
+        limitations = list(LIMITATIONS)
+        if guest_tools:
+            limitations[0] = 'Bundled Windows utilities use per-invocation x64 CPU emulation and persona snapshots; full Windows APIs and persistent shared state remain incomplete'
+            limitations.append('Utility records are guest-generated; persona hash comparisons are diagnostic, not tamper-resistant attestation')
+            limitations.append('Linux native exit status exposes the low eight bits; the model record retains the full Windows utility exit code')
         return {'source': source.decode('utf-16' if source[:2] in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig', errors='replace'),
                 'sample_name': sample.name, 'sample_sha256': hashlib.sha256(source).hexdigest(),
                 'input_bytes_base64': base64.b64encode(source).decode('ascii'),
                 'execution_started_at': started, 'execution_finished_at': dt.datetime.now(dt.timezone.utc).isoformat(),
                 'image': SDK_IMAGE, 'image_id': image, 'base_image_id': base['Id'],
                 'observer_sha256': hashlib.sha256(payload).hexdigest(), 'instrumented_engine_build': build,
+                'guest_tools_build': guest_tools, 'windows_persona': persona, 'persona_sha256': persona_sha256,
                 'configuration_checks': checks, 'observer_events': events, 'observer_trace_complete': complete,
                 'command_events': commands, 'network_events': network, 'console_output': console,
                 'errors': errors, 'guest_exit_code': root_exit, 'timeout_reached': stop_reason == 'timeout',
                 'completion_reason': 'timeout' if stop_reason == 'timeout' else ('error' if errors else 'exit_process'),
-                'limitations': LIMITATIONS}
+                'limitations': limitations}
     finally:
         if created:
             docker('rm', '--force', name)
@@ -270,6 +334,8 @@ def save_script_run(report: dict, root: Path) -> Path:
                'run_manifest': {'probe_only': False, 'execution_boundary': 'docker-desktop-linux-vm',
                                 'network_mode': 'none', 'image': report['image'], 'image_id': report['image_id'],
                                 'configuration_checks': report['configuration_checks'],
+                                'guest_tools_build': report.get('guest_tools_build'),
+                                'persona_sha256': report.get('persona_sha256'),
                                 'engine_report_integrity': ENGINE_INTEGRITY}}
     if not valid_summary(summary):
         raise ValueError('Invalid PowerShell report envelope')

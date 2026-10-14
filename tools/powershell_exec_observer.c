@@ -34,6 +34,7 @@ static size_t used;
 static unsigned long sequence;
 static pid_t root_pid;
 static int script_mode;
+static int persona_mode;
 static size_t console_totals[2];
 static struct stat console_identity[2];
 static struct { pid_t pid; int blocked; int console_fd; size_t console_size;
@@ -122,7 +123,7 @@ static int denied(const struct ptrace_syscall_info *info) {
     return 0;
 }
 
-static int script_input(void) {
+static int framed_input(const char *path, uint32_t maximum) {
     unsigned char header[4]; size_t count = 0;
     while (count < 4) {
         ssize_t n = read(0, header + count, 4 - count);
@@ -131,8 +132,8 @@ static int script_input(void) {
     }
     uint32_t size = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) |
                     ((uint32_t)header[2] << 8) | header[3];
-    if (!size || size > 1024 * 1024) return -1;
-    int fd = open("/work/input.ps1", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0400);
+    if (!size || size > maximum) return -1;
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0400);
     if (fd < 0) return -1;
     unsigned char data[4096];
     while (size) {
@@ -197,8 +198,10 @@ int main(int argc, char **argv) {
         if (n <= 0) return 91;
         count += (size_t)n;
     }
-    script_mode = argc == 2 && !strcmp(argv[1], "--script");
-    if (script_mode && script_input()) return 91;
+    persona_mode = argc == 2 && !strcmp(argv[1], "--script-persona");
+    script_mode = persona_mode || (argc == 2 && !strcmp(argv[1], "--script"));
+    if (script_mode && framed_input("/work/input.ps1", 1024 * 1024)) return 91;
+    if (persona_mode && framed_input("/work/persona.json", 4 * 1024 * 1024)) return 91;
     int console_fds[2] = {-1, -1};
     if (script_mode) {
         const char *paths[] = {"/work/stdout", "/work/stderr"};
@@ -222,6 +225,7 @@ int main(int argc, char **argv) {
         raise(SIGSTOP);
         char *script_argv[] = {"pwsh", "-NoLogo", "-NoProfile", "-NonInteractive",
                                "-File", "/work/input.ps1", NULL};
+        if (persona_mode) script_argv[5] = "/opt/emumee/bootstrap.ps1";
         char **launch = script_mode ? script_argv : argv + 1;
         execvp(launch[0], launch);
         _exit(94);
@@ -270,10 +274,11 @@ int main(int argc, char **argv) {
             if (info.op == PTRACE_SYSCALL_INFO_ENTRY) {
                 console_entry(pid, index, &info);
                 if (info.entry.nr == SYS_execve || info.entry.nr == SYS_execveat) exec_event(pid, &info);
-                if (info.entry.nr == SYS_write && info.entry.args[0] == 198) {
+                if (info.entry.nr == SYS_write && (info.entry.args[0] == 198 || info.entry.args[0] == 197)) {
                     unsigned long length = info.entry.args[2];
                     if (!length || length > 65536) fail("engine_record_limit");
-                    begin(); add("{\"event\":\"guest_engine_record\",\"pid\":%d,\"data_hex\":", pid);
+                    begin(); add("{\"event\":\"%s\",\"pid\":%d,\"data_hex\":",
+                                 info.entry.args[0] == 198 ? "guest_engine_record" : "guest_tool_record", pid);
                     hex_memory(pid, info.entry.args[1], length, 0); add("}"); emit();
                 }
                 int error = denied(&info);

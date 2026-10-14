@@ -49,6 +49,21 @@ class _Emu:
 
 
 class CRTStartupTests(unittest.TestCase):
+    def test_wildcard_mode_only_reports_arguments_that_need_expansion(self):
+        emu = _Emu(8)
+        emu.get_address_map = lambda _address: type(
+            'Map', (), {'base': 0, 'size': 0x10000,
+                        'free': False, 'prot': 7})()
+        crt = CRTStartup()
+        params = [0x100, 0x108, 0x110, 1, 0]
+        self.assertEqual(crt._mainargs(emu, 'msvcrt.__getmainargs', params,
+                                        wide=False), 0)
+        self.assertFalse(crt.unsupported)
+        emu.get_argv = lambda: ['expand.exe', '*.cab']
+        self.assertEqual(crt._mainargs(emu, 'msvcrt.__getmainargs', params,
+                                        wide=False), 0)
+        self.assertIn('wildcard expansion not modeled', crt.unsupported[-1])
+
     def test_explicit_raw_argument_quotes_leave_crt_value_plain(self):
         persona = load_persona(None)
         guest_args = ['Coffee', r'C:\Users\Alex\Documents\shopping-list.txt']

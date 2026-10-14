@@ -290,13 +290,13 @@ class CRTStartup:
     def _mainargs(self, emu, api_name, params, *, wide: bool) -> int:
         argc_ptr, argv_ptr, env_ptr, wildcard, _startup = map(int, params)
         width = emu.get_ptr_size()
-        if wildcard:
+        argv = list(emu.get_argv())
+        if wildcard and any("*" in arg or "?" in arg for arg in argv[1:]):
             self.unsupported.append(f"{api_name}: wildcard expansion not modeled")
         for address, size in ((argc_ptr, 4), (argv_ptr, width), (env_ptr, width)):
             if not self._allowed(emu, address, size, "write"):
                 self.unsupported.append(f"{api_name}: output pointer denied")
                 return 22
-        argv = list(emu.get_argv())
         environment = emu.get_env()
         if len(argv) > MAX_ARGUMENTS or len(environment) > MAX_ARGUMENTS:
             self.unsupported.append(f"{api_name}: argument or environment count exceeds limit")

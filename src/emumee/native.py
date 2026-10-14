@@ -708,6 +708,7 @@ def run_native(
         if dll.resolve() != destination.resolve():
             shutil.copyfile(dll, destination)
         dll = destination
+        persona_sources[str(dll)] = dll.read_bytes()
         guest_path = ntpath.normpath((companion_guest_paths or {}).get(
             dll.name, persona["current_dir"] + "\\" + dll.name))
         if guest_path.casefold() not in mapped_guest_paths:

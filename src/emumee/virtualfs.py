@@ -546,6 +546,11 @@ class VirtualFileBridge:
         emu.set_last_error(0)
         return needed - 1
 
+    @staticmethod
+    def _invalid_file_handle(emu) -> int:
+        pointer_size = (emu.get_ptr_size() if hasattr(emu, "get_ptr_size") else 4)
+        return (1 << (pointer_size * 8)) - 1
+
     def _create_file(self, emu, api_name, original, params):
         disposition = int(params[4]) & 0xFFFFFFFF
         manager = emu.get_file_manager()
@@ -559,15 +564,17 @@ class VirtualFileBridge:
                 inherit = bool(int.from_bytes(emu.mem_read(security + offset, 4), "little"))
             except Exception:
                 emu.set_last_error(87)
-                return 0xFFFFFFFF
+                return self._invalid_file_handle(emu)
             if length < size:
                 emu.set_last_error(87)
-                return 0xFFFFFFFF
+                return self._invalid_file_handle(emu)
         width = 2 if api_name.endswith("W") else 1
         raw_path = emu.read_mem_string(int(params[0]), width) if params[0] else ""
         if (self.console_open_handler is not None and
                 raw_path.casefold() in ("conin$", "conout$")):
-            return self.console_open_handler(emu, raw_path, params)
+            handle = self.console_open_handler(emu, raw_path, params)
+            return (self._invalid_file_handle(emu)
+                    if handle in (0, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF) else handle)
         path = self._path(raw_path) if raw_path else ""
         existed = bool(path and manager.does_file_exist(path))
         access, share = int(params[1]) & 0xFFFFFFFF, int(params[2]) & 0xFFFFFFFF
@@ -577,14 +584,14 @@ class VirtualFileBridge:
             self.unsupported.append(f"{api_name}: unsupported creation attributes "
                                     f"0x{creation_attributes:x}")
             emu.set_last_error(50)
-            return 0xFFFFFFFF
+            return self._invalid_file_handle(emu)
         delete_on_close = bool(int(params[5]) & 0x04000000)
         # TRUNCATE_EXISTING requires GENERIC_WRITE even when the file exists.
         if disposition == 5 and not access & 0x40000000:
             emu.set_last_error(87)  # ERROR_INVALID_PARAMETER
             self.events.append({"event": "virtual_file_open_denied", "api": api_name,
                                 "path": path, "reason": "truncate requires GENERIC_WRITE"})
-            return 0xFFFFFFFF
+            return self._invalid_file_handle(emu)
         key = self._key(path) if path else ""
         canonical_before = self._file(manager, path) if path else None
         if canonical_before is not None and self._attributes_for(canonical_before) & 0x1 and (
@@ -593,12 +600,12 @@ class VirtualFileBridge:
             emu.set_last_error(5)  # ERROR_ACCESS_DENIED for a new mutating handle.
             self.events.append({"event": "virtual_file_open_denied", "api": api_name,
                                 "path": path, "reason": "read-only file"})
-            return 0xFFFFFFFF
+            return self._invalid_file_handle(emu)
         if canonical_before is not None and id(canonical_before) in self.pending_disposition_files:
             emu.set_last_error(5)  # ERROR_ACCESS_DENIED
             self.events.append({"event": "virtual_file_open_denied", "api": api_name,
                                 "path": path, "reason": "pending disposition deletion"})
-            return 0xFFFFFFFF
+            return self._invalid_file_handle(emu)
         granted = self._share_access(access)
         if delete_on_close:
             granted |= 0x4  # The open requests delete access as well.
@@ -612,19 +619,19 @@ class VirtualFileBridge:
                 emu.set_last_error(32)  # ERROR_SHARING_VIOLATION
                 self.events.append({"event": "virtual_file_open_denied", "api": api_name,
                                     "path": path, "reason": "sharing violation"})
-                return 0xFFFFFFFF
+                return self._invalid_file_handle(emu)
         if delete_on_close:
             if (canonical_before is not None and canonical_before.config or
                     existed and canonical_before is None):
                 self.unsupported.append(f"{api_name}: delete-on-close configured mapping {path}")
                 emu.set_last_error(50)  # ERROR_NOT_SUPPORTED
-                return 0xFFFFFFFF
+                return self._invalid_file_handle(emu)
         if (canonical_before is not None and id(canonical_before) in self.delete_on_close_files
                 and not share & 0x4):
             emu.set_last_error(32)  # ERROR_SHARING_VIOLATION
             self.events.append({"event": "virtual_file_open_denied", "api": api_name,
                                 "path": path, "reason": "delete-on-close sharing violation"})
-            return 0xFFFFFFFF
+            return self._invalid_file_handle(emu)
         if disposition == 5:
             # Installed Speakeasy incorrectly defines TRUNCATE_EXISTING as 4,
             # so its CreateFile handler cannot process the real Win32 value 5.
@@ -634,11 +641,11 @@ class VirtualFileBridge:
                     emu.set_last_error(50)  # ERROR_NOT_SUPPORTED
                 else:
                     emu.set_last_error(2)  # ERROR_FILE_NOT_FOUND
-                return 0xFFFFFFFF
+                return self._invalid_file_handle(emu)
             if canonical_before.config:
                 self.unsupported.append(f"{api_name}: TRUNCATE_EXISTING configured mapping {path}")
                 emu.set_last_error(50)
-                return 0xFFFFFFFF
+                return self._invalid_file_handle(emu)
             opened_handle = manager.file_open(path, create=False)
             handle = int(opened_handle) if opened_handle is not None else 0xFFFFFFFF
             emu.set_last_error(0 if handle != 0xFFFFFFFF else 2)
@@ -684,7 +691,8 @@ class VirtualFileBridge:
             self.events.append(event)
             if event["success"]:
                 emu.set_last_error(183 if existed else 0)  # ERROR_ALREADY_EXISTS or SUCCESS
-        return handle
+        return (self._invalid_file_handle(emu)
+                if handle in (0, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF) else handle)
 
     def _close_handle(self, emu, api_name, original, params, *,
                       owner_override: int | None = None,

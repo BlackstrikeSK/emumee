@@ -51,6 +51,28 @@ class _Guest:
 
 
 class FullPathTests(unittest.TestCase):
+    def test_create_file_failure_uses_pointer_width_invalid_handle(self):
+        for pointer_size, expected in ((4, 0xffffffff), (8, 0xffffffffffffffff)):
+            with self.subTest(pointer_size=pointer_size):
+                emu = _Guest()
+                emu.get_ptr_size = lambda: pointer_size
+                manager = SimpleNamespace(files=[], file_handles={},
+                                          does_file_exist=lambda _path: False)
+                emu.get_file_manager = lambda: manager
+                emu.mem_write(0x100, r'C:\Users\Alex\Documents\missing.txt'.encode('utf-16le') + b'\0\0')
+                bridge = VirtualFileBridge(emu.current_dir, None)
+                self.assertEqual(bridge._create_file(
+                    emu, 'kernel32.CreateFileW', lambda _params: 0xffffffff,
+                    [0x100, 0x80000000, 3, 0, 3, 0x80, 0]), expected)
+                self.assertEqual(bridge._create_file(
+                    emu, 'kernel32.CreateFileW', lambda _params: self.fail('invalid request reached engine'),
+                    [0x100, 0x80000000, 3, 0, 5, 0x80, 0]), expected)
+                emu.mem_write(0x200, 'CONOUT$\0'.encode('utf-16le'))
+                bridge.console_open_handler = lambda *_args: 0xffffffff
+                self.assertEqual(bridge._create_file(
+                    emu, 'kernel32.CreateFileW', None,
+                    [0x200, 0x80000000, 3, 0, 3, 0x80, 0]), expected)
+
     def test_configured_file_mapping_is_read_only_and_process_owned(self):
         path = r'C:\Users\Alex\Documents\shopping-list.txt'
         entry = SimpleNamespace(mode='full_path', emu_path=path,

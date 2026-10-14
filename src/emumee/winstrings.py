@@ -44,6 +44,12 @@ class GuestStrings:
         for module in ('ucrtbase', 'api-ms-win-crt-private-l1-1-0'):
             emulator.add_api_hook(self._wcschr, module, 'wcschr', argc=2,
                                   call_conv=e_arch.CALL_CONV_CDECL)
+        for module in ('msvcrt', 'ucrtbase', 'api-ms-win-crt-private-l1-1-0',
+                       'api-ms-win-crt-string-l1-1-0'):
+            emulator.add_api_hook(self._wcsncmp, module, 'wcsncmp', argc=3,
+                                  call_conv=e_arch.CALL_CONV_CDECL)
+        for module in ('user32', 'kernel32', 'api-ms-win-core-string-l2-1-0'):
+            emulator.add_api_hook(self._char_upper_w, module, 'CharUpperW', argc=1)
         emulator.add_api_hook(self._trim, 'shlwapi', 'StrTrimW', argc=2)
         emulator.add_api_hook(self._oem_to_unicode, 'ntdll',
                               'RtlOemToUnicodeN', argc=5)
@@ -319,6 +325,52 @@ class GuestStrings:
                 return 0
         self.unsupported.append(f'{api_name}: string exceeds limit')
         return 0
+
+    def _wcsncmp(self, emu, api_name, _original, params) -> int:
+        first, second, count = map(int, params)
+        if count == 0:
+            return 0
+        for index in range(min(count, MAX_CHARS + 1)):
+            left_at = first + index * 2
+            right_at = second + index * 2
+            if not self._access(emu, left_at, 2) or not self._access(emu, right_at, 2):
+                self.unsupported.append(f'{api_name}: inaccessible string')
+                return 0
+            try:
+                left = int.from_bytes(emu.mem_read(left_at, 2), 'little')
+                right = int.from_bytes(emu.mem_read(right_at, 2), 'little')
+            except Exception:
+                self.unsupported.append(f'{api_name}: inaccessible string')
+                return 0
+            if left != right:
+                return -1 if left < right else 1
+            if left == 0:
+                return 0
+        if count > MAX_CHARS:
+            self.unsupported.append(f'{api_name}: comparison exceeds limit')
+        return 0
+
+    def _char_upper_w(self, emu, api_name, _original, params) -> int:
+        address = int(params[0])
+        if address <= 0xffff:
+            char = chr(address & 0xffff)
+            if char.isascii():
+                return ord(char.upper())
+            self.unsupported.append(f'{api_name}: non-ASCII character mapping unavailable')
+            return address
+        value = self._read(emu, address, -1, True)
+        if value is None or not value.isascii():
+            self.unsupported.append(f'{api_name}: inaccessible or non-ASCII string')
+            return address
+        image = (value.upper() + '\0').encode('utf-16le')
+        if not self._writable(emu, address, len(image)):
+            self.unsupported.append(f'{api_name}: guest string is not writable')
+            return address
+        try:
+            emu.mem_write(address, image)
+        except Exception:
+            self.unsupported.append(f'{api_name}: guest string is not writable')
+        return address
 
     def _access(self, emu, address: int, size: int) -> bool:
         if not address or size <= 0:

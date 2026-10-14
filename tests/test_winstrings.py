@@ -11,18 +11,18 @@ from emumee.native import _api_coverage
 
 class _Map:
     base = 0
-    size = 65536
+    size = 131072
     free = False
     prot = common.PERM_MEM_READ | common.PERM_MEM_WRITE
 
 
 class _Emu:
     def __init__(self):
-        self.memory = bytearray(65536)
+        self.memory = bytearray(131072)
         self.last_error = 0
 
     def get_address_map(self, address):
-        return _Map() if 0 <= address < 65536 else None
+        return _Map() if 0 <= address < 131072 else None
 
     def mem_read(self, address, size):
         return bytes(self.memory[address:address + size])
@@ -204,6 +204,8 @@ class WinStringTests(unittest.TestCase):
                       hooks)
         self.assertIn(('api-ms-win-core-libraryloader-l1-2-0',
                        'FindStringOrdinal', 6), hooks)
+        self.assertIn(('msvcrt', 'wcsncmp', 3), hooks)
+        self.assertIn(('api-ms-win-core-string-l2-1-0', 'CharUpperW', 1), hooks)
 
     def test_wcschr_returns_guest_pointer_including_terminator(self):
         self.assertEqual(self.api._wcschr(
@@ -212,6 +214,38 @@ class WinStringTests(unittest.TestCase):
             self.emu, 'ucrtbase.wcschr', None, [0x100, 0]), 0x112)
         self.assertEqual(self.api._wcschr(
             self.emu, 'ucrtbase.wcschr', None, [0x100, ord('Z')]), 0)
+
+    def test_wcsncmp_stops_at_count_difference_or_terminator(self):
+        self.emu.mem_write(0x500, 'ABx\0'.encode('utf-16le'))
+        self.emu.mem_write(0x600, 'ABy\0'.encode('utf-16le'))
+        call = lambda count: self.api._wcsncmp(
+            self.emu, 'msvcrt.wcsncmp', None, [0x500, 0x600, count])
+        self.assertEqual(call(0), 0)
+        self.assertEqual(call(2), 0)
+        self.assertLess(call(3), 0)
+        self.assertGreater(self.api._wcsncmp(
+            self.emu, 'msvcrt.wcsncmp', None, [0x600, 0x500, 3]), 0)
+        self.emu.mem_write(0x600, 'AB\0'.encode('utf-16le'))
+        self.assertGreater(call(4), 0)
+        self.api.read_guard = lambda _emu, address, _size: address != 0x500
+        self.assertEqual(call(1), 0)
+        self.assertTrue(self.api.unsupported)
+
+    def test_char_upper_w_changes_ascii_buffer_and_single_character(self):
+        address = 0x10500
+        self.emu.mem_write(address, 'Work\\notes.txt\0'.encode('utf-16le'))
+        call = lambda: self.api._char_upper_w(
+            self.emu, 'api-ms-win-core-string-l2-1-0.CharUpperW', None, [address])
+        self.assertEqual(call(), address)
+        self.assertEqual(self.api._read(self.emu, address, -1, True),
+                         'WORK\\NOTES.TXT')
+        self.assertEqual(self.api._char_upper_w(
+            self.emu, 'user32.CharUpperW', None, [ord('z')]), ord('Z'))
+        self.api.write_guard = lambda *_args: False
+        self.emu.mem_write(address, 'more\0'.encode('utf-16le'))
+        self.assertEqual(call(), address)
+        self.assertEqual(self.api._read(self.emu, address, -1, True), 'more')
+        self.assertTrue(self.api.unsupported)
 
     def test_report_does_not_treat_colon_text_as_signature(self):
         coverage = _api_coverage({'entry_points': [{'events': [

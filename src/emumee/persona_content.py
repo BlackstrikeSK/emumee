@@ -90,6 +90,12 @@ def desktop_files(user_name: str, hostname: str) -> list[dict[str, str]]:
          "Project notes\nDraft outline\nReview milestones\n"),
         (home + r"\Documents\Work\weekly-status.txt",
          "This week: review milestones and update the project plan.\n"),
+        (home + r"\Documents\Work\project-brief-draft.txt",
+         "Project brief\nGoal: organize the shared schedule.\n"
+         "Next: review the timeline with Jordan.\n"),
+        (home + r"\Documents\Work\project-brief-final.txt",
+         "Project brief\nGoal: organize the shared schedule.\n"
+         "Next: confirm the timeline with Jordan and Casey.\n"),
         (home + r"\Documents\Work\contacts.csv",
          "Name,Role\nJordan,Design\nCasey,Operations\n"),
         (home + r"\Documents\Work\schedule.ics",
@@ -105,10 +111,14 @@ def desktop_files(user_name: str, hostname: str) -> list[dict[str, str]]:
         (home + r"\Documents\Household\maintenance-log.csv",
          "Date,Item,Notes\n2026-03-08,Kitchen,Replaced light bulb\n"
          "2026-09-14,Bicycle,Checked tires\n"),
+        (home + r"\Documents\Household\pantry-inventory.csv",
+         "Item,Quantity,Unit\nMilk,0,carton\nCoffee,0,bag\nBread,1,loaf\n"),
         (home + r"\Documents\Receipts\train-apr-2026.txt",
          "2026-04-12 Train 24.50\n"),
         (home + r"\Documents\Receipts\expense-summary.csv",
          "Month,Category,Amount\nApril,Travel,24.50\nApril,Meals,13.20\n"),
+        (home + r"\Documents\Receipts\groceries-sep-2026.csv",
+         "Date,Item,Amount\n2026-09-12,Milk,2.40\n2026-09-12,Bread,3.10\n"),
         (home + r"\Desktop\Welcome.txt",
          f"Welcome to {hostname}.\n"),
         (home + r"\Desktop\notes.txt",

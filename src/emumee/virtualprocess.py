@@ -826,10 +826,8 @@ class VirtualProcessBridge:
             emu.set_last_error(87)
             event["reason"] = "missing executable name"
             return 1
-        path = app if ntpath.isabs(app) else ntpath.normpath(ntpath.join(emu.get_cd(), app))
+        path, file = self._guest_executable(emu, app)
         event.update({"application": app, "path": path})
-        file = next((item for item in emu.get_file_manager().files
-                     if item.path.casefold() == path.casefold()), None)
         if file is None:
             emu.set_last_error(2)
             event["reason"] = "executable absent from guest filesystem"
@@ -881,6 +879,30 @@ class VirtualProcessBridge:
         emu.set_last_error(0)
         return 33  # A WinExec return above 31 denotes success.
 
+    @staticmethod
+    def _guest_executable(emu, application: str):
+        """Resolve only files already present in the guest filesystem."""
+        names = [application]
+        if not ntpath.splitext(application)[1]:
+            names.append(application + ".exe")
+        if ntpath.isabs(application):
+            directories = [""]
+        elif ntpath.dirname(application):
+            directories = [emu.get_cd()]
+        else:
+            directories = [emu.get_cd(), r"C:\Windows\System32", r"C:\Windows"]
+        files = {item.path.casefold(): item for item in emu.get_file_manager().files}
+        first = ""
+        for directory in directories:
+            for name in names:
+                path = ntpath.normpath(ntpath.join(directory, name))
+                if not first:
+                    first = path
+                file = files.get(path.casefold())
+                if file is not None:
+                    return path, file
+        return first, None
+
     def _create_process(self, emu, api_name, original, params):
         internal = "Internal" in api_name
         shift = 1 if internal else 0
@@ -900,12 +922,8 @@ class VirtualProcessBridge:
             emu.set_last_error(87)
             event["reason"] = "missing executable name"
             return 0
-        if not ntpath.isabs(path):
-            path = ntpath.normpath(ntpath.join(emu.get_cd(), path))
+        path, file = self._guest_executable(emu, path)
         event["path"] = path
-        manager = emu.get_file_manager()
-        file = next((item for item in manager.files
-                     if item.path.casefold() == path.casefold()), None)
         if file is None:
             emu.set_last_error(2)  # ERROR_FILE_NOT_FOUND
             event["reason"] = "executable absent from guest filesystem"
@@ -952,7 +970,19 @@ class VirtualProcessBridge:
                 if owner == id(caller) and flags & 1 and
                 self._owns_handle(self.thread_handle_owners,
                                   self.shared_thread_handle_owners, handle, owner))
-            result = int(original(params))
+            # Speakeasy's CreateProcess handler loads only lpApplicationName.
+            # Supply the resolved guest path even when the caller used a bare
+            # filename or placed the executable solely in lpCommandLine.
+            encoded = path.encode("utf-16-le" if width == 2 else "utf-8") + b"\0" * width
+            replacement = emu.mem_map(len(encoded), tag="emumee.create_process_path",
+                                      process=caller)
+            try:
+                emu.mem_write(replacement, encoded)
+                launch_params = list(params)
+                launch_params[shift] = replacement
+                result = int(original(launch_params))
+            finally:
+                emu.mem_free(replacement)
         except Exception as exc:
             emu.set_last_error(193)
             event["reason"] = f"child loader failed: {type(exc).__name__}"

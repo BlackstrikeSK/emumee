@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import copy
 import json
+import ntpath
 from pathlib import Path
 
 from speakeasy.config import get_default_config_dict
 
+from .persona_content import DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files, registry_keys
 
-WINDOWS_11_DISPLAY_VERSIONS = {
-    22000: "21H2", 22621: "22H2", 22631: "23H2",
-    26100: "24H2", 26200: "25H2", 26300: "26H2",
-}
+
+WINDOWS_11_DISPLAY_VERSIONS = DISPLAY_VERSIONS
 
 
 DEFAULT_PERSONA = {
@@ -38,19 +38,19 @@ DEFAULT_PERSONA = {
     "utc_offset_minutes": -240,
     "clock_utc": None,
     "uptime_ms": 523_812_000,
-    "processes": ["SearchHost.exe", "RuntimeBroker.exe", "MsMpEng.exe", "OneDrive.exe"],
-    "registry_keys": [
-        {"path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
-         "values": [
-             {"name": "ProductName", "type": "REG_SZ", "data": "Windows 11 Pro"},
-             {"name": "CurrentBuild", "type": "REG_SZ", "data": "22631"},
-             {"name": "DisplayVersion", "type": "REG_SZ", "data": "23H2"},
-         ]},
+    "processes": [
+        "System", "smss.exe", "csrss.exe", "wininit.exe", "services.exe",
+        "lsass.exe", "svchost.exe", "svchost.exe", "winlogon.exe", "dwm.exe",
+        "explorer.exe", "sihost.exe", "SearchHost.exe",
+        "StartMenuExperienceHost.exe", "RuntimeBroker.exe", "MsMpEng.exe",
+        "SecurityHealthSystray.exe", "OneDrive.exe",
     ],
-    "virtual_files": [
-        {"path": "C:\\Users\\Alex\\Documents\\readme.txt", "text": "Personal notes\n"},
-    ],
+    "registry_keys": [],
+    "virtual_files": [],
 }
+DEFAULT_PERSONA["registry_keys"] = registry_keys(DEFAULT_PERSONA)
+DEFAULT_PERSONA["virtual_files"] = desktop_files(
+    DEFAULT_PERSONA["user_name"], DEFAULT_PERSONA["hostname"])
 
 
 def load_persona(path: Path | None) -> dict:
@@ -68,20 +68,19 @@ def load_persona(path: Path | None) -> dict:
                 raise ValueError(f"Unknown persona cpu fields: {', '.join(sorted(unknown_cpu))}")
             persona["cpu"].update(supplied.pop("cpu"))
         custom_registry = "registry_keys" in supplied
+        custom_files = "virtual_files" in supplied
+        custom_current_dir = "current_dir" in supplied
+        previous_name = persona["user_name"]
         persona.update(supplied)
-        if "windows_build" in supplied and not custom_registry:
-            for key in persona["registry_keys"]:
-                if key["path"].lower().endswith(r"\windows nt\currentversion"):
-                    values = key["values"]
-                    for value in values:
-                        if value["name"] == "CurrentBuild":
-                            value["data"] = str(persona["windows_build"])
-                        if value["name"] == "DisplayVersion":
-                            value["data"] = WINDOWS_11_DISPLAY_VERSIONS.get(
-                                persona["windows_build"], "")
-                    if persona["windows_build"] not in WINDOWS_11_DISPLAY_VERSIONS:
-                        key["values"] = [value for value in values
-                                         if value["name"] != "DisplayVersion"]
+        if (persona["user_name"] != previous_name and not custom_current_dir and
+                persona["current_dir"].casefold() ==
+                rf"C:\Users\{previous_name}\Downloads".casefold()):
+            persona["current_dir"] = rf"C:\Users\{persona['user_name']}\Downloads"
+        if not custom_registry:
+            persona["registry_keys"] = registry_keys(persona)
+        if not custom_files:
+            persona["virtual_files"] = desktop_files(
+                persona["user_name"], persona["hostname"])
     if not persona["user_name"] or not persona["hostname"]:
         raise ValueError("Persona user_name and hostname must not be empty")
     build = persona["windows_build"]
@@ -91,6 +90,27 @@ def load_persona(path: Path | None) -> dict:
         raise ValueError("Persona processes and registry_keys must be arrays")
     if not isinstance(persona["virtual_files"], list):
         raise ValueError("Persona virtual_files must be an array")
+    if len(persona["processes"]) > 128 or len(persona["registry_keys"]) > 512 or len(persona["virtual_files"]) > 512:
+        raise ValueError("Persona process, registry, or file count exceeds limit")
+    if any(not isinstance(name, str) or not name or len(name) > 128 or
+           any(char in name for char in "\\/:\0") for name in persona["processes"]):
+        raise ValueError("Persona process names must be simple filenames")
+    file_names: set[str] = set()
+    total_file_bytes = 0
+    for item in persona["virtual_files"]:
+        if (not isinstance(item, dict) or set(item) != {"path", "text"} or
+                not isinstance(item["path"], str) or not isinstance(item["text"], str)):
+            raise ValueError("Each virtual_files entry needs string path and text")
+        path_name = item["path"]
+        if (not ntpath.isabs(path_name) or not path_name.upper().startswith("C:\\") or
+                "\0" in path_name or ":" in path_name[2:] or len(path_name) > 1024 or
+                ntpath.normpath(path_name).casefold() in file_names):
+            raise ValueError("Persona virtual file path is unsafe or duplicated")
+        file_names.add(ntpath.normpath(path_name).casefold())
+        size = len(item["text"].encode("utf-8"))
+        total_file_bytes += size
+        if size > 1024 * 1024 or total_file_bytes > 16 * 1024 * 1024:
+            raise ValueError("Persona virtual file data exceeds limit")
     for name in ("physical_memory_mb", "available_memory_mb"):
         value = persona[name]
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 1_048_576:
@@ -134,12 +154,29 @@ def make_speakeasy_config(persona: dict, sample_name: str, timeout: int,
         "userprofile": f'C:\\Users\\{persona["user_name"]}',
         "username": persona["user_name"],
         "computername": persona["hostname"],
+        "userdomain": persona["hostname"],
+        "homedrive": "C:",
+        "homepath": f'\\Users\\{persona["user_name"]}',
+        "public": r"C:\Users\Public",
+        "programdata": r"C:\ProgramData",
+        "programfiles": r"C:\Program Files",
+        "programfiles(x86)": r"C:\Program Files (x86)",
+        "number_of_processors": str(persona["cpu"]["cores"] *
+                                    persona["cpu"]["threads_per_core"]),
+        "os": "Windows_NT",
         "temp": f'C:\\Users\\{persona["user_name"]}\\AppData\\Local\\Temp\\',
         "tmp": f'C:\\Users\\{persona["user_name"]}\\AppData\\Local\\Temp\\',
         "appdata": f'C:\\Users\\{persona["user_name"]}\\AppData\\Roaming',
         "localappdata": f'C:\\Users\\{persona["user_name"]}\\AppData\\Local',
     })
     cfg["env"].update({key.lower(): value for key, value in (guest_env or {}).items()})
+    # Speakeasy's sample config contains catch-all EXE/TXT files and demo
+    # services. They make arbitrary probes succeed and are not persona data.
+    cfg["filesystem"]["files"] = []
+    cfg["drives"] = [drive for drive in cfg["drives"]
+                     if drive["root_path"].casefold() == "c:\\"]
+    cfg["processes"] = []
+    cfg["registry"]["keys"] = copy.deepcopy(persona["registry_keys"])
     cfg["timeout"] = timeout
     cfg["max_instructions"] = max_instructions
     cfg["max_api_count"] = MAX_NATIVE_API_CALLS
@@ -149,14 +186,15 @@ def make_speakeasy_config(persona: dict, sample_name: str, timeout: int,
     cfg["modules"]["modules_always_exist"] = False
     cfg["modules"]["functions_always_exist"] = False
     for index, name in enumerate(persona["processes"]):
+        template, session = PROCESS_PATHS.get(
+            name.casefold(), ("C:\\Windows\\System32\\" + name, 1))
         cfg["processes"].append({
             "name": name,
             "base_addr": hex(0x06000000 + index * 0x00100000),
-            "path": "C:\\Windows\\System32\\" + name,
-            "pid": 2500 + index * 100,
-            "session": 1,
+            "path": template.format(user=persona["user_name"]),
+            "pid": 4 if name.casefold() == "system" else 420 + index * 168,
+            "session": session,
         })
-    cfg["registry"]["keys"].extend(persona["registry_keys"])
     return cfg
 
 

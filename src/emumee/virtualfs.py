@@ -90,7 +90,8 @@ class SharedGuestFileView:
 class VirtualFileBridge:
     def __init__(self, current_dir: str, catalog: ArtifactCatalog,
                  persona_sources: dict[str, bytes] | None = None,
-                 filetime_ticks: int = 0):
+                 filetime_ticks: int = 0,
+                 persona_directories: list[str] | None = None):
         self.current_dir = current_dir
         self.catalog = catalog
         self.persona_sources = {key.lower(): value for key, value in (persona_sources or {}).items()}
@@ -98,6 +99,8 @@ class VirtualFileBridge:
         self.events: list[dict] = []
         self.unsupported: list[str] = []
         self.directories = {self._key(part) for part in self._ancestors(current_dir)}
+        for directory in persona_directories or []:
+            self.directories.update(self._key(part) for part in self._ancestors(directory))
         self.directory_attributes: dict[str, int] = {}
         self.closed_file_handles: set[int] = set()
         self.file_handle_owners: dict[int, set[int]] = {}
@@ -372,6 +375,10 @@ class VirtualFileBridge:
             emulator.add_api_hook(self._get_file_attributes, "kernel32", name, argc=1)
         for name in ("GetFileAttributesExA", "GetFileAttributesExW"):
             emulator.add_api_hook(self._get_file_attributes_ex, "kernel32", name, argc=3)
+        for name in ("GetVolumeInformationA", "GetVolumeInformationW"):
+            emulator.add_api_hook(self._get_volume_information, "kernel32", name, argc=8)
+        for name in ("GetTempPathA", "GetTempPathW"):
+            emulator.add_api_hook(self._get_temp_path, "kernel32", name, argc=2)
         for name in ("SetFileAttributesA", "SetFileAttributesW"):
             emulator.add_api_hook(self._set_file_attributes, "kernel32", name, argc=2)
         for name in ("CreateFileA", "CreateFileW"):
@@ -391,6 +398,66 @@ class VirtualFileBridge:
                            ("GetFileSizeEx", 2), ("SetFilePointer", 4),
                            ("SetFilePointerEx", 5)):
             emulator.add_api_hook(self._closed_file_operation, "kernel32", name, argc=argc)
+
+    def _get_volume_information(self, emu, api_name, original, params):
+        root_ptr, label_ptr, label_size, serial_ptr, component_ptr, flags_ptr, fs_ptr, fs_size = (
+            int(value) for value in params)
+        width = 2 if api_name.endswith("W") else 1
+        root = (emu.read_mem_string(root_ptr, width) if root_ptr else
+                ntpath.splitdrive(emu.get_cd())[0] + "\\")
+        if root.casefold() != "c:\\":
+            emu.set_last_error(3)
+            return 0
+        label, fs_name = "Windows", "NTFS"
+        if ((label_ptr and not len(label) < label_size <= 261) or
+                (fs_ptr and not len(fs_name) < fs_size <= 261)):
+            emu.set_last_error(122)
+            return 0
+        encode = "utf-16-le" if width == 2 else "utf-8"
+        try:
+            if label_ptr:
+                emu.mem_write(label_ptr, (label + "\0").encode(encode))
+            if serial_ptr:
+                emu.mem_write(serial_ptr, (0x4C2F91A7).to_bytes(4, "little"))
+            if component_ptr:
+                emu.mem_write(component_ptr, (255).to_bytes(4, "little"))
+            if flags_ptr:
+                emu.mem_write(flags_ptr, (0x024400DF).to_bytes(4, "little"))
+            if fs_ptr:
+                emu.mem_write(fs_ptr, (fs_name + "\0").encode(encode))
+        except Exception:
+            emu.set_last_error(998)
+            return 0
+        emu.set_last_error(0)
+        self.events.append({"event": "virtual_volume_query", "api": api_name,
+                            "root": "C:\\", "serial": "4C2F-91A7", "file_system": fs_name})
+        return 1
+
+    def _get_temp_path(self, emu, api_name, original, params):
+        length, buffer = (int(value) for value in params)
+        env = {key.lower(): value for key, value in emu.get_env().items()}
+        path = next((env[key] for key in ("tmp", "temp", "userprofile")
+                     if env.get(key)), r"C:\Windows")
+        if len(path) > 259 or not ntpath.isabs(path):
+            emu.set_last_error(87)
+            return 0
+        path = path.rstrip("\\/") + "\\"
+        encoding = "utf-16-le" if api_name.endswith("W") else "utf-8"
+        encoded = (path + "\0").encode(encoding)
+        width = 2 if api_name.endswith("W") else 1
+        needed = len(encoded) // width
+        if length < needed:
+            return needed
+        if not buffer:
+            emu.set_last_error(87)
+            return 0
+        try:
+            emu.mem_write(buffer, encoded)
+        except Exception:
+            emu.set_last_error(998)
+            return 0
+        emu.set_last_error(0)
+        return needed - 1
 
     def _create_file(self, emu, api_name, original, params):
         disposition = int(params[4]) & 0xFFFFFFFF

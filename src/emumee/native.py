@@ -30,6 +30,7 @@ from .cpu import VirtualCPU
 from .network import NetworkBridge
 from .pe import InvalidSample, SampleInfo, inspect_pe
 from .persona import make_speakeasy_config, materialize_virtual_files
+from .persona_content import desktop_directories
 from .virtualfs import VirtualFileBridge
 from .virtualprocess import (PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
                              VirtualProcessBridge)
@@ -702,7 +703,8 @@ def run_native(
     clock = VirtualClock(persona)
     cpu = VirtualCPU(persona, clock)
     virtual_files = VirtualFileBridge(persona["current_dir"], catalog, persona_sources,
-                                    clock.filetime_ticks())
+                                    clock.filetime_ticks(),
+                                    desktop_directories(persona["user_name"]))
     bridge = NetworkBridge(catalog, virtual_files)
     virtual_registry = VirtualRegistryBridge(catalog)
     virtual_process = VirtualProcessBridge(catalog)

@@ -164,6 +164,10 @@ class ManagedRunner:
             "APPDATA": roaming, "LOCALAPPDATA": local,
             "PROGRAMDATA": r"C:\ProgramData", "PROGRAMFILES": r"C:\Program Files",
             "PROGRAMFILES(X86)": r"C:\Program Files (x86)",
+            "PUBLIC": r"C:\Users\Public", "USERDOMAIN": persona["hostname"],
+            "NUMBER_OF_PROCESSORS": str(persona["cpu"]["cores"] *
+                                        persona["cpu"]["threads_per_core"]),
+            "OS": "Windows_NT",
         }
         self.environment.update({key.upper(): value for key, value in (guest_env or {}).items()})
         if sum(len(key) + len(value) for key, value in self.environment.items()) > MAX_ENV_TOTAL_CHARS:

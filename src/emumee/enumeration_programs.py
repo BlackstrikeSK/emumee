@@ -12,6 +12,7 @@ import struct
 from importlib.resources import files
 
 from .clock import VirtualClock
+from .audit_policy import policy_text
 from .kerberos import ENCRYPTION_TYPES, ticket_datetime
 from .persona_content import PROCESS_PATHS, oem_code_page
 from .tokens import GuestTokens, PRIVILEGE_DESCRIPTIONS, PRIVILEGE_NAMES
@@ -26,6 +27,8 @@ def _align(value: int, boundary: int) -> int:
 
 def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
+    if name == "auditpol.exe":
+        return policy_text(persona, arguments)
     if name == "wbadmin.exe":
         if not arguments:
             return "Usage: wbadmin get versions\r\n"
@@ -917,7 +920,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
                  "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
                  "vssadmin.exe", "cmdkey.exe", "manage-bde.exe", "klist.exe", "nltest.exe",
-                 "wbadmin.exe"):
+                 "wbadmin.exe", "auditpol.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -953,6 +956,9 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "cmdkey.exe": ("/list",),
                      "klist.exe": ("tickets",),
                      "wbadmin.exe": ("get versions",),
+                     "auditpol.exe": ("/get /category:*", "/get /category:* /r",
+                                      "/list /category", "/list /subcategory:*",
+                                      "/list /subcategory:* /v"),
                      "nltest.exe": ("/domain_trusts", *(f"/{command}:{domain}"
                                       for command in ("dclist", "dsgetdc")
                                       for domain in nltest_domains)),
@@ -965,6 +971,9 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
         variants = {argument: enumeration_text(name, render_persona, argument)
                     for argument in commands}
         exit_codes = {}
+        if (name == "auditpol.exe" and not
+                (persona["user_is_admin"] or persona["audit_policy"]["read_allowed"])):
+            exit_codes.update({"/get /category:*": 5, "/get /category:* /r": 5})
         if name == "wbadmin.exe" and not persona["user_is_admin"]:
             exit_codes["get versions"] = 5
         if name == "nltest.exe":

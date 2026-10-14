@@ -14,6 +14,7 @@ from pathlib import Path
 
 from speakeasy.config import get_default_config_dict
 from .kerberos import ENCRYPTION_TYPES, ticket_datetime
+from .audit_policy import validate_policy
 
 from .persona_content import (DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files,
                               driver_package_files, registry_keys)
@@ -83,6 +84,7 @@ DEFAULT_PERSONA = {
         "computer": ["Local Group Policy"],
         "user": ["Local Group Policy"],
     },
+    "audit_policy": {"read_allowed": False, "subcategories": {}},
     "device_registration": {
         "azure_ad_joined": False,
         "enterprise_joined": False,
@@ -226,6 +228,11 @@ def load_persona(path: Path | None) -> dict:
             if not isinstance(discovery, dict) or set(discovery) - set(persona["domain_discovery"]):
                 raise ValueError("Persona domain_discovery fields are invalid")
             persona["domain_discovery"].update(discovery)
+        if "audit_policy" in supplied:
+            audit = supplied.pop("audit_policy")
+            if not isinstance(audit, dict) or set(audit) - set(persona["audit_policy"]):
+                raise ValueError("Persona audit_policy fields are invalid")
+            persona["audit_policy"].update(audit)
         if "group_policy" in supplied:
             policy = supplied.pop("group_policy")
             if not isinstance(policy, dict):
@@ -427,6 +434,7 @@ def load_persona(path: Path | None) -> dict:
             not isinstance(boot["debug"], bool) or
             boot["safe_boot"] not in (None, "Minimal", "Network")):
         raise ValueError("Persona boot_config fields are invalid")
+    validate_policy(persona["audit_policy"])
     policy = persona["group_policy"]
     for scope in ("computer", "user"):
         entries = policy[scope]

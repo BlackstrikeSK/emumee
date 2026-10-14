@@ -26,6 +26,7 @@ never change host state.
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
+| [`auditpol.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/auditpol-get) | Yes | `/get /category:*`, CSV with `/r`, `/list /category`, `/list /subcategory:*`, and verbose subcategory GUID listing with `/v` |
 | [`wmic.exe`](https://learn.microsoft.com/en-us/windows/win32/wmisdk/wmic) | Yes | Local `os`, `computersystem`, `cpu`, and `logicaldisk` `get` views, selected modeled properties, table or `/value` output, and equivalent `path Win32_*` forms |
 | [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | Yes | `el` and `gl <simple channel>` through guest registry APIs |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
@@ -57,7 +58,7 @@ but it is not included by default unless the table above says so.
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
 | `wmic.exe` beyond the listed views | More aliases, properties, filters, and formats | WMI COM providers, remote targets, changes, and arbitrary WQL remain unmodeled. Unsupported requests exit 87. |
-| `auditpol.exe` | Audit policy enumeration | Guest audit policy categories, subcategories, and per-user settings. Not included by default. |
+| `auditpol.exe` beyond the listed forms | Named category/subcategory filters, per-user policy, options, ACLs, and changes | Guest audit policy APIs, an effective-token permission check, and dynamic policy changes remain unmodeled. Unsupported forms exit 87. |
 | `w32tm.exe` | Time service configuration and peer status | Guest Windows Time service state and peer metadata. Not included by default. |
 | `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
 | `ping.exe`, `tracert.exe`, `pathping.exe` | Network reachability and route discovery | Guest ICMP and route-hop simulation, with attempted operations logged. Not included by default. |
@@ -86,6 +87,26 @@ Generated `cmdkey.exe /list` reads only the persona's `stored_credentials`
 metadata: target, user, type, and persistence. The default guest has no stored
 credentials. The schema accepts no password field, and the utility never
 opens a host credential store. Add and delete operations exit 87.
+
+Generated `auditpol.exe` renders nine categories and 59 Windows 11 audit
+subcategories, including their SDK GUIDs. `audit_policy.subcategories` maps
+English names to `No Auditing`, `Success`, `Failure`, or `Success and Failure`;
+omitted names use `No Auditing`. This is an explicit guest snapshot, not a claim
+about the default policy of every Windows edition. `audit_policy.read_allowed`
+defaults to false; system-policy queries return access denied and exit code 5
+unless this flag or the persona admin flag is set. Category and subcategory
+names can be listed without that grant. This permission view does not evaluate
+Windows policy security descriptors or current-token elevation. Text and CSV
+derive from the same snapshot; host policy is never read. Names are English,
+and the real Windows audit policy API family is still a separate coverage gap.
+
+For example:
+
+```json
+{"audit_policy": {"read_allowed": true, "subcategories": {
+  "Logon": "Success and Failure", "Process Creation": "Success"
+}}}
+```
 
 The included `wmic.exe` is a guest PE, despite Microsoft's deprecation and
 removal of the original tool from newer Windows installations. It reads guest

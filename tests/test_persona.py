@@ -35,6 +35,42 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_pnp_inventory_links_adapter_package_and_guest_inf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            instance = r"PCI\VEN_8086&DEV_9999\1"
+            path.write_text(json.dumps({"network_adapter": {
+                "description": "Persona Ethernet", "pnp_instance_id": instance}}),
+                encoding="utf-8")
+            persona = load_persona(path)
+            self.assertEqual(persona["pnp_devices"][0]["description"],
+                             "Persona Ethernet")
+            self.assertEqual(persona["pnp_devices"][0]["instance_id"], instance)
+            self.assertEqual(persona["pnp_devices"][0]["driver"], "oem0.inf")
+            inf = next(item for item in persona["virtual_files"]
+                       if item["path"].endswith(r"\INF\oem0.inf"))
+            self.assertIn("ClassGuid={4d36e972-e325-11ce-bfc1-08002be10318}",
+                          inf["text"])
+            path.write_text(json.dumps({"driver_packages": []}), encoding="utf-8")
+            persona = load_persona(path)
+            self.assertIsNone(persona["pnp_devices"][0]["driver"])
+            self.assertFalse(any(item["path"].endswith(r"\INF\oem0.inf")
+                                 for item in persona["virtual_files"]))
+            package = dict(load_persona(None)["driver_packages"][0])
+            for broken in ({**package, "published_name": r"..\host.inf"},
+                           {**package, "class_guid": "bad"},
+                           {**package, "provider": "bad\nprovider"}):
+                path.write_text(json.dumps({"driver_packages": [broken]}),
+                                encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaisesRegex(
+                        ValueError, "driver package entries"):
+                    load_persona(path)
+            device = dict(load_persona(None)["pnp_devices"][0])
+            device["driver"] = "missing.inf"
+            path.write_text(json.dumps({"pnp_devices": [device]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "PnP device entries"):
+                load_persona(path)
+
     def test_boot_configuration_accepts_partial_overrides_and_rejects_invalid_values(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"
@@ -404,7 +440,7 @@ class PersonaContentTests(unittest.TestCase):
                 'utc_offset_minutes': 60,
             }), encoding='utf-8')
             persona = load_persona(override)
-            self.assertEqual(len(persona['virtual_files']), 54)
+            self.assertEqual(len(persona['virtual_files']), 55)
             staged = dict(materialize_virtual_files(persona, root / 'staged'))
             draft = staged[r'C:\Users\Morgan\Documents\Work\project-brief-draft.txt'].read_text()
             final = staged[r'C:\Users\Morgan\Documents\Work\project-brief-final.txt'].read_text()

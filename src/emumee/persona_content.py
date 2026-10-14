@@ -226,6 +226,19 @@ def desktop_directories(user_name: str) -> list[str]:
     ]
 
 
+def driver_package_files(persona: dict) -> list[dict[str, str]]:
+    """Expose persona INF metadata as guest files, without host DriverStore access."""
+    return [{
+        "path": "C:\\Windows\\INF\\" + package["published_name"],
+        "text": ("[Version]\r\n"
+                 "Signature=\"$WINDOWS NT$\"\r\n"
+                 f"Class={package['class_name']}\r\n"
+                 f"ClassGuid={package['class_guid']}\r\n"
+                 f"Provider=\"{package['provider']}\"\r\n"
+                 f"DriverVer={package['version'].replace(' ', ',')}\r\n"),
+    } for package in persona["driver_packages"]]
+
+
 def registry_keys(persona: dict) -> list[dict]:
     """Build mutually consistent common registry probes from persona fields."""
     name = persona["user_name"]

@@ -16,6 +16,72 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_pnputil_reports_guest_packages_and_devices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            package = {"published_name": "oem7.inf", "original_name": "acmenet.inf",
+                       "provider": "Acme Devices", "class_name": "Net",
+                       "class_guid": "{4d36e972-e325-11ce-bfc1-08002be10318}",
+                       "version": "10/01/2025 1.2.3.4", "signer": "Test Signer"}
+            devices = [
+                {"instance_id": r"PCI\VEN_1234&DEV_5678\1", "description": "Acme Ethernet",
+                 "class_name": "Net", "class_guid": package["class_guid"],
+                 "status": "Started", "driver": "oem7.inf"},
+                {"instance_id": r"ROOT\NET\0002", "description": "Old Adapter",
+                 "class_name": "Net", "class_guid": package["class_guid"],
+                 "status": "Disconnected", "driver": None},
+            ]
+            config.write_text(json.dumps({"driver_packages": [package],
+                                          "pnp_devices": devices}), encoding="utf-8")
+            persona = load_persona(config)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["pnputil.exe"]
+                    pe = inspect_pe(image, "pnputil.exe")
+                    self.assertEqual(pe.architecture, "x64" if is_x64 else "x86")
+                    cases = ((["/enum-drivers"], "acmenet.inf"),
+                             (["-e"], "oem7.inf"),
+                             (["/enum-devices"], "Old Adapter"),
+                             (["/enum-devices", "/connected"], "Acme Ethernet"),
+                             (["/enum-classes"], "Device Count:       2"))
+                    for index, (args, expected) in enumerate(cases):
+                        result = run_native(image, pe, persona, root / f"{is_x64}-{index}",
+                                            [], 10, 100_000, guest_args=args)
+                        self.assertFalse(result["errors"])
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertIn(expected, result["console_output"]["stdout"])
+                        self.assertNotIn("Intel", result["console_output"]["stdout"])
+                        if args == ["/enum-devices", "/connected"]:
+                            self.assertNotIn("Old Adapter", result["console_output"]["stdout"])
+                    rejected = run_native(image, pe, persona, root / f"{is_x64}-delete",
+                                          [], 10, 100_000,
+                                          guest_args=["/delete-driver", "oem7.inf"])
+                    self.assertFalse(rejected["errors"])
+                    self.assertEqual(rejected["guest_exit_code"], 87)
+                    self.assertEqual(rejected["console_output"]["stdout"], "")
+
+    def test_winexec_launches_guest_pnputil(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"pnputil.exe /enum-devices\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn(persona["network_adapter"]["description"],
+                              result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\pnputil.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_fltmc_reports_only_persona_minifilters_and_volume(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

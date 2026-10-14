@@ -244,6 +244,52 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
                     "-----------------------------------------------  --------  -----------\r\n"
                     f"{volume:<47}  C:\\       NTFS\r\n")
         raise ValueError("unsupported fltmc arguments")
+    if name == "pnputil.exe":
+        argument = arguments.casefold()
+        if not argument:
+            return ("Microsoft PnP Utility\r\n\r\n"
+                    "Usage: pnputil /enum-drivers | /enum-devices | /enum-classes\r\n")
+        if argument in {"/enum-drivers", "-e"}:
+            rows = ["Microsoft PnP Utility\r\n"]
+            for package in persona["driver_packages"]:
+                rows.append(
+                    f"Published Name:     {package['published_name']}\r\n"
+                    f"Original Name:      {package['original_name']}\r\n"
+                    f"Provider Name:      {package['provider']}\r\n"
+                    f"Class Name:         {package['class_name']}\r\n"
+                    f"Class GUID:         {package['class_guid']}\r\n"
+                    f"Driver Version:     {package['version']}\r\n"
+                    f"Signer Name:        {package['signer']}\r\n")
+            return "\r\n".join(rows) + "\r\n"
+        if argument in {"/enum-devices", "/enum-devices /connected"}:
+            devices = persona["pnp_devices"]
+            if argument.endswith("/connected"):
+                devices = [device for device in devices
+                           if device["status"] != "Disconnected"]
+            rows = ["Microsoft PnP Utility\r\n"]
+            for device in devices:
+                rows.append(
+                    f"Instance ID:         {device['instance_id']}\r\n"
+                    f"Device Description:  {device['description']}\r\n"
+                    f"Class Name:          {device['class_name']}\r\n"
+                    f"Class GUID:          {device['class_guid']}\r\n"
+                    f"Status:              {device['status']}\r\n"
+                    f"Driver Name:         {device['driver'] or 'N/A'}\r\n")
+            return "\r\n".join(rows) + "\r\n"
+        if argument == "/enum-classes":
+            rows = ["Microsoft PnP Utility\r\n"]
+            classes: dict[str, tuple[str, str, int]] = {}
+            for device in persona["pnp_devices"]:
+                key = device["class_guid"].casefold()
+                name, guid, count = classes.get(key,
+                                                (device["class_name"], device["class_guid"], 0))
+                classes[key] = (name, guid, count + 1)
+            for name, guid, count in classes.values():
+                rows.append(f"Class Name:         {name}\r\n"
+                            f"Class GUID:         {guid}\r\n"
+                            f"Device Count:       {count}\r\n")
+            return "\r\n".join(rows) + "\r\n"
+        raise ValueError("unsupported pnputil arguments")
     if name == "bcdedit.exe":
         argument = arguments.casefold()
         if argument not in {"", "/enum", "/enum active", "/v",
@@ -440,7 +486,8 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
 
 
 def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
-                     variants: dict[str, str] | None = None) -> bytes:
+                     variants: dict[str, str] | None = None,
+                     max_text: int = _MAX_TEXT) -> bytes:
     """Build a PE that selects bounded guest text by exact command argument."""
     variants = variants or {}
     if len(variants) > 5 or any(not key or not key.isascii() or "\0" in key
@@ -457,7 +504,7 @@ def console_text_exe(is_x64: bool, output: str, *, code_page: int = 437,
     for argument in variants:
         argument_rvas[argument] = 0x3000 + len(data)
         data.extend(argument.encode("ascii") + b"\0")
-    if not output or len(data) > _MAX_TEXT:
+    if not output or len(data) > max_text:
         raise ValueError("guest utility output exceeds limit")
     machine = 0x8664 if is_x64 else 0x14C
     base = 0x190000000 if is_x64 else 0x600000
@@ -652,7 +699,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
-                 "fltmc.exe"):
+                 "fltmc.exe", "pnputil.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -680,13 +727,16 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "bcdedit.exe": ("/enum", "/enum active", "/v",
                                      "/enum active /v", "/enum {current}"),
                      "fltmc.exe": ("filters", "instances", "volumes"),
+                     "pnputil.exe": ("/enum-drivers", "-e", "/enum-devices",
+                                     "/enum-devices /connected", "/enum-classes"),
                      "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)
                     for argument in commands}
         result[name] = console_text_exe(
             is_x64, enumeration_text(name, render_persona), code_page=code_page,
-            variants=variants)
+            variants=variants,
+            max_text=256 * 1024 if name == "pnputil.exe" else _MAX_TEXT)
     arch = "x64" if is_x64 else "x86"
     result["reg.exe"] = files("emumee").joinpath(
         "guest_native", f"reg_query_{arch}.exe").read_bytes()

@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `pnputil.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -15,6 +15,11 @@ The `tasklist` rows use the same names, PIDs, and session mapping as the persona
 process configuration. `tasklist.exe /svc` assigns active persona service names
 to the first matching process PID; disabled services are absent. The generated
 utility has a 64 KiB total embedded-text limit across its command views.
+`pnputil.exe` has a 256 KiB limit for its bounded package and device views.
+Its `/enum-drivers`, `-e`, `/enum-devices`, `/enum-devices /connected`, and
+`/enum-classes` output comes from persona driver packages and PnP devices.
+Synthetic package INF metadata appears only in the guest file system.
+Unsupported change commands exit 87 without host device access.
 Generated `ipconfig.exe /all` prints the persona's
 hostname, adapter description, MAC address, DHCP flag, IPv4 settings, and DNS
 servers. Bare-name and quoted full-path `WinExec` launches reached that output

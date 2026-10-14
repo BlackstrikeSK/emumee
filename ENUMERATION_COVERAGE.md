@@ -22,6 +22,7 @@ never change host state.
 | `systeminfo.exe` | Yes | Default system identity and resources |
 | [`wevtutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil) | Yes | `el` and `gl <simple channel>` through guest registry APIs |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
+| [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | Yes | `/enum-drivers`, legacy `-e`, `/enum-devices`, `/enum-devices /connected`, `/enum-classes` from guest driver packages and devices |
 | [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Yes | Default, `filters`, `instances`, `volumes` from guest minifilters and C: volume |
 | `tasklist.exe` | Yes | Default persona process snapshot and `/svc` service to process view |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
@@ -49,7 +50,7 @@ but it is not included by default unless the table above says so.
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
 | `mountvol.exe` beyond the listed forms | Other volume mount points and changes | Multiple volumes and mount mutations remain unmodeled. |
-| [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | `/enum-drivers`, `/enum-devices` | A guest driver package store and PnP device inventory; `driverquery` records alone do not describe installed packages or devices. |
+| `pnputil.exe` beyond the listed forms | Device filters and properties, other package views, and changes | More guest PnP properties and a dynamic driver store. Change commands exit 87. |
 | `fltmc.exe` beyond the listed forms | Named filters or instances, frames, loading, unloading, and attachment changes | A dynamic guest Filter Manager and more than one volume. |
 | `wevtutil.exe` beyond the listed forms | `qe`, `gli`, publishers, remote queries, and changes | A guest event record store and live status model; only channel names and configuration are modeled. |
 | `bcdedit.exe` beyond the listed forms | `/enum all`, other identifiers, BCD store paths, and changes | A full guest Boot Configuration Data store; the included PE currently renders two configured active entries. |
@@ -141,6 +142,13 @@ start mode, display name, and image path. The listed `.sys` path is metadata;
 the image file and kernel execution are not modeled. The supported local read
 forms are default table, `/v`, `/fo list`, `/fo csv`, and `/nh`. Remote and
 unmodeled arguments exit 87 without contacting the host.
+
+Generated `pnputil.exe` reads the persona's `driver_packages` and
+`pnp_devices` lists. The default network device shares its description and
+instance ID with the network adapter, and each package has synthetic guest
+INF metadata under `C:\Windows\INF`. The package store is separate from the
+running-driver list used by `driverquery.exe`. Unsupported queries and change
+commands exit 87 without accessing a host device or driver store.
 
 Generated `fltmc.exe` reads the persona's `minifilters` list, whose names must
 refer to running file-system driver records. The same records create guest

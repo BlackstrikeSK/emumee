@@ -13,7 +13,8 @@ from pathlib import Path
 
 from speakeasy.config import get_default_config_dict
 
-from .persona_content import DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files, registry_keys
+from .persona_content import (DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files,
+                              driver_package_files, registry_keys)
 
 
 WINDOWS_11_DISPLAY_VERSIONS = DISPLAY_VERSIONS
@@ -49,6 +50,7 @@ DEFAULT_PERSONA = {
         "dhcp_enabled": True,
         "mtu": 1500,
         "if_index": 12,
+        "pnp_instance_id": r"PCI\VEN_8086&DEV_0D4F&SUBSYS_00008086&REV_00\3&11583659&0&FE",
     },
     "current_dir": "C:\\Users\\Alex\\Downloads",
     "volume_guid": DEFAULT_VOLUME_GUID,
@@ -92,6 +94,20 @@ DEFAULT_PERSONA = {
     "minifilters": [
         {"name": "WdFilter", "altitude": "328010", "instances": 1},
     ],
+    "driver_packages": [
+        {"published_name": "oem0.inf", "original_name": "e1d68x64.inf",
+         "provider": "Intel", "class_name": "Net",
+         "class_guid": "{4d36e972-e325-11ce-bfc1-08002be10318}",
+         "version": "09/15/2022 12.19.2.45",
+         "signer": "Microsoft Windows Hardware Compatibility Publisher"},
+    ],
+    "pnp_devices": [
+        {"instance_id": r"PCI\VEN_8086&DEV_0D4F&SUBSYS_00008086&REV_00\3&11583659&0&FE",
+         "description": "Intel(R) Ethernet Connection (7) I219-V",
+         "class_name": "Net",
+         "class_guid": "{4d36e972-e325-11ce-bfc1-08002be10318}",
+         "status": "Started", "driver": "oem0.inf"},
+    ],
     "event_channels": [
         {"name": "Application", "enabled": True, "max_size": 20971520,
          "retention": False},
@@ -134,7 +150,9 @@ def virtual_file_bytes(entry: dict) -> bytes:
 
 def load_persona(path: Path | None) -> dict:
     persona = copy.deepcopy(DEFAULT_PERSONA)
+    previous_adapter_description = persona["network_adapter"]["description"]
     refresh_registry = False
+    custom_files = False
     if path is not None:
         supplied = json.loads(path.read_text(encoding="utf-8"))
         unknown = set(supplied) - set(persona)
@@ -169,10 +187,21 @@ def load_persona(path: Path | None) -> dict:
         refresh_registry = not custom_registry
         if "drivers" in supplied and "minifilters" not in supplied:
             persona["minifilters"] = []
+        custom_devices = "pnp_devices" in supplied
+        custom_packages = "driver_packages" in supplied
         custom_files = "virtual_files" in supplied
         custom_current_dir = "current_dir" in supplied
         previous_name = persona["user_name"]
         persona.update(supplied)
+        if not custom_devices:
+            default_device = persona["pnp_devices"][0]
+            if persona["network_adapter"]["description"] != previous_adapter_description:
+                default_device["description"] = persona["network_adapter"]["description"]
+            default_device["instance_id"] = persona["network_adapter"]["pnp_instance_id"]
+            if custom_packages and isinstance(persona["driver_packages"], list) and not any(
+                    str(package.get("published_name", "")).casefold() == "oem0.inf"
+                    for package in persona["driver_packages"] if isinstance(package, dict)):
+                default_device["driver"] = None
         offset = persona["utc_offset_minutes"]
         if (not isinstance(offset, int) or isinstance(offset, bool) or
                 not -840 <= offset <= 840):
@@ -223,6 +252,8 @@ def load_persona(path: Path | None) -> dict:
                 for field in ("name", "description")) or
             not isinstance(adapter["mac"], str) or
             not re.fullmatch(r"(?:[0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}", adapter["mac"]) or
+            not isinstance(adapter["pnp_instance_id"], str) or
+            not re.fullmatch(r"[A-Za-z0-9_&\\.:-]{1,200}", adapter["pnp_instance_id"]) or
             not isinstance(adapter["prefix_length"], int) or
             isinstance(adapter["prefix_length"], bool) or
             not 1 <= adapter["prefix_length"] <= 32 or
@@ -334,6 +365,65 @@ def load_persona(path: Path | None) -> dict:
         filter_names.add(filter_item["name"].casefold())
     if sum(filter_item["instances"] for filter_item in filters) > 64:
         raise ValueError("Persona minifilter instance count exceeds 64")
+    packages = persona["driver_packages"]
+    if not isinstance(packages, list) or len(packages) > 32:
+        raise ValueError("Persona driver_packages must have at most 32 entries")
+    package_by_name: dict[str, dict] = {}
+    for package in packages:
+        if (not isinstance(package, dict) or
+                set(package) != {"published_name", "original_name", "provider",
+                                 "class_name", "class_guid", "version", "signer"} or
+                not isinstance(package["published_name"], str) or
+                not re.fullmatch(r"oem[0-9]{1,4}\.inf", package["published_name"], re.I) or
+                package["published_name"].casefold() in package_by_name or
+                not isinstance(package["original_name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}\.inf", package["original_name"], re.I) or
+                not isinstance(package["class_name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", package["class_name"]) or
+                not isinstance(package["class_guid"], str) or
+                not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
+                                 package["class_guid"]) or
+                not isinstance(package["version"], str) or
+                not re.fullmatch(r"[0-9]{2}/[0-9]{2}/[0-9]{4} [0-9]+(?:\.[0-9]+){1,3}",
+                                 package["version"]) or
+                any(not isinstance(package[field], str) or
+                    not 1 <= len(package[field]) <= 128 or
+                    any(ord(char) < 32 or char == '"' for char in package[field])
+                    for field in ("provider", "signer"))):
+            raise ValueError("Persona driver package entries are invalid")
+        package_by_name[package["published_name"].casefold()] = package
+    devices = persona["pnp_devices"]
+    if not isinstance(devices, list) or len(devices) > 64:
+        raise ValueError("Persona pnp_devices must have at most 64 entries")
+    device_ids: set[str] = set()
+    for device in devices:
+        if (not isinstance(device, dict) or
+                set(device) != {"instance_id", "description", "class_name",
+                                "class_guid", "status", "driver"} or
+                not isinstance(device["instance_id"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_&\\{}.:-]{1,200}", device["instance_id"]) or
+                device["instance_id"].casefold() in device_ids or
+                not isinstance(device["description"], str) or
+                not 1 <= len(device["description"]) <= 128 or
+                any(ord(char) < 32 for char in device["description"]) or
+                not isinstance(device["class_name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", device["class_name"]) or
+                not isinstance(device["class_guid"], str) or
+                not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
+                                 device["class_guid"]) or
+                device["status"] not in ("Started", "Disabled", "Disconnected") or
+                (device["driver"] is not None and
+                 (not isinstance(device["driver"], str) or
+                  device["driver"].casefold() not in package_by_name))):
+            raise ValueError("Persona PnP device entries are invalid")
+        if device["driver"] is not None:
+            package = package_by_name[device["driver"].casefold()]
+            if (package["class_name"].casefold() != device["class_name"].casefold() or
+                    package["class_guid"].casefold() != device["class_guid"].casefold()):
+                raise ValueError("Persona PnP device driver class does not match package")
+        device_ids.add(device["instance_id"].casefold())
+    if not custom_files:
+        persona["virtual_files"].extend(driver_package_files(persona))
     channels = persona["event_channels"]
     if not isinstance(channels, list) or len(channels) > 32:
         raise ValueError("Persona event_channels must have at most 32 entries")

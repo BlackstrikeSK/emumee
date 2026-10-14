@@ -322,6 +322,9 @@ class PersonaContentTests(unittest.TestCase):
         self.assertFalse(any("usbsamp" in item["path"].casefold()
                              for item in config["registry"]["keys"]))
         self.assertEqual(config["env"]["number_of_processors"], "12")
+        self.assertEqual(config["env"]["systemdrive"], "C:")
+        self.assertEqual(config["env"]["commonprogramfiles"],
+                         r"C:\Program Files\Common Files")
         self.assertEqual(next(item["path"] for item in config["processes"]
                               if item["name"] == "OneDrive.exe"),
                          r"C:\Users\Alex\AppData\Local\Microsoft\OneDrive\OneDrive.exe")
@@ -330,6 +333,17 @@ class PersonaContentTests(unittest.TestCase):
             r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion")
         self.assertEqual(version.get_value("CurrentBuild").get_data(), "22631")
         self.assertEqual(version.get_value("DisplayVersion").get_data(), "23H2")
+        install_paths = registry.get_key_from_config(
+            r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion")
+        self.assertEqual(install_paths.get_value("ProgramFilesDir").get_data(),
+                         config["env"]["programfiles"])
+        self.assertEqual(install_paths.get_value("CommonFilesDir").get_data(),
+                         config["env"]["commonprogramfiles"])
+        profiles = registry.get_key_from_config(
+            r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList")
+        self.assertEqual(profiles.get_value("ProfilesDirectory").get_data(),
+                         r"%SystemDrive%\Users")
+        self.assertIn(r"C:\Program Files\Common Files", desktop_directories("Alex"))
         self.assertIsNotNone(registry.get_key_from_config(
             r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"))
         with tempfile.TemporaryDirectory() as directory:
@@ -339,6 +353,8 @@ class PersonaContentTests(unittest.TestCase):
                 r"C:\Windows\System32\drivers\etc\hosts"].read_bytes())
             self.assertIn("bookmark_bar", json.loads(staged[
                 r"C:\Users\Alex\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"].read_text())["roots"])
+            self.assertIn("BEGIN:VCALENDAR", staged[
+                r"C:\Users\Alex\Documents\Work\schedule.ics"].read_text())
             run_mru = next(item for item in persona["registry_keys"]
                            if item["path"].endswith(r"\Explorer\RunMRU"))
             self.assertIn(r"C:\Users\Alex\Documents\Work\meeting-notes.txt",
@@ -355,7 +371,7 @@ class PersonaContentTests(unittest.TestCase):
                 'utc_offset_minutes': 60,
             }), encoding='utf-8')
             persona = load_persona(override)
-            self.assertEqual(len(persona['virtual_files']), 41)
+            self.assertEqual(len(persona['virtual_files']), 47)
             staged = dict(materialize_virtual_files(persona, root / 'staged'))
             receipt = staged[r'C:\Users\Morgan\Documents\Receipts\train-apr-2026.txt']
             self.assertIn(b'24.50', receipt.read_bytes())
@@ -374,6 +390,8 @@ class PersonaContentTests(unittest.TestCase):
                 r'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders')
             self.assertEqual(shell.get_value('Downloads').get_data(),
                              r'C:\Users\Morgan\Downloads')
+            self.assertEqual(shell.get_value('Startup').get_data(),
+                             r'C:\Users\Morgan\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup')
             international = registry.get_key_from_config(
                 r'HKEY_CURRENT_USER\Control Panel\International')
             self.assertEqual(international.get_value('sShortDate').get_data(),

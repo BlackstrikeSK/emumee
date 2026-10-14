@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 import struct
 
 from .artifacts import ArtifactCatalog
@@ -351,17 +352,45 @@ class VirtualRegistryBridge:
         value = key.get_value(name) if name else next(
             (item for item in key.get_values()
              if item.get_name() in ("", "default")), None)
+        override = None
+        required_size = None
         if value is not None:
             written = self.written_values.get((id(key), name.casefold()))
-            code = written[0] if written else self._type_code(value.get_type())
+            encoded = written or self._configured_value(value, api_name.endswith("W"))
+            code = encoded[0] if encoded else None
             if code == REG_EXPAND_SZ and not flags & 0x10000000:
-                self.unsupported.append(f"{api_name}: REG_EXPAND_SZ expansion unsupported")
-                return 50
+                override = self._expanded_value(emu, encoded[1], api_name.endswith("W"))
+                if override is None:
+                    self.unsupported.append(f"{api_name}: REG_EXPAND_SZ exceeds limit or is invalid")
+                    return 50
+                # Windows reports at least the unexpanded byte count, even
+                # when the expanded string is shorter. Its size query and
+                # subsequent read must agree for callers switching to
+                # RRF_NOEXPAND between the two calls.
+                required_size = max(len(encoded[1]), len(override[1]))
         return self._query_value(emu, api_name, original,
                                  [handle, name_ptr, 0, type_ptr, data_ptr, size_ptr],
-                                 key_override=key)
+                                 key_override=key, encoded_override=override,
+                                 required_size_override=required_size)
 
-    def _query_value(self, emu, api_name, original, params, *, key_override=None):
+    @staticmethod
+    def _expanded_value(emu, raw: bytes, wide: bool) -> tuple[int, bytes] | None:
+        codec = "utf-16le" if wide else "cp1252"
+        try:
+            value = raw.decode(codec).split("\0", 1)[0]
+            environment = {str(key).casefold(): str(item)
+                           for key, item in emu.get_env().items()}
+            expanded = re.sub(
+                r"%([^%]+)%",
+                lambda match: environment.get(match.group(1).casefold(), match.group(0)),
+                value)
+            image = (expanded + "\0").encode(codec, errors="replace")
+        except (UnicodeError, ValueError, AttributeError):
+            return None
+        return (REG_SZ, image) if len(image) <= MAX_REG_VALUE else None
+
+    def _query_value(self, emu, api_name, original, params, *, key_override=None,
+                     encoded_override=None, required_size_override=None):
         handle, name_ptr, reserved, type_ptr, data_ptr, size_ptr = map(int, params)
         handle = self._canonical_handle(handle)
         name = self._name(emu, api_name, name_ptr)
@@ -381,7 +410,7 @@ class VirtualRegistryBridge:
         if value is None:
             event["status"] = 2  # ERROR_FILE_NOT_FOUND
             return 2
-        encoded = self.written_values.get((id(key), name.casefold()))
+        encoded = encoded_override or self.written_values.get((id(key), name.casefold()))
         if encoded is None:
             encoded = self._configured_value(value, api_name.endswith("W"))
         if encoded is None:
@@ -390,16 +419,18 @@ class VirtualRegistryBridge:
             self.unsupported.append(f"{api_name}: unsupported registry value {key.get_path()}\\{name}")
             return 50
         value_type, raw = encoded
+        required_size = (required_size_override if required_size_override is not None
+                         else len(raw))
         if type_ptr:
             emu.mem_write(type_ptr, struct.pack("<I", value_type))
         capacity = int.from_bytes(emu.mem_read(size_ptr, 4), "little") if data_ptr else 0
         if size_ptr:
-            emu.mem_write(size_ptr, struct.pack("<I", len(raw)))
-        if data_ptr and capacity < len(raw):
+            emu.mem_write(size_ptr, struct.pack("<I", required_size))
+        if data_ptr and capacity < required_size:
             event["status"] = 234  # ERROR_MORE_DATA
-            event["size"] = len(raw)
+            event["size"] = required_size
             return 234
         if data_ptr and raw:
             emu.mem_write(data_ptr, raw)
-        event.update({"type": value_type, "size": len(raw), "status": 0})
+        event.update({"type": value_type, "size": required_size, "status": 0})
         return 0

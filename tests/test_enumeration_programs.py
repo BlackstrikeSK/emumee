@@ -16,6 +16,56 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_fsutil_reads_guest_volume_and_rejects_other_drives(self):
+        persona = load_persona(None)
+        for is_x64 in (False, True):
+            with self.subTest(arch="x64" if is_x64 else "x86"), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                image = enumeration_programs(is_x64, persona)["fsutil.exe"]
+                pe = inspect_pe(image, "fsutil.exe")
+                self.assertEqual(pe.architecture, "x64" if is_x64 else "x86")
+                cases = (
+                    (["fsinfo", "drives"], 0, "Drives: C:\\\r\n"),
+                    (["fsinfo", "drivetype", "C:"], 0, "Fixed Drive\r\n"),
+                    (["fsinfo", "volumeinfo", "C:"], 0,
+                     "Volume Name : Windows\r\nSerial Number : 0x4c2f91a7\r\n"
+                     "Max Component Length : 255\r\nFile System Name : NTFS\r\n"),
+                    (["fsinfo", "volumeinfo", "D:"], 3, ""),
+                    (["fsinfo", "ntfsinfo", "C:"], 87, ""),
+                )
+                for index, (args, status, expected) in enumerate(cases):
+                    result = run_native(image, pe, persona, root / str(index), [],
+                                        10, 100_000, guest_args=args)
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["guest_exit_code"], status)
+                    self.assertEqual(result["console_output"]["stdout"], expected)
+                    if args[1] == "volumeinfo" and status == 0:
+                        report = json.loads((root / str(index) /
+                                             result["engine_report"]).read_text())
+                        self.assertTrue(any(event["event"] == "virtual_volume_query"
+                                            for event in report["virtual_file_events"]))
+
+    def test_winexec_launches_guest_fsutil(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"fsutil.exe fsinfo drives\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertEqual(result["console_output"]["stdout"],
+                                 "Drives: C:\\\r\n")
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\fsutil.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_tasklist_service_view_matches_guest_process_and_service_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

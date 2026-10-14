@@ -75,6 +75,13 @@ the persona address and the local port is synthetic, so broker socket ports
 and host network state are not exposed. Guest socket closure and process exit
 remove rows. UDP, listening sockets, IPv6, and other switches remain open.
 
+The included `fsutil.exe` supports read-only `fsinfo drives`, `drivetype C:`,
+and `volumeinfo C:` on x86 and x64. The volume query calls guest
+`GetVolumeInformationW`, which supplies the same C: label, serial, filesystem,
+and maximum component length seen by programs calling that API directly.
+Other drives return path-not-found and unsupported commands exit 87. It does
+not query host volumes.
+
 Generated `schtasks.exe` prints the persona's bounded scheduled-task snapshot.
 It supports the default query, `/query`, `/query /fo LIST`, `/query /fo CSV`,
 and named queries for up to two ASCII task names. Custom task paths, status,

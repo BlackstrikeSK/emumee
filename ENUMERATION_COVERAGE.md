@@ -12,6 +12,7 @@ never change host state.
 | --- | --- | --- |
 | `hostname.exe` | Yes | Default hostname |
 | `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
+| [`fsutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-fsinfo) | Yes | `fsinfo drives`, `fsinfo drivetype C:`, and `fsinfo volumeinfo C:` for the guest volume |
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
@@ -41,6 +42,7 @@ but it is not included by default unless the table above says so.
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
+| `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | The current persona has no kernel driver service records or `.sys` guest files. Add those modeled surfaces before exposing a driver list. |
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
@@ -95,6 +97,12 @@ guest `GetCurrentDirectoryW`, `GetEnvironmentVariableW`, and
 file name, searches at most 32 guest `PATH` directories, and prints only paths
 found in the virtual filesystem. Wildcards, recursive searches, multiple
 patterns, and switches are not modeled.
+
+The included `fsutil.exe` is compiled from repository C source. Its read-only
+`fsinfo` forms show the guest `C:` drive. `volumeinfo` calls the guest
+`GetVolumeInformationW` model at runtime, so its label, serial, maximum
+component length, and filesystem name agree with that API. An unmodeled drive
+returns path-not-found; unsupported commands exit 87. No host volume is read.
 
 The included `netstat.exe` is compiled from repository C source and calls a
 guest-only `GetExtendedTcpTable` model. Successful outbound TCP connections

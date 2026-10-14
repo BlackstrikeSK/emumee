@@ -35,6 +35,27 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_boot_configuration_accepts_partial_overrides_and_rejects_invalid_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            path.write_text(json.dumps({"boot_config": {
+                "description": "Office PC", "hypervisor_launch_type": "Off"}}),
+                encoding="utf-8")
+            boot = load_persona(path)["boot_config"]
+            self.assertEqual(boot["description"], "Office PC")
+            self.assertEqual(boot["hypervisor_launch_type"], "Off")
+            self.assertEqual(boot["timeout_seconds"], 30)
+            for broken in ({"loader_guid": "host"},
+                           {"timeout_seconds": -1},
+                           {"timeout_seconds": True},
+                           {"hypervisor_launch_type": "Maybe"},
+                           {"safe_boot": "D: "},
+                           {"description": "bad\nline"}):
+                path.write_text(json.dumps({"boot_config": broken}), encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaisesRegex(
+                        ValueError, "boot_config"):
+                    load_persona(path)
+
     def test_guest_path_contains_modeled_windows_directories_and_can_be_overridden(self):
         persona = load_persona(None)
         cfg = make_speakeasy_config(persona, "where.exe", 10, 100_000)

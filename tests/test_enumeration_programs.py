@@ -16,6 +16,63 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_bcdedit_reports_persona_boot_entries_and_rejects_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            guid = "{8b42c761-2eaa-4517-8b34-718a2f048db1}"
+            config.write_text(json.dumps({"boot_config": {
+                "loader_guid": guid, "description": "Workstation Boot",
+                "timeout_seconds": 12, "hypervisor_launch_type": "Off",
+                "debug": True, "safe_boot": "Network"}}), encoding="utf-8")
+            persona = load_persona(config)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["bcdedit.exe"]
+                    pe = inspect_pe(image, "bcdedit.exe")
+                    self.assertEqual(pe.architecture, "x64" if is_x64 else "x86")
+                    for index, args in enumerate(([], ["/enum"], ["/enum", "active"],
+                                                  ["/v"], ["/enum", "active", "/v"],
+                                                  ["/enum", "{current}"])):
+                        result = run_native(image, pe, persona, root / f"{is_x64}-{index}",
+                                            [], 10, 100_000, guest_args=args)
+                        self.assertFalse(result["errors"])
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        output = result["console_output"]["stdout"]
+                        for part in ("Workstation Boot", "hypervisorlaunchtype    Off",
+                                     "debug                   Yes", "safeboot                Network",
+                                     "partition=C:"):
+                            self.assertIn(part, output)
+                        self.assertEqual(guid in output, "/v" in args)
+                        self.assertEqual("Windows Boot Manager" in output,
+                                         args != ["/enum", "{current}"])
+                    rejected = run_native(image, pe, persona, root / f"{is_x64}-set",
+                                          [], 10, 100_000,
+                                          guest_args=["/set", "{current}", "debug", "yes"])
+                    self.assertFalse(rejected["errors"])
+                    self.assertEqual(rejected["guest_exit_code"], 87)
+                    self.assertEqual(rejected["console_output"]["stdout"], "")
+
+    def test_winexec_launches_guest_bcdedit(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"bcdedit.exe /enum\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("Windows Boot Loader", result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\bcdedit.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_wevtutil_reads_configured_guest_channels(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

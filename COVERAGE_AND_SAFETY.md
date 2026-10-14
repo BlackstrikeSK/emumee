@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -86,6 +86,13 @@ Generated `mountvol.exe` lists the single guest `C:` mount and supports
 `C:\ /L`. Its GUID is a configurable persona field and matches the guest
 `GetVolumeNameForVolumeMountPointA/W` hook. Other mounts and mutation commands
 exit 87 without reading or modifying host volume state.
+
+Generated `bcdedit.exe` supports default active enumeration, `/enum`,
+`/enum active`, `/v`, `/enum active /v`, and `/enum {current}`. The two entries
+use validated persona `boot_config` values, the guest locale, and the sole
+`C:` volume. `/set` and other unsupported commands exit 87 with no output
+and no host BCD access. A full guest BCD hive and broader read modes remain
+unmodeled.
 
 The included `wevtutil.exe` uses guest registry APIs to enumerate configured
 event channel names (`el`) and read each channel's enabled state, maximum

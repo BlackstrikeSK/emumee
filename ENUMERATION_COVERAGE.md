@@ -14,6 +14,7 @@ never change host state.
 | `where.exe` | Yes | One simple file name in the guest current directory and guest `PATH`; `.exe` is added when no extension is supplied |
 | [`fsutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-fsinfo) | Yes | `fsinfo drives`, `fsinfo drivetype C:`, and `fsinfo volumeinfo C:` for the guest volume |
 | [`mountvol.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mountvol) | Yes | Default volume listing and `C:\ /L` from the guest volume GUID |
+| [`bcdedit.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/bcdedit) | Yes | Default, `/enum`, `/enum active`, `/v`, `/enum active /v`, `/enum {current}` from persona boot settings |
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
@@ -50,7 +51,7 @@ but it is not included by default unless the table above says so.
 | [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | `/enum-drivers`, `/enum-devices` | A guest driver package store and PnP device inventory; `driverquery` records alone do not describe installed packages or devices. |
 | [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Filter, instance, and volume enumeration | Guest minifilter records, altitudes, and attachment state. |
 | `wevtutil.exe` beyond the listed forms | `qe`, `gli`, publishers, remote queries, and changes | A guest event record store and live status model; only channel names and configuration are modeled. |
-| [`bcdedit.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/bcdedit) | Default or `/enum` | A guest Boot Configuration Data store and boot entry identities. |
+| `bcdedit.exe` beyond the listed forms | `/enum all`, other identifiers, BCD store paths, and changes | A full guest Boot Configuration Data store; the included PE currently renders two configured active entries. |
 | [`gpresult.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult) | `/r` | Guest applied policy and RSoP data for the persona user and computer. |
 | `driverquery.exe` beyond the listed forms | `/si`, combined flags, and remote queries | Signed driver data, more output modes, and `.sys` guest files remain unmodeled; driver images are not executed. |
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
@@ -117,6 +118,13 @@ Generated `mountvol.exe` lists the single guest `C:` mount and supports
 `C:\ /L`. Its volume GUID comes from the persona and matches the guest
 `GetVolumeNameForVolumeMountPointA/W` response. Other mounts and mutation
 commands exit 87 without changing guest or host volumes.
+
+Generated `bcdedit.exe` renders a boot manager and current loader from the
+persona's `boot_config`, guest locale, and single `C:` volume. `/v` expands
+the configured loader GUID. Explicit debug, safe boot, and hypervisor launch
+settings appear only when configured. Other identifiers, full BCD hive data,
+and mutation commands remain unmodeled; unsupported forms exit 87 without
+opening the host BCD store.
 
 The included `wevtutil.exe` is compiled from repository C source. `el`
 enumerates guest EventLog registry subkeys and `gl <channel>` reads their

@@ -220,6 +220,42 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
         if arguments.casefold() in {"c: /l", "c:\\ /l"}:
             return volume + "\r\n"
         raise ValueError("unsupported mountvol arguments")
+    if name == "bcdedit.exe":
+        argument = arguments.casefold()
+        if argument not in {"", "/enum", "/enum active", "/v",
+                            "/enum active /v", "/enum {current}"}:
+            raise ValueError("unsupported bcdedit arguments")
+        boot = persona["boot_config"]
+        verbose = argument in {"/v", "/enum active /v"}
+        loader_id = boot["loader_guid"] if verbose else "{current}"
+        manager_id = ("{9dea862c-5cdd-4e70-acc1-f32b344d4795}" if verbose
+                      else "{bootmgr}")
+        manager = ("Windows Boot Manager\r\n--------------------\r\n"
+                   f"identifier              {manager_id}\r\n"
+                   "device                  partition=C:\r\n"
+                   "description             Windows Boot Manager\r\n"
+                   f"locale                  {persona['locale']}\r\n"
+                   f"default                 {loader_id}\r\n"
+                   f"displayorder            {loader_id}\r\n"
+                   f"timeout                 {boot['timeout_seconds']}\r\n")
+        loader = ("Windows Boot Loader\r\n-------------------\r\n"
+                  f"identifier              {loader_id}\r\n"
+                  "device                  partition=C:\r\n"
+                  "path                    \\Windows\\system32\\winload.efi\r\n"
+                  f"description             {boot['description']}\r\n"
+                  f"locale                  {persona['locale']}\r\n"
+                  "osdevice                partition=C:\r\n"
+                  "systemroot              \\Windows\r\n"
+                  "nx                      OptIn\r\n")
+        if boot["hypervisor_launch_type"] is not None:
+            loader += f"hypervisorlaunchtype    {boot['hypervisor_launch_type']}\r\n"
+        if boot["debug"]:
+            loader += "debug                   Yes\r\n"
+        if boot["safe_boot"] is not None:
+            loader += f"safeboot                {boot['safe_boot']}\r\n"
+        if argument == "/enum {current}":
+            return loader
+        return manager + "\r\n" + loader
     if name == "driverquery.exe":
         argument = arguments.casefold()
         if argument not in {"", "/v", "/fo list", "/fo csv", "/nh"}:
@@ -591,7 +627,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
-                 "schtasks.exe", "driverquery.exe", "mountvol.exe"):
+                 "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -616,6 +652,8 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                                         for task in persona["scheduled_tasks"][:2])),
                      "tzutil.exe": ("/g",),
                      "mountvol.exe": ("C: /L", "C:\\ /L"),
+                     "bcdedit.exe": ("/enum", "/enum active", "/v",
+                                     "/enum active /v", "/enum {current}"),
                      "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)

@@ -52,6 +52,14 @@ DEFAULT_PERSONA = {
     },
     "current_dir": "C:\\Users\\Alex\\Downloads",
     "volume_guid": DEFAULT_VOLUME_GUID,
+    "boot_config": {
+        "loader_guid": "{17f03c5e-781a-429f-90d7-5f6a8e1472c3}",
+        "description": "Windows 11",
+        "timeout_seconds": 30,
+        "hypervisor_launch_type": None,
+        "debug": False,
+        "safe_boot": None,
+    },
     "locale": "en-US",
     "timezone": "Eastern Standard Time",
     "utc_offset_minutes": -240,
@@ -142,6 +150,15 @@ def load_persona(path: Path | None) -> dict:
                 raise ValueError("Unknown persona network_adapter fields: " +
                                  ", ".join(sorted(unknown_adapter)))
             persona["network_adapter"].update(adapter)
+        if "boot_config" in supplied:
+            boot = supplied.pop("boot_config")
+            if not isinstance(boot, dict):
+                raise ValueError("Persona boot_config must be an object")
+            unknown_boot = set(boot) - set(persona["boot_config"])
+            if unknown_boot:
+                raise ValueError("Unknown persona boot_config fields: " +
+                                 ", ".join(sorted(unknown_boot)))
+            persona["boot_config"].update(boot)
         custom_registry = "registry_keys" in supplied
         refresh_registry = not custom_registry
         custom_files = "virtual_files" in supplied
@@ -175,6 +192,20 @@ def load_persona(path: Path | None) -> dict:
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
                              persona["volume_guid"])):
         raise ValueError("Persona volume_guid must be a braced GUID")
+    boot = persona["boot_config"]
+    if (not isinstance(boot["loader_guid"], str) or
+            not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
+                             boot["loader_guid"]) or
+            not isinstance(boot["description"], str) or
+            not 1 <= len(boot["description"]) <= 80 or
+            any(ord(char) < 32 for char in boot["description"]) or
+            not isinstance(boot["timeout_seconds"], int) or
+            isinstance(boot["timeout_seconds"], bool) or
+            not 0 <= boot["timeout_seconds"] <= 999 or
+            boot["hypervisor_launch_type"] not in (None, "Auto", "Off") or
+            not isinstance(boot["debug"], bool) or
+            boot["safe_boot"] not in (None, "Minimal", "Network")):
+        raise ValueError("Persona boot_config fields are invalid")
     adapter = persona["network_adapter"]
     if (not isinstance(adapter["guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",

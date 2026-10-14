@@ -102,6 +102,63 @@ def mui_string(image: bytes, string_id: int) -> str | None:
     return None
 
 
+def mui_message(image: bytes, message_id: int, language: int = 0) -> str | None:
+    """Read one bounded RT_MESSAGETABLE entry from a supplied guest MUI."""
+    if message_id < 0 or len(image) > 32 * 1024 * 1024:
+        return None
+    try:
+        pe = pefile.PE(data=image, fast_load=True)
+        try:
+            pe.parse_data_directories(directories=[
+                pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+            root = getattr(pe, 'DIRECTORY_ENTRY_RESOURCE', None)
+            if root is None:
+                return None
+            for resource in root.entries:
+                if resource.id != 11 or not hasattr(resource, 'directory'):
+                    continue
+                for block in resource.directory.entries:
+                    if not hasattr(block, 'directory'):
+                        continue
+                    for item in block.directory.entries:
+                        if not hasattr(item, 'data') or (language and item.id != language):
+                            continue
+                        leaf = item.data.struct
+                        size = int(leaf.Size)
+                        if size < 16 or size > 65536:
+                            continue
+                        raw = pe.get_data(int(leaf.OffsetToData), size)
+                        if len(raw) != size:
+                            continue
+                        count = struct.unpack_from('<I', raw, 0)[0]
+                        if count > 4096 or 4 + count * 12 > size:
+                            continue
+                        for index in range(count):
+                            low, high, offset = struct.unpack_from('<III', raw, 4 + index * 12)
+                            if not low <= message_id <= high or high - low > 65535:
+                                continue
+                            position = offset
+                            for _ in range(message_id - low + 1):
+                                if position + 4 > size:
+                                    return None
+                                length, flags = struct.unpack_from('<HH', raw, position)
+                                if length < 4 or position + length > size or flags & ~1:
+                                    return None
+                                if _ == message_id - low:
+                                    data = raw[position + 4:position + length]
+                                    encoding = 'utf-16le' if flags & 1 else 'cp1252'
+                                    if flags & 1 and len(data) % 2:
+                                        return None
+                                    return data.decode(encoding).rstrip('\0')
+                                position += length
+        finally:
+            pe.close()
+    except (ValueError, OSError, pefile.PEFormatError, AttributeError,
+            IndexError, struct.error, UnicodeError):
+        return None
+    return None
+
+
 class WinMessages:
     def __init__(self, locale: str = "en-US"):
         self.locale = locale.casefold().replace("_", "-")
@@ -114,7 +171,7 @@ class WinMessages:
         self.current_dir = ''
         self._mui_cache: dict[tuple[str, int], str | None] = {}
 
-    def _mui_message(self, module, string_id: int) -> str | None:
+    def _mui_image(self, module) -> tuple[str, bytes] | None:
         name = ntpath.basename(str(module.name))
         candidates = [path for path in self.guest_images
                       if ntpath.splitext(ntpath.basename(path))[0].casefold()
@@ -134,12 +191,21 @@ class WinMessages:
             ntpath.dirname(stem_path), self.locale,
             ntpath.basename(stem_path) + '.mui')))
         image = self.guest_images.get(mui_path)
-        if image is None:
+        return (mui_path, image) if image is not None else None
+
+    def _mui_message(self, module, string_id: int) -> str | None:
+        found = self._mui_image(module)
+        if found is None:
             return None
+        mui_path, image = found
         key = (mui_path, string_id)
         if key not in self._mui_cache:
             self._mui_cache[key] = mui_string(image, string_id)
         return self._mui_cache[key]
+
+    def _mui_message_table(self, module, message_id: int, language: int) -> str | None:
+        found = self._mui_image(module)
+        return mui_message(found[1], message_id, language) if found else None
 
     def install(self, emulator) -> None:
         emulator.add_api_hook(self._format_w, "kernel32", "FormatMessageW", argc=7)
@@ -191,8 +257,42 @@ class WinMessages:
             "%%": "%", "%n": "\r\n", "%r": "\r", "%t": "\t",
         }[match.group()], message)
 
+    def _format_inserts(self, emu, message: str, arguments: int,
+                        argument_array: bool) -> str | None:
+        found = list(re.finditer(r"%([1-9][0-9]?)(?:!([^!]*)!)?", message))
+        if not found:
+            return message
+        width = emu.get_ptr_size()
+        if not arguments:
+            return None
+        base = arguments
+        if not argument_array:
+            if not self._access(emu, arguments, width, "read"):
+                return None
+            base = int.from_bytes(emu.mem_read(arguments, width), "little")
+        values = {}
+        for match in found:
+            number = int(match.group(1))
+            specifier = match.group(2)
+            if specifier not in (None, "s", "ls", "ws"):
+                return None
+            slot = base + (number - 1) * width
+            if not self._access(emu, slot, width, "read"):
+                return None
+            pointer = int.from_bytes(emu.mem_read(slot, width), "little")
+            value = self._read_wide(emu, pointer)
+            if value is None:
+                return None
+            values[match.start()] = value
+        return re.sub(r"%([1-9][0-9]?)(?:!([^!]*)!)?",
+                      lambda match: values[match.start()], message)
+
     def _format_w(self, emu, api_name, _original, params) -> int:
         flags, source, message_id, language, output, capacity, arguments = map(int, params)
+        flags &= 0xffffffff
+        message_id &= 0xffffffff
+        language &= 0xffffffff
+        capacity &= 0xffffffff
         allocate = bool(flags & FORMAT_MESSAGE_ALLOCATE_BUFFER)
         from_string = bool(flags & FORMAT_MESSAGE_FROM_STRING)
         from_system = bool(flags & FORMAT_MESSAGE_FROM_SYSTEM)
@@ -205,9 +305,8 @@ class WinMessages:
                            FORMAT_MESSAGE_ARGUMENT_ARRAY))):
             emu.set_last_error(ERROR_INVALID_PARAMETER)
             return 0
-        if from_module or (flags & 0xFF) or (arguments and not
-                                              (flags & FORMAT_MESSAGE_IGNORE_INSERTS)):
-            self.unsupported.append(f"{api_name}: message source, width, or inserts not modeled")
+        if flags & 0xFF:
+            self.unsupported.append(f"{api_name}: message width not modeled")
             emu.set_last_error(ERROR_INVALID_PARAMETER)
             return 0
         if from_string:
@@ -216,20 +315,36 @@ class WinMessages:
                 emu.set_last_error(ERROR_INVALID_PARAMETER)
                 return 0
         else:
-            message = _SYSTEM_MESSAGES.get(message_id)
+            message = None
+            if from_module:
+                process = emu.get_current_process()
+                module = (emu.get_mod_from_addr(int(process.base)) if source == 0 and
+                          process is not None else emu.get_mod_from_addr(source))
+                if module is not None and (source == 0 or int(module.base) == source) and (
+                        self.module_visible is None or self.module_visible(emu, module)):
+                    message = self._mui_message_table(module, message_id, language)
+            if message is None and from_system:
+                message = _SYSTEM_MESSAGES.get(message_id)
             if message is None:
-                self.unsupported.append(f"{api_name}: system message {message_id:#x} not modeled")
+                self.unsupported.append(f"{api_name}: message {message_id:#x} not modeled")
                 emu.set_last_error(ERROR_MR_MID_NOT_FOUND)
                 return 0
-            if language == 0 and self.locale not in ("en-us", "en-gb"):
+            if from_system and not from_module and language == 0 and self.locale not in ("en-us", "en-gb"):
                 self.unsupported.append(f"{api_name}: persona message locale {self.locale} not modeled")
                 emu.set_last_error(ERROR_MR_MID_NOT_FOUND)
                 return 0
-            if language not in (0, 0x0409, 0x0809):
+            if from_system and not from_module and language not in (0, 0x0409, 0x0809):
                 self.unsupported.append(f"{api_name}: system message language {language:#x} not modeled")
                 emu.set_last_error(ERROR_MR_MID_NOT_FOUND)
                 return 0
-        message = self._format_escapes(message, bool(flags & FORMAT_MESSAGE_IGNORE_INSERTS))
+        ignore_inserts = bool(flags & FORMAT_MESSAGE_IGNORE_INSERTS)
+        message = self._format_escapes(message, True)
+        if message is not None and not ignore_inserts:
+            try:
+                message = self._format_inserts(emu, message, arguments,
+                                               bool(flags & FORMAT_MESSAGE_ARGUMENT_ARRAY))
+            except Exception:
+                message = None
         if message is None:
             self.unsupported.append(f"{api_name}: message inserts not modeled")
             emu.set_last_error(ERROR_INVALID_PARAMETER)

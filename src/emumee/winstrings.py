@@ -9,6 +9,9 @@ from speakeasy.winenv import arch as e_arch
 MAX_CHARS = 32767
 ERROR_INVALID_PARAMETER = 87
 ERROR_INVALID_FLAGS = 1004
+NORM_IGNORECASE = 0x00000001
+NORM_IGNOREKANATYPE = 0x00010000
+NORM_IGNOREWIDTH = 0x00020000
 FIND_STARTSWITH = 0x00100000
 FIND_ENDSWITH = 0x00200000
 FIND_FROMSTART = 0x00400000
@@ -104,7 +107,8 @@ class GuestStrings:
 
     def _compare(self, emu, api_name, _original, params) -> int:
         _locale, flags, first, first_count, second, second_count = map(int, params)
-        if flags not in (0, 1):
+        flags &= 0xffffffff
+        if flags & ~(NORM_IGNORECASE | NORM_IGNOREKANATYPE | NORM_IGNOREWIDTH):
             emu.set_last_error(ERROR_INVALID_FLAGS)
             return 0
         width = api_name.endswith('W')
@@ -119,7 +123,9 @@ class GuestStrings:
             self.unsupported.append(f'{api_name}: non-ASCII collation unavailable')
             emu.set_last_error(ERROR_INVALID_PARAMETER)
             return 0
-        if flags == 1:
+        # Kana and width options do not change ASCII strings. Non-ASCII
+        # collation remains explicitly unsupported above.
+        if flags & NORM_IGNORECASE:
             left, right = left.casefold(), right.casefold()
         return 1 if left < right else (3 if left > right else 2)
 

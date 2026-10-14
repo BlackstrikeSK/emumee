@@ -24,10 +24,11 @@ class GuestIdentity:
 
     def install(self, emulator) -> None:
         for suffix in ("A", "W"):
-            emulator.add_api_hook(self._computer_name, "kernel32",
-                                  "GetComputerName" + suffix, argc=2)
-            emulator.add_api_hook(self._computer_name_ex, "kernel32",
-                                  "GetComputerNameEx" + suffix, argc=3)
+            for module in ("kernel32", "api-ms-win-core-sysinfo-l1-1-0"):
+                emulator.add_api_hook(self._computer_name, module,
+                                      "GetComputerName" + suffix, argc=2)
+                emulator.add_api_hook(self._computer_name_ex, module,
+                                      "GetComputerNameEx" + suffix, argc=3)
             emulator.add_api_hook(self._user_name, "advapi32",
                                   "GetUserName" + suffix, argc=2)
         emulator.add_api_hook(self._wsa_startup, "ws2_32", "WSAStartup", argc=2)
@@ -158,11 +159,11 @@ class GuestIdentity:
         if name_type in (0, 4):
             name = host
         elif name_type in (1, 5):
-            name = host.lower()
+            name = host
         elif name_type in (2, 6):
             name = dns_domain
         elif name_type in (3, 7):
-            name = host.lower() + ("." + dns_domain if dns_domain else "")
+            name = host + ("." + dns_domain if dns_domain else "")
         else:
             emu.set_last_error(ERROR_INVALID_PARAMETER)
             return 0

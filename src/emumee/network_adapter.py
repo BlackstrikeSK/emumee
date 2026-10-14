@@ -14,6 +14,8 @@ ERROR_BUFFER_OVERFLOW = 111
 ERROR_INVALID_PARAMETER = 87
 ERROR_NO_DATA = 232
 ERROR_NOT_SUPPORTED = 50
+STATUS_INVALID_PARAMETER = 0xC000000D
+WSAEAFNOSUPPORT = 10047
 MAX_ADAPTER_BUFFER = 64 * 1024
 
 
@@ -68,6 +70,29 @@ def _layouts(width: int):
     return Adapter, Unicast, AddressNode
 
 
+@lru_cache(maxsize=2)
+def _fixed_layouts(width: int):
+    if width not in (4, 8):
+        raise ValueError("unsupported guest pointer width")
+    pointer = ctypes.c_uint32 if width == 4 else ctypes.c_uint64
+
+    class IpAddrString(ctypes.Structure):
+        _fields_ = [("Next", pointer), ("IpAddress", ctypes.c_char * 16),
+                    ("IpMask", ctypes.c_char * 16), ("Context", ctypes.c_uint32)]
+
+    class FixedInfo(ctypes.Structure):
+        _fields_ = [("HostName", ctypes.c_char * 132),
+                    ("DomainName", ctypes.c_char * 132),
+                    ("CurrentDnsServer", pointer),
+                    ("DnsServerList", IpAddrString), ("NodeType", ctypes.c_uint32),
+                    ("ScopeId", ctypes.c_char * 260),
+                    ("EnableRouting", ctypes.c_uint32),
+                    ("EnableProxy", ctypes.c_uint32),
+                    ("EnableDns", ctypes.c_uint32)]
+
+    return FixedInfo, IpAddrString
+
+
 class GuestNetworkAdapter:
     def __init__(self, persona: dict):
         self.persona = persona
@@ -79,6 +104,14 @@ class GuestNetworkAdapter:
     def install(self, emulator) -> None:
         emulator.add_api_hook(self._get_adapters_addresses, "iphlpapi",
                               "GetAdaptersAddresses", argc=5)
+        emulator.add_api_hook(self._convert_length_to_ipv4_mask, "iphlpapi",
+                              "ConvertLengthToIpv4Mask", argc=2)
+        emulator.add_api_hook(self._rtl_ipv4_address_to_string_ex_w, "ntdll",
+                              "RtlIpv4AddressToStringExW", argc=4)
+        emulator.add_api_hook(self._inet_ntop_w, "ws2_32", "InetNtopW", argc=4)
+        emulator.add_api_hook(self._dns_free, "dnsapi", "DnsFree", argc=2)
+        emulator.add_api_hook(self._get_network_params, "iphlpapi",
+                              "GetNetworkParams", argc=2)
 
     @staticmethod
     def _sockaddr(ip: str) -> bytes:
@@ -216,4 +249,131 @@ class GuestNetworkAdapter:
         self.events.append({"event": "guest_adapter_query", "status": 0,
                             "required": required, "family": family,
                             "ipv4": self.persona["network_adapter"]["ipv4"]})
+        return 0
+
+    def _convert_length_to_ipv4_mask(self, emu, _api_name, _original, params) -> int:
+        prefix, output = map(int, params)
+        if not self._access(emu, output, 4, True):
+            return ERROR_INVALID_PARAMETER
+        if prefix < 0 or prefix > 32:
+            emu.mem_write(output, b"\xff" * 4)
+            return ERROR_INVALID_PARAMETER
+        mask = (0xffffffff << (32 - prefix)) & 0xffffffff if prefix else 0
+        emu.mem_write(output, mask.to_bytes(4, "big"))
+        return 0
+
+    def _rtl_ipv4_address_to_string_ex_w(self, emu, _api_name,
+                                         _original, params) -> int:
+        address, port, output, length_ptr = map(int, params)
+        if (not self._access(emu, address, 4, False) or not output or
+                not self._access(emu, length_ptr, 4, False) or
+                not self._access(emu, length_ptr, 4, True)):
+            return STATUS_INVALID_PARAMETER
+        try:
+            address_text = str(ipaddress.IPv4Address(emu.mem_read(address, 4)))
+            capacity = int.from_bytes(emu.mem_read(length_ptr, 4), "little")
+        except Exception:
+            return STATUS_INVALID_PARAMETER
+        port &= 0xffff
+        if port:
+            address_text += ":" + str(int.from_bytes(port.to_bytes(2, "little"), "big"))
+        required = len(address_text) + 1
+        if capacity < required or not self._access(emu, output, required * 2, True):
+            emu.mem_write(length_ptr, struct.pack("<I", required))
+            return STATUS_INVALID_PARAMETER
+        emu.mem_write(output, (address_text + "\0").encode("utf-16le"))
+        emu.mem_write(length_ptr, struct.pack("<I", required))
+        return 0
+
+    def _inet_ntop_w(self, emu, _api_name, _original, params) -> int:
+        family, address, output, capacity = map(int, params)
+        if family not in (2, 23):
+            emu.set_last_error(WSAEAFNOSUPPORT)
+            return 0
+        if not output or capacity <= 0:
+            emu.set_last_error(ERROR_INVALID_PARAMETER)
+            return 0
+        size = 4 if family == 2 else 16
+        if not self._access(emu, address, size, False):
+            emu.set_last_error(ERROR_INVALID_PARAMETER)
+            return 0
+        try:
+            raw = emu.mem_read(address, size)
+            if family == 2:
+                address_text = str(ipaddress.IPv4Address(raw))
+            else:
+                ipv6 = ipaddress.IPv6Address(raw)
+                if ipv6.ipv4_mapped is not None:
+                    address_text = "::ffff:" + str(ipv6.ipv4_mapped)
+                elif raw[:12] == b"\0" * 12 and raw[12:] not in (
+                        b"\0" * 4, b"\0\0\0\1"):
+                    address_text = "::" + str(ipaddress.IPv4Address(raw[12:]))
+                else:
+                    address_text = str(ipv6)
+        except Exception:
+            emu.set_last_error(ERROR_INVALID_PARAMETER)
+            return 0
+        payload = (address_text + "\0").encode("utf-16le")
+        if capacity < len(address_text) + 1 or not self._access(emu, output, len(payload), True):
+            emu.set_last_error(ERROR_INVALID_PARAMETER)
+            return 0
+        emu.mem_write(output, payload)
+        return output
+
+    def _dns_free(self, _emu, api_name, _original, params):
+        address = int(params[0])
+        if address:
+            self.unsupported.append(f"{api_name}: non-null DNS record free unsupported")
+        # The null case owns no allocation. Never pass guest pointers to the host.
+        return None
+
+    def _get_network_params(self, emu, api_name, _original, params) -> int:
+        buffer, size_ptr = map(int, params)
+        if not self._access(emu, size_ptr, 4, False) or not self._access(
+                emu, size_ptr, 4, True):
+            return ERROR_INVALID_PARAMETER
+        FixedInfo, IpAddrString = _fixed_layouts(emu.get_ptr_size())
+        dns_servers = self.persona["network_adapter"]["dns_servers"]
+        required = ctypes.sizeof(FixedInfo) + (len(dns_servers) - 1) * ctypes.sizeof(IpAddrString)
+        try:
+            capacity = int.from_bytes(emu.mem_read(size_ptr, 4), "little")
+        except Exception:
+            return ERROR_INVALID_PARAMETER
+        if not buffer or capacity < required:
+            emu.mem_write(size_ptr, struct.pack("<I", required))
+            self.events.append({"event": "guest_network_params", "status": ERROR_BUFFER_OVERFLOW,
+                                "required": required})
+            return ERROR_BUFFER_OVERFLOW
+        if not self._access(emu, buffer, required, True):
+            return ERROR_INVALID_PARAMETER
+        domain = "" if self.persona["domain"] == "WORKGROUP" else self.persona["domain"]
+        try:
+            hostname = self.persona["hostname"].encode("cp1252")
+            domain_name = domain.encode("cp1252")
+        except (AttributeError, UnicodeError):
+            self.unsupported.append(f"{api_name}: persona hostname or domain encoding unsupported")
+            return ERROR_NOT_SUPPORTED
+        if len(hostname) >= 132 or len(domain_name) >= 132:
+            self.unsupported.append(f"{api_name}: persona hostname or domain too long")
+            return ERROR_NOT_SUPPORTED
+        info = FixedInfo()
+        info.HostName = hostname
+        info.DomainName = domain_name
+        info.NodeType = 8  # Hybrid node
+        info.DnsServerList.IpAddress = dns_servers[0].encode("ascii")
+        if len(dns_servers) > 1:
+            info.DnsServerList.Next = buffer + ctypes.sizeof(FixedInfo)
+        image = bytearray(required)
+        image[:ctypes.sizeof(info)] = bytes(info)
+        for index, address in enumerate(dns_servers[1:]):
+            node = IpAddrString()
+            node.IpAddress = address.encode("ascii")
+            if index + 2 < len(dns_servers):
+                node.Next = buffer + ctypes.sizeof(FixedInfo) + (index + 1) * ctypes.sizeof(node)
+            offset = ctypes.sizeof(FixedInfo) + index * ctypes.sizeof(node)
+            image[offset:offset + ctypes.sizeof(node)] = bytes(node)
+        emu.mem_write(buffer, bytes(image))
+        emu.mem_write(size_ptr, struct.pack("<I", required))
+        self.events.append({"event": "guest_network_params", "status": 0,
+                            "required": required, "dns_server_count": len(dns_servers)})
         return 0

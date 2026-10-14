@@ -30,6 +30,29 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_computer_name_api_set_uses_persona_dns_domain(self):
+        persona = load_persona(None)
+        bridge = GuestIdentity(persona)
+        hooks = {}
+        class Registrar:
+            def add_api_hook(self, callback, module, name, **_kwargs):
+                hooks[(module, name)] = callback
+        bridge.install(Registrar())
+        self.assertEqual(hooks[("api-ms-win-core-sysinfo-l1-1-0",
+                                "GetComputerNameExW")].__name__,
+                         bridge._computer_name_ex.__name__)
+        memory = {0x1000: (32).to_bytes(4, "little")}
+        emu = SimpleNamespace(
+            mem_read=lambda address, size: memory[address][:size],
+            mem_write=lambda address, data: memory.__setitem__(address, data),
+            set_last_error=lambda _code: None,
+        )
+        self.assertEqual(bridge._computer_name_ex(
+            emu, "api-ms-win-core-sysinfo-l1-1-0.GetComputerNameExW", None,
+            [2, 0x2000, 0x1000]), 1)
+        self.assertEqual(memory[0x2000], b"\0\0")
+        self.assertEqual(memory[0x1000], (0).to_bytes(4, "little"))
+
     def test_network_adapter_override_updates_registry_and_rejects_bad_addresses(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "persona.json"
@@ -83,7 +106,7 @@ class PersonaContentTests(unittest.TestCase):
         self.assertEqual(int.from_bytes(memory[0x1000], "little"), len(persona["hostname"]) + 1)
         self.assertEqual(bridge._computer_name_ex(
             emu, "kernel32.GetComputerNameExA", None, [3, 0x3000, 0x1000]), 1)
-        self.assertEqual(memory[0x3000], persona["hostname"].lower().encode() + b"\0")
+        self.assertEqual(memory[0x3000], persona["hostname"].encode() + b"\0")
         self.assertEqual(bridge._computer_name_ex(
             emu, "kernel32.GetComputerNameExA", None, [8, 0x3000, 0x1000]), 0)
         self.assertEqual(errors[-1], 87)

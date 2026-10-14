@@ -72,6 +72,20 @@ class WinStringTests(unittest.TestCase):
         self.assertEqual(self.api._length(
             self.emu, 'kernel32.lstrlenW', None, [0]), 0)
 
+    def test_compare_ascii_with_kana_and_width_flags(self):
+        self.emu.memory[0x500:0x50a] = '/ALL\0'.encode('utf-16le')
+        self.emu.memory[0x600:0x60a] = '/all\0'.encode('utf-16le')
+        self.assertEqual(self.api._compare(
+            self.emu, 'api-ms-win-core-string-l1-1-0.CompareStringW', None,
+            [0x400, 0x30001, 0x500, -1, 0x600, -1]), 2)
+        self.assertEqual(self.api._compare(
+            self.emu, 'api-ms-win-core-string-l1-1-0.CompareStringW', None,
+            [0x400, 0x30000, 0x500, -1, 0x600, -1]), 1)
+        self.assertEqual(self.api._compare(
+            self.emu, 'api-ms-win-core-string-l1-1-0.CompareStringW', None,
+            [0x400, 0x40000, 0x500, -1, 0x600, -1]), 0)
+        self.assertEqual(self.emu.last_error, 1004)
+
     def test_compare_string_api_set_is_registered(self):
         hooks = []
         class Registrar:

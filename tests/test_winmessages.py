@@ -13,7 +13,36 @@ import speakeasy.common as common
 from emumee.winmessages import (FORMAT_MESSAGE_ALLOCATE_BUFFER,
                                 FORMAT_MESSAGE_FROM_STRING,
                                 FORMAT_MESSAGE_FROM_SYSTEM,
-                                FORMAT_MESSAGE_IGNORE_INSERTS, WinMessages)
+                                FORMAT_MESSAGE_IGNORE_INSERTS, WinMessages,
+                                mui_message)
+from tests.fixtures.build_native import build as build_test_pe
+
+
+def _message_table_fixture() -> bytes:
+    """Small independently assembled PE resource tree with one RT_MESSAGETABLE."""
+    image = bytearray(build_test_pe(0x8664))
+    image.extend(b"\0" * 0x200)
+    pe_offset = 0x80
+    optional = pe_offset + 24
+    struct.pack_into("<H", image, pe_offset + 6, 3)
+    struct.pack_into("<I", image, optional + 56, 0x4000)
+    struct.pack_into("<II", image, optional + 112 + 16, 0x3000, 0x200)
+    section = optional + 0xF0 + 80
+    image[section:section + 8] = b".rsrc\0\0\0"
+    struct.pack_into("<IIIIIIHHI", image, section + 8,
+                     0x200, 0x3000, 0x200, 0x600, 0, 0, 0, 0, 0x40000040)
+    for offset, ident, target in ((0x600, 11, 0x20),
+                                  (0x620, 1, 0x40),
+                                  (0x640, 1033, 0x60)):
+        struct.pack_into("<H", image, offset + 14, 1)
+        struct.pack_into("<II", image, offset + 16, ident,
+                         target | 0x80000000 if offset != 0x640 else target)
+    message = "Guest adapter %1\r\n".encode("utf-16le") + b"\0\0"
+    table = struct.pack("<IIII", 1, 10000, 10000, 16)
+    table += struct.pack("<HH", len(message) + 4, 1) + message
+    struct.pack_into("<IIII", image, 0x660, 0x3080, len(table), 0, 0)
+    image[0x680:0x680 + len(table)] = table
+    return bytes(image)
 
 
 class _GuestMemory:
@@ -208,6 +237,38 @@ class WinMessageTests(unittest.TestCase):
                          "Guest text\0".encode("utf-16le"))
         read.assert_called_once_with(b"guest MUI", 5001)
         self.assertFalse(self.messages.unsupported)
+
+    def test_module_message_uses_guest_mui_and_bounded_wide_inserts(self):
+        self.guest.modules = [SimpleNamespace(base=0x400000, name="fixture.exe")]
+        self.messages.current_dir = r"C:\samples"
+        self.messages.guest_images = {
+            r"c:\samples\fixture.exe": b"guest exe",
+            r"c:\samples\en-us\fixture.exe.mui": b"guest MUI",
+        }
+        self.guest.mem_write(0x1500, struct.pack("<Q", 0x1600))
+        self.guest.mem_write(0x1600, struct.pack("<QQ", 0x1700, 0x1800))
+        self.guest.mem_write(0x1700, "Ethernet\0".encode("utf-16le"))
+        self.guest.mem_write(0x1800, "192.168.1.107\0".encode("utf-16le"))
+        with patch("emumee.winmessages.mui_message",
+                   return_value="Adapter %1: %2\r\n") as read:
+            length = self.format(0x900, message_id=0x2758,
+                                 capacity=0x100000000, arguments=0x1500)
+        self.assertEqual(length, len("Adapter Ethernet: 192.168.1.107\r\n"))
+        address = struct.unpack("<Q", self.guest.mem_read(0x1000, 8))[0]
+        self.assertEqual(self.guest.mem_read(address, (length + 1) * 2),
+                         "Adapter Ethernet: 192.168.1.107\r\n\0".encode("utf-16le"))
+        read.assert_called_once_with(b"guest MUI", 0x2758, 0)
+        self.assertFalse(self.messages.unsupported)
+
+    def test_message_table_parser_reads_guest_resource_and_rejects_bad_entry(self):
+        image = _message_table_fixture()
+        self.assertEqual(mui_message(image, 10000, 1033),
+                         "Guest adapter %1\r\n")
+        self.assertIsNone(mui_message(image, 10001, 1033))
+        self.assertIsNone(mui_message(image, 10000, 1031))
+        damaged = bytearray(image)
+        struct.pack_into("<H", damaged, 0x690, 0xffff)
+        self.assertIsNone(mui_message(bytes(damaged), 10000, 1033))
 
 
 if __name__ == "__main__":

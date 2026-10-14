@@ -27,6 +27,7 @@ from .crt_startup import CRTStartup
 from .winenvironment import GuestEnvironmentBlocks
 from .heap_checks import GuestHeapChecks
 from .network_adapter import GuestNetworkAdapter
+from .feature_config import GuestFeatureConfiguration
 from .cpu import VirtualCPU
 from .identity import GuestIdentity
 from .guest_programs import hostname_exe, whoami_exe
@@ -750,6 +751,7 @@ def run_native(
     guest_tokens = GuestTokens(persona)
     guest_lsa = GuestLSA()
     guest_network_adapter = GuestNetworkAdapter(persona)
+    guest_feature_configuration = GuestFeatureConfiguration()
     win_messages.guest_images = version_info.images
     win_messages.current_dir = persona["current_dir"]
     version_info.read_guard = lambda emu, address, size: virtual_process._cpu_access(
@@ -791,6 +793,8 @@ def run_native(
     guest_network_adapter.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
     guest_network_adapter.write_guard = lambda emu, address, size: virtual_process._cpu_access(
+        emu, address, size, "write")
+    guest_feature_configuration.write_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "write")
     console_output.read_guard = lambda emu, address, size: virtual_process._cpu_access(
         emu, address, size, "read")
@@ -839,6 +843,7 @@ def run_native(
             "msvcrt", "??3@YAXPEAX@Z", argc=1)
         heap_checks.install(se)
         guest_network_adapter.install(se)
+        guest_feature_configuration.install(se)
         virtual_registry.install(se)
         virtual_process.install(se)
         se.add_api_hook(
@@ -2215,6 +2220,7 @@ def run_native(
         report["virtual_file_events"] = virtual_files.events
         report["virtual_registry_events"] = virtual_registry.events
         report["guest_adapter_events"] = guest_network_adapter.events
+        report["guest_feature_events"] = guest_feature_configuration.events
         report["virtual_process_events"] = virtual_process.events
         report["avx_fallback_counts"] = dict(cpu.avx_fallback.counts)
         report["console_output"] = console_output.report()
@@ -2353,6 +2359,7 @@ def run_native(
         errors.extend(guest_strings.unsupported)
         errors.extend(guest_lsa.unsupported)
         errors.extend(guest_network_adapter.unsupported)
+        errors.extend(guest_feature_configuration.unsupported)
         if limit_reached:
             errors.append(f"Native instruction budget exhausted at {max_instructions} instructions")
         if timeout_reached:

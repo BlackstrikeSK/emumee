@@ -2,7 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-static WCHAR arg[3][1024];
+static WCHAR arg[5][1024];
 static WCHAR name_buf[512];
 static BYTE data_buf[8192];
 static WCHAR line[2048];
@@ -80,6 +80,47 @@ static void fail(DWORD status) {
     ExitProcess(status);
 }
 
+static void print_value(const WCHAR *name, DWORD kind, DWORD data_size) {
+    write_text(L"    ");
+    write_text(name[0] ? name : L"(Default)");
+    if (kind == REG_SZ || kind == REG_EXPAND_SZ) {
+        write_text(kind == REG_SZ ? L"    REG_SZ    " : L"    REG_EXPAND_SZ    ");
+        if (data_size >= sizeof(WCHAR)) {
+            ((WCHAR *)data_buf)[data_size / 2 - 1] = 0;
+            write_text((WCHAR *)data_buf);
+        }
+    } else if (kind == REG_MULTI_SZ) {
+        write_text(L"    REG_MULTI_SZ    ");
+        DWORD words = data_size / sizeof(WCHAR);
+        WCHAR *value = (WCHAR *)data_buf;
+        DWORD out = 0;
+        for (DWORD i = 0; i < words; ++i) {
+            if (!value[i] && i + 1 < words && !value[i + 1]) break;
+            if (out + 2 >= 2048) fail(ERROR_MORE_DATA);
+            if (value[i]) line[out++] = value[i];
+            else { line[out++] = L'\\'; line[out++] = L'0'; }
+        }
+        line[out] = 0;
+        write_text(line);
+    } else if (kind == REG_DWORD && data_size >= sizeof(DWORD)) {
+        write_text(L"    REG_DWORD    ");
+        write_number(*(DWORD *)data_buf);
+    } else {
+        write_text(kind == REG_QWORD ? L"    REG_QWORD    " : L"    REG_BINARY    ");
+        const WCHAR hex[] = L"0123456789abcdef";
+        for (DWORD offset = 0; offset < data_size; offset += 512) {
+            DWORD count = data_size - offset < 512 ? data_size - offset : 512;
+            for (DWORD i = 0; i < count; ++i) {
+                line[i * 2] = hex[data_buf[offset + i] >> 4];
+                line[i * 2 + 1] = hex[data_buf[offset + i] & 15];
+            }
+            line[count * 2] = 0;
+            write_text(line);
+        }
+    }
+    write_text(L"\r\n");
+}
+
 void WINAPI entry(void) {
     const WCHAR *cursor = GetCommandLineW();
     HKEY root = 0, opened = 0;
@@ -88,8 +129,14 @@ void WINAPI entry(void) {
     if (next_arg(&cursor, line, 2048) != 1 ||
         next_arg(&cursor, arg[0], 1024) != 1 ||
         next_arg(&cursor, arg[1], 1024) != 1 ||
-        next_arg(&cursor, arg[2], 1024) != 0 ||
         !equals(arg[0], L"query")) fail(87);
+    int has_option = next_arg(&cursor, arg[2], 1024);
+    int has_value = next_arg(&cursor, arg[3], 1024);
+    if (has_option < 0 || has_value < 0 ||
+        next_arg(&cursor, arg[4], 1024) != 0) fail(87);
+    int named_value = has_option == 1 && equals(arg[2], L"/v") && has_value == 1;
+    int default_value = has_option == 1 && equals(arg[2], L"/ve") && has_value == 0;
+    if (has_option && !named_value && !default_value) fail(87);
     subkey = arg[1];
     if (root_prefix(subkey, L"HKLM")) {
         root = HKEY_LOCAL_MACHINE; subkey += 5;
@@ -114,6 +161,18 @@ void WINAPI entry(void) {
     } else fail(87);
     result = RegOpenKeyExW(root, subkey, 0, KEY_READ, &opened);
     if (result != ERROR_SUCCESS) fail(result);
+    if (named_value || default_value) {
+        DWORD kind = 0, data_size = sizeof(data_buf);
+        const WCHAR *value_name = named_value ? arg[3] : L"";
+        result = RegQueryValueExW(opened, value_name, 0, &kind, data_buf, &data_size);
+        if (result != ERROR_SUCCESS) fail(result);
+        write_text(L"\r\n");
+        write_text(arg[1]);
+        write_text(L"\r\n");
+        print_value(value_name, kind, data_size);
+        RegCloseKey(opened);
+        fail(0);
+    }
     write_text(L"\r\n");
     write_text(arg[1]);
     write_text(L"\r\n");
@@ -124,44 +183,7 @@ void WINAPI entry(void) {
         if (result == ERROR_NO_MORE_ITEMS) break;
         if (result != ERROR_SUCCESS) fail(result);
         name_buf[name_size] = 0;
-        write_text(L"    ");
-        write_text(name_size ? name_buf : L"(Default)");
-        if (kind == REG_SZ || kind == REG_EXPAND_SZ) {
-            write_text(kind == REG_SZ ? L"    REG_SZ    " : L"    REG_EXPAND_SZ    ");
-            if (data_size >= sizeof(WCHAR)) {
-                ((WCHAR *)data_buf)[data_size / 2 - 1] = 0;
-                write_text((WCHAR *)data_buf);
-            }
-        } else if (kind == REG_MULTI_SZ) {
-            write_text(L"    REG_MULTI_SZ    ");
-            DWORD words = data_size / sizeof(WCHAR);
-            WCHAR *value = (WCHAR *)data_buf;
-            DWORD out = 0;
-            for (DWORD i = 0; i < words; ++i) {
-                if (!value[i] && i + 1 < words && !value[i + 1]) break;
-                if (out + 2 >= 2048) fail(ERROR_MORE_DATA);
-                if (value[i]) line[out++] = value[i];
-                else { line[out++] = L'\\'; line[out++] = L'0'; }
-            }
-            line[out] = 0;
-            write_text(line);
-        } else if (kind == REG_DWORD && data_size >= sizeof(DWORD)) {
-            write_text(L"    REG_DWORD    ");
-            write_number(*(DWORD *)data_buf);
-        } else {
-            write_text(L"    REG_BINARY    ");
-            const WCHAR hex[] = L"0123456789abcdef";
-            for (DWORD offset = 0; offset < data_size; offset += 512) {
-                DWORD count = data_size - offset < 512 ? data_size - offset : 512;
-                for (DWORD i = 0; i < count; ++i) {
-                    line[i * 2] = hex[data_buf[offset + i] >> 4];
-                    line[i * 2 + 1] = hex[data_buf[offset + i] & 15];
-                }
-                line[count * 2] = 0;
-                write_text(line);
-            }
-        }
-        write_text(L"\r\n");
+        print_value(name_buf, kind, data_size);
     }
     for (DWORD index = 0; index < 256; ++index) {
         DWORD name_size = 511;

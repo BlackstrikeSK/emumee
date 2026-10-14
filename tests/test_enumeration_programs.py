@@ -468,26 +468,34 @@ class EnumerationProgramTests(unittest.TestCase):
                 commands = (
                     r'query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"',
                     r'query "HKCU\Control Panel\Desktop"',
+                    r'query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v ProductName',
+                    r'query "HKCU\Control Panel\Desktop" /v ScreenSaveActive',
                     r'query HKLM\SYSTEM\CurrentControlSet\Services\WinDefend',
                     r'add HKCU\Control Panel\Desktop',
                     r'query HKLM\Software\DefinitelyAbsent',
+                    r'query "HKCU\Control Panel\Desktop" /s',
                 )
                 for index, command in enumerate(commands):
                     if command.startswith('query "'):
-                        guest_args = ["query", command[len('query "'):-1]]
+                        closing = command.index('"', len('query "'))
+                        guest_args = ["query", command[len('query "'):closing],
+                                      *command[closing + 1:].split()]
                     else:
                         guest_args = command.split()
                     result = run_native(image, inspect_pe(image, "reg.exe"), persona,
                                         root / str(index), [], 10, 100_000,
                                         guest_args=guest_args)
                     self.assertFalse(result["errors"])
-                    if command.startswith("add") or command.endswith("DefinitelyAbsent"):
+                    if (command.startswith("add") or command.endswith("DefinitelyAbsent") or
+                            command.endswith("/s")):
                         self.assertEqual(result["guest_exit_code"],
-                                         87 if command.startswith("add") else 2)
+                                         2 if command.endswith("DefinitelyAbsent") else 87)
                         self.assertEqual(result["console_output"]["stdout"], "")
                     else:
                         self.assertEqual(result["guest_exit_code"], 0)
                         self.assertIn("REG_", result["console_output"]["stdout"])
+                        if "/v " in command:
+                            self.assertEqual(result["console_output"]["stdout"].count("REG_"), 1)
                 version_result = run_native(image, inspect_pe(image, "reg.exe"), persona,
                                             root / "version", [], 10, 100_000,
                                             guest_args=["query",
@@ -498,7 +506,8 @@ class EnumerationProgramTests(unittest.TestCase):
                 self.assertIn("RegisteredOwner    REG_SZ    Morgan", version)
                 custom.write_text(json.dumps({"registry_keys": [{
                     "path": r"HKEY_CURRENT_USER\Software\GuestProbe",
-                    "values": [{"name": "Answer", "type": "REG_SZ", "data": "persona-only"}]
+                    "values": [{"name": "Answer", "type": "REG_SZ", "data": "persona-only"},
+                               {"name": "", "type": "REG_SZ", "data": "default-value"}]
                 }]}), encoding="utf-8")
                 custom_persona = load_persona(custom)
                 custom_result = run_native(image, inspect_pe(image, "reg.exe"),
@@ -509,6 +518,14 @@ class EnumerationProgramTests(unittest.TestCase):
                 self.assertEqual(custom_result["guest_exit_code"], 0)
                 self.assertIn("Answer    REG_SZ    persona-only",
                               custom_result["console_output"]["stdout"])
+                default_result = run_native(image, inspect_pe(image, "reg.exe"),
+                                            custom_persona, root / "default", [],
+                                            10, 100_000,
+                                            guest_args=["query", r"HKCU\Software\GuestProbe", "/ve"])
+                self.assertFalse(default_result["errors"])
+                self.assertEqual(default_result["guest_exit_code"], 0)
+                self.assertIn("(Default)    REG_SZ    default-value",
+                              default_result["console_output"]["stdout"])
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

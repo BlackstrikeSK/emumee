@@ -12,6 +12,7 @@ import struct
 from importlib.resources import files
 
 from .clock import VirtualClock
+from .kerberos import ENCRYPTION_TYPES, ticket_datetime
 from .persona_content import PROCESS_PATHS, oem_code_page
 from .tokens import GuestTokens, PRIVILEGE_DESCRIPTIONS, PRIVILEGE_NAMES
 
@@ -25,6 +26,24 @@ def _align(value: int, boundary: int) -> int:
 
 def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
+    if name == "klist.exe":
+        if arguments.casefold() not in {"", "tickets"}:
+            raise ValueError("unsupported klist arguments")
+        kerberos = persona["kerberos"]
+        logon_id = kerberos["logon_id"]
+        rows = [f"Current LogonId is {logon_id >> 32:x}:0x{logon_id & 0xffffffff:x}",
+                "", f"Cached Tickets: ({len(kerberos['tickets'])})", ""]
+        for index, ticket in enumerate(kerberos["tickets"]):
+            rows.extend((f"#{index}>     Client: {persona['user_name']} @ {ticket['realm']}",
+                         f"        Server: {ticket['server']} @ {ticket['realm']}",
+                         f"        KerbTicket Encryption Type: {ENCRYPTION_TYPES[ticket['encryption_type']]}",
+                         f"        Ticket Flags 0x{ticket['flags']:x}"))
+            for label, field in (("Start Time", "start_utc"), ("End Time", "end_utc"),
+                                 ("Renew Time", "renew_utc")):
+                when = ticket_datetime(ticket[field]) + dt.timedelta(minutes=persona["utc_offset_minutes"])
+                rows.append(f"        {label}: {when.strftime('%m/%d/%Y %H:%M:%S')} (local)")
+            rows.extend((f"        Session Key Type: {ENCRYPTION_TYPES[ticket['session_key_type']]}", ""))
+        return "\r\n".join(rows) + "\r\n"
     if name == "cmdkey.exe":
         if not arguments:
             return "Usage: cmdkey /list\r\n"
@@ -826,7 +845,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
                  "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
-                 "vssadmin.exe", "cmdkey.exe", "manage-bde.exe"):
+                 "vssadmin.exe", "cmdkey.exe", "manage-bde.exe", "klist.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -860,6 +879,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                                       "/scope computer /r", "/r /scope computer"),
                      "dsregcmd.exe": ("/status",),
                      "cmdkey.exe": ("/list",),
+                     "klist.exe": ("tickets",),
                      "manage-bde.exe": ("-status", "-status C:"),
                      "vssadmin.exe": ("list shadows", "list shadows /for=C:",
                                       "list shadows /for=C:\\", "list volumes",

@@ -36,6 +36,23 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_kerberos_ticket_metadata_validates_types_times_and_bounds(self):
+        ticket = {"server": "HTTP/guest.example", "realm": "GUEST.EXAMPLE",
+                  "encryption_type": 18, "session_key_type": 17, "flags": 0x40a10000,
+                  "start_utc": "2026-10-14T10:00:00Z", "end_utc": "2026-10-14T20:00:00Z",
+                  "renew_utc": "2026-10-21T10:00:00Z"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            path.write_text(json.dumps({"kerberos": {"tickets": [ticket]}}), encoding="utf-8")
+            self.assertEqual(load_persona(path)["kerberos"]["tickets"], [ticket])
+            for value in ({"tickets": [{**ticket, "encoded_ticket": "unsupported"}]},
+                          {"tickets": [{**ticket, "end_utc": "2026-10-14T09:00:00Z"}]},
+                          {"tickets": [{**ticket, "encryption_type": []}]},
+                          {"tickets": [ticket] * 17}, {"logon_id": True}):
+                path.write_text(json.dumps({"kerberos": value}), encoding="utf-8")
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    load_persona(path)
+
     def test_native_disk_space_api_reports_configured_guest_capacity(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:

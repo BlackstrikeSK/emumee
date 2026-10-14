@@ -761,7 +761,7 @@ def run_native(
     guest_strings = GuestStrings(oem_code_page(persona["locale"]))
     guest_delay_imports = GuestDelayImports()
     guest_tokens = GuestTokens(persona)
-    guest_lsa = GuestLSA()
+    guest_lsa = GuestLSA(persona)
     guest_network_adapter = GuestNetworkAdapter(persona)
     guest_network_adapter.network_bridge = bridge
     guest_feature_configuration = GuestFeatureConfiguration()

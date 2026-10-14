@@ -1,10 +1,11 @@
-"""Bounded, guest-only LSA connection and empty Kerberos cache model."""
+"""Bounded guest LSA connections and persona Kerberos cache metadata."""
 
 from __future__ import annotations
 
 import struct
 
 import speakeasy.common as common
+from .kerberos import ticket_cache_response
 
 
 STATUS_SUCCESS = 0
@@ -17,7 +18,8 @@ KERBEROS_PACKAGE = 0x1001
 
 
 class GuestLSA:
-    def __init__(self):
+    def __init__(self, persona: dict | None = None):
+        self.tickets = persona["kerberos"]["tickets"] if persona is not None else []
         self.handles: set[tuple[int, int]] = set()
         self.buffers: dict[tuple[int, int], int] = {}
         self.next_handle = 0xE5100000
@@ -123,7 +125,7 @@ class GuestLSA:
         length = 0
         response = None
         if message == 1 and logon_id == 0:  # KerbQueryTicketCacheMessage
-            response = struct.pack('<II', 1, 0)
+            response = ticket_cache_response(self.tickets, width, 0)
         elif message == 32:  # KerbQueryDomainExtendedPoliciesMessage
             domain_offset = 8
             domain_header = 16 if width == 8 else 8
@@ -145,14 +147,19 @@ class GuestLSA:
             if len(self.buffers) >= 256:
                 return STATUS_NOT_SUPPORTED
             process = emu.get_current_process()
+            allocation_size = (len(response) + 0xfff) & ~0xfff
             try:
-                buffer = emu.mem_map(0x1000, perms=common.PERM_MEM_RW,
+                buffer = emu.mem_map(allocation_size, perms=common.PERM_MEM_RW,
                                      tag='api.lsa.response', process=process)
+                if message == 1:
+                    response = ticket_cache_response(self.tickets, width, buffer)
                 emu.mem_write(buffer, response)
             except Exception:
+                if buffer:
+                    emu.mem_free(buffer)
                 return STATUS_INVALID_PARAMETER
             length = len(response)
-            self.buffers[(self._owner(emu), buffer)] = 0x1000
+            self.buffers[(self._owner(emu), buffer)] = allocation_size
         fields = ((response_ptr, buffer.to_bytes(width, 'little')),
                   (length_ptr, struct.pack('<I', length)),
                   (status_ptr, struct.pack('<I', protocol_status)))

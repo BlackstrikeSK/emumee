@@ -4,6 +4,7 @@
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
 `cmdkey.exe`,
+`klist.exe`,
 `manage-bde.exe`,
 `getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `pnputil.exe`, `gpresult.exe`, `dsregcmd.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `vssadmin.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
@@ -34,6 +35,11 @@ host VSS access.
 `cmdkey.exe /list` reports only configured guest credential metadata. The
 default store is empty, password fields are rejected, and credential changes
 exit 87 without host credential store access.
+`klist.exe` default and `tickets` views use persona Kerberos cache metadata,
+also returned by guest LSA current-session ticket-cache queries. Both native
+pointer widths have bounded in-buffer strings and process-owned response
+buffers. The default cache is empty; ticket requests and changes exit 87.
+Encoded tickets and usable keys are not modeled.
 `manage-bde.exe -status` and `-status C:` read guest capacity and BitLocker
 metadata. `GetDiskFreeSpaceExA/W` uses the same configured capacity and free
 space for guest directories on C:. Output buffers are validated before writes;

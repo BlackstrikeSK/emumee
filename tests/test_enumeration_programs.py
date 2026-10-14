@@ -16,6 +16,53 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_klist_guest_child_uses_persona_cache_and_rejects_ticket_requests(self):
+        ticket = {"server": "HTTP/guest.example", "realm": "GUEST.EXAMPLE",
+                  "encryption_type": 18, "session_key_type": 17, "flags": 0x40a10000,
+                  "start_utc": "2026-10-14T10:00:00Z", "end_utc": "2026-10-14T20:00:00Z",
+                  "renew_utc": "2026-10-21T10:00:00Z"}
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "persona.json"
+                config.write_text(json.dumps({"user_name": "Morgan",
+                                              "kerberos": {"logon_id": 0x123456,
+                                                           "tickets": [ticket]}}), encoding="utf-8")
+                persona = load_persona(config)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"klist.exe tickets\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root / "child", [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                output = result["console_output"]["stdout"]
+                for value in ("0:0x123456", "Cached Tickets: (1)", "Morgan @ GUEST.EXAMPLE",
+                              "HTTP/guest.example", "AES-256-CTS", "AES-128-CTS"):
+                    self.assertIn(value, output)
+                report = json.loads((root / "child" / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\klist.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+                image = enumeration_programs(arch == "x64", persona)["klist.exe"]
+                for index, args in enumerate((["get", "HTTP/host"], ["purge"],
+                                              ["tickets", "-li", "0x3e7"])):
+                    denied = run_native(image, inspect_pe(image, "klist.exe"),
+                                        persona, root / f"denied-{index}", [], 10,
+                                        100_000, guest_args=args)
+                    self.assertFalse(denied["errors"])
+                    self.assertEqual(denied["guest_exit_code"], 87)
+                    self.assertEqual(denied["console_output"]["stdout"], "")
+                empty_persona = load_persona(None)
+                empty_image = enumeration_programs(arch == "x64", empty_persona)["klist.exe"]
+                empty = run_native(empty_image, inspect_pe(empty_image, "klist.exe"),
+                                   empty_persona, root / "empty", [], 10, 100_000)
+                self.assertEqual(empty["guest_exit_code"], 0)
+                self.assertIn("Cached Tickets: (0)", empty["console_output"]["stdout"])
+                self.assertNotIn("HTTP/guest.example", empty["console_output"]["stdout"])
+
     def test_manage_bde_guest_child_and_status_use_persona_volume_state(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:

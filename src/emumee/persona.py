@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from speakeasy.config import get_default_config_dict
+from .kerberos import ENCRYPTION_TYPES, ticket_datetime
 
 from .persona_content import (DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files,
                               driver_package_files, registry_keys)
@@ -63,6 +64,7 @@ DEFAULT_PERSONA = {
                   "key_protectors": []},
     "shadow_copies": [],
     "stored_credentials": [],
+    "kerberos": {"logon_id": 0x10001, "tickets": []},
     "boot_config": {
         "loader_guid": "{17f03c5e-781a-429f-90d7-5f6a8e1472c3}",
         "description": "Windows 11",
@@ -208,6 +210,11 @@ def load_persona(path: Path | None) -> dict:
             if not isinstance(bitlocker, dict) or set(bitlocker) - set(persona["bitlocker"]):
                 raise ValueError("Persona bitlocker fields are invalid")
             persona["bitlocker"].update(bitlocker)
+        if "kerberos" in supplied:
+            kerberos = supplied.pop("kerberos")
+            if not isinstance(kerberos, dict) or set(kerberos) - set(persona["kerberos"]):
+                raise ValueError("Persona kerberos fields are invalid")
+            persona["kerberos"].update(kerberos)
         if "group_policy" in supplied:
             policy = supplied.pop("group_policy")
             if not isinstance(policy, dict):
@@ -319,6 +326,35 @@ def load_persona(path: Path | None) -> dict:
                 shadow_set_times[set_key] != shadow["created_utc"]):
             raise ValueError("Persona shadow copy set creation times differ")
         shadow_set_times[set_key] = shadow["created_utc"]
+    kerberos = persona["kerberos"]
+    if (not isinstance(kerberos["logon_id"], int) or isinstance(kerberos["logon_id"], bool) or
+            not 1 <= kerberos["logon_id"] < 2 ** 64 or
+            not isinstance(kerberos["tickets"], list) or len(kerberos["tickets"]) > 16):
+        raise ValueError("Persona kerberos fields are invalid")
+    for ticket in kerberos["tickets"]:
+        if (not isinstance(ticket, dict) or set(ticket) != {
+                "server", "realm", "encryption_type", "session_key_type", "flags",
+                "start_utc", "end_utc", "renew_utc"} or
+                any(not isinstance(ticket[field], str) or
+                    not re.fullmatch(r"[A-Za-z0-9_./:@-]{1,256}", ticket[field])
+                    for field in ("server", "realm")) or
+                any(not isinstance(ticket[field], int) or isinstance(ticket[field], bool) or
+                    ticket[field] not in ENCRYPTION_TYPES
+                    for field in ("encryption_type", "session_key_type")) or
+                not isinstance(ticket["flags"], int) or isinstance(ticket["flags"], bool) or
+                not 0 <= ticket["flags"] <= 0xffffffff or
+                any(not isinstance(ticket[field], str) or
+                    not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+                                     ticket[field])
+                    for field in ("start_utc", "end_utc", "renew_utc"))):
+            raise ValueError("Persona Kerberos ticket metadata is invalid")
+        try:
+            start, end, renew = (ticket_datetime(ticket[field])
+                                 for field in ("start_utc", "end_utc", "renew_utc"))
+            if not dt.datetime(1601, 1, 1) <= start <= end <= renew <= dt.datetime(9998, 12, 31):
+                raise ValueError("ticket time order")
+        except ValueError as exc:
+            raise ValueError("Persona Kerberos ticket times are invalid") from exc
     credentials = persona["stored_credentials"]
     if not isinstance(credentials, list) or len(credentials) > 32:
         raise ValueError("Persona stored_credentials must have at most 32 entries")

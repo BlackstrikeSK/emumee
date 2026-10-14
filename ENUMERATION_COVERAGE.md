@@ -15,6 +15,7 @@ never change host state.
 | [`fsutil.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-fsinfo) | Yes | `fsinfo drives`, `fsinfo drivetype C:`, and `fsinfo volumeinfo C:` for the guest volume |
 | [`mountvol.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mountvol) | Yes | Default volume listing and `C:\ /L` from the guest volume GUID |
 | [`bcdedit.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/bcdedit) | Yes | Default, `/enum`, `/enum active`, `/v`, `/enum active /v`, `/enum {current}` from persona boot settings |
+| [`vssadmin.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/vssadmin) | Yes | `list shadows`, `list shadows /for=C:`, `list volumes`, and `list providers` from guest shadow and volume metadata |
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
@@ -52,6 +53,7 @@ but it is not included by default unless the table above says so.
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
 | `mountvol.exe` beyond the listed forms | Other volume mount points and changes | Multiple volumes and mount mutations remain unmodeled. |
+| `vssadmin.exe` beyond the listed forms | Shadow IDs and other filters, writers, shadow storage, and changes | More guest VSS metadata and dynamic shadow storage remain unmodeled; delete and resize exit 87. |
 | `pnputil.exe` beyond the listed forms | Device filters and properties, other package views, and changes | More guest PnP properties and a dynamic driver store. Change commands exit 87. |
 | `fltmc.exe` beyond the listed forms | Named filters or instances, frames, loading, unloading, and attachment changes | A dynamic guest Filter Manager and more than one volume. |
 | `wevtutil.exe` beyond the listed forms | `qe`, `gli`, publishers, remote queries, and changes | A guest event record store and live status model; only channel names and configuration are modeled. |
@@ -124,6 +126,12 @@ Generated `mountvol.exe` lists the single guest `C:` mount and supports
 `GetVolumeNameForVolumeMountPointA/W` response. Other mounts and mutation
 commands exit 87 without changing guest or host volumes.
 
+Generated `vssadmin.exe` reads the persona's `shadow_copies` list and single
+guest `C:` volume. Shadow IDs, set IDs, creation times, the guest hostname,
+and volume GUID come from the persona; the Microsoft system provider is a
+fixed guest record. The default guest has no shadow copies. Delete and resize
+commands exit 87 without accessing host VSS or volume data.
+
 Generated `bcdedit.exe` renders a boot manager and current loader from the
 persona's `boot_config`, guest locale, and single `C:` volume. `/v` expands
 the configured loader GUID. Explicit debug, safe boot, and hypervisor launch
@@ -186,7 +194,15 @@ does not register, run, or modify tasks. Unsupported `/Create` exits 87 after
 a guest child launch, with no host Task Scheduler call. Task Scheduler APIs,
 on-disk definitions, and live scheduling are not modeled yet.
 
-`cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
-utility inventory. No entry in this file authorizes a guest command to execute
-on the host. See [COVERAGE_AND_SAFETY.md](COVERAGE_AND_SAFETY.md) for tested
-paths and containment limits.
+`cmd.exe`, VBScript, JavaScript, and Python are outside this native utility
+inventory. PowerShell is a separate future confinement target: the current
+guest child loader rejects managed PEs, and the bounded managed interpreter
+does not run the PowerShell engine. A usable implementation must run script
+code inside a guest execution boundary, deny or broker network operations,
+record the command and arguments at each actual invocation after dynamic
+expansion, and display those records in the dashboard. Source text or static
+deobfuscation alone cannot establish which command ran. No entry in this file
+authorizes a guest command to execute on the host. See
+[COVERAGE_AND_SAFETY.md](COVERAGE_AND_SAFETY.md) for tested paths and
+containment limits. The required execution and command-capture gates are
+tracked in [POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md).

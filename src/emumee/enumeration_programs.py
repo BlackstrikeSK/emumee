@@ -220,6 +220,47 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
         if arguments.casefold() in {"c: /l", "c:\\ /l"}:
             return volume + "\r\n"
         raise ValueError("unsupported mountvol arguments")
+    if name == "vssadmin.exe":
+        argument = arguments.casefold()
+        heading = "Volume Shadow Copy Service administrative command-line tool\r\n\r\n"
+        volume = "\\\\?\\Volume" + persona["volume_guid"] + "\\"
+        if not argument:
+            return heading + "Usage: vssadmin list shadows | list volumes | list providers\r\n"
+        if argument in {"list shadows", "list shadows /for=c:",
+                        "list shadows /for=c:\\"}:
+            shadows = persona["shadow_copies"]
+            if not shadows:
+                return heading + "No items found that satisfy the query.\r\n"
+            groups: dict[str, list[tuple[int, dict]]] = {}
+            for index, shadow in enumerate(shadows, 1):
+                groups.setdefault(shadow["set_id"].casefold(), []).append((index, shadow))
+            rows = []
+            for entries in groups.values():
+                first = entries[0][1]
+                set_id = first["set_id"]
+                created = dt.datetime.strptime(first["created_utc"],
+                                               "%Y-%m-%dT%H:%M:%SZ")
+                created += dt.timedelta(minutes=persona["utc_offset_minutes"])
+                stamp = created.strftime("%m/%d/%Y %I:%M:%S %p")
+                rows.append(f"Contents of shadow copy set ID: {set_id}\r\n"
+                            f"   Contained {len(entries)} shadow copies at creation time: {stamp}\r\n")
+                for index, shadow in entries:
+                    rows.append(f"      Shadow Copy ID: {shadow['id']}\r\n"
+                                f"         Original Volume: (C:)\\\\?\\Volume{persona['volume_guid']}\\\r\n"
+                                f"         Shadow Copy Volume: \\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy{index}\r\n"
+                                f"         Originating Machine: {persona['hostname']}\r\n"
+                                f"         Service Machine: {persona['hostname']}\r\n"
+                                "         Provider: 'Microsoft Software Shadow Copy provider 1.0'\r\n"
+                                "         Type: ClientAccessible\r\n")
+            return heading + "\r\n".join(rows) + "\r\n"
+        if argument == "list volumes":
+            return (heading + "Volume path: C:\\\r\n"
+                    f"Volume name: {volume}\r\n")
+        if argument == "list providers":
+            return (heading + "Provider name: 'Microsoft Software Shadow Copy provider 1.0'\r\n"
+                    "   Provider type: System\r\n"
+                    "   Provider Id: {b5946137-7b9f-4925-af80-51abd60b20d5}\r\n")
+        raise ValueError("unsupported vssadmin arguments")
     if name == "fltmc.exe":
         argument = arguments.casefold()
         filters = persona["minifilters"]
@@ -751,7 +792,8 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
-                 "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe"):
+                 "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe",
+                 "vssadmin.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -784,6 +826,9 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                      "gpresult.exe": ("/r", "/scope user /r", "/r /scope user",
                                       "/scope computer /r", "/r /scope computer"),
                      "dsregcmd.exe": ("/status",),
+                     "vssadmin.exe": ("list shadows", "list shadows /for=C:",
+                                      "list shadows /for=C:\\", "list volumes",
+                                      "list providers"),
                      "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)

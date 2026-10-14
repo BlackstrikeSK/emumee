@@ -35,6 +35,33 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_shadow_copy_metadata_is_bounded_and_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            shadow = {"id": "{c5196822-2430-4b2e-9413-c784e329a4ac}",
+                      "set_id": "{a283db72-7f1b-4376-a929-3b08fc00eea1}",
+                      "created_utc": "2026-10-14T12:30:00Z"}
+            path.write_text(json.dumps({"shadow_copies": [shadow]}), encoding="utf-8")
+            self.assertEqual(load_persona(path)["shadow_copies"], [shadow])
+            for broken in ({**shadow, "id": r"..\host"},
+                           {**shadow, "created_utc": "2026-13-14T12:30:00Z"}):
+                path.write_text(json.dumps({"shadow_copies": [broken]}),
+                                encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaises(ValueError):
+                    load_persona(path)
+            path.write_text(json.dumps({"shadow_copies": [shadow, shadow]}),
+                            encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "shadow copy entries"):
+                load_persona(path)
+            second = {**shadow,
+                      "id": "{11111111-2222-4333-8444-555555555555}",
+                      "set_id": shadow["set_id"].upper(),
+                      "created_utc": "2026-10-14T12:31:00Z"}
+            path.write_text(json.dumps({"shadow_copies": [shadow, second]}),
+                            encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "set creation times differ"):
+                load_persona(path)
+
     def test_device_registration_follows_guest_domain_and_rejects_inconsistent_states(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

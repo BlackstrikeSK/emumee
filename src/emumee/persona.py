@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import datetime as dt
 import ipaddress
 import json
 import ntpath
@@ -54,6 +55,7 @@ DEFAULT_PERSONA = {
     },
     "current_dir": "C:\\Users\\Alex\\Downloads",
     "volume_guid": DEFAULT_VOLUME_GUID,
+    "shadow_copies": [],
     "boot_config": {
         "loader_guid": "{17f03c5e-781a-429f-90d7-5f6a8e1472c3}",
         "description": "Windows 11",
@@ -262,6 +264,33 @@ def load_persona(path: Path | None) -> dict:
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
                              persona["volume_guid"])):
         raise ValueError("Persona volume_guid must be a braced GUID")
+    shadows = persona["shadow_copies"]
+    if not isinstance(shadows, list) or len(shadows) > 16:
+        raise ValueError("Persona shadow_copies must have at most 16 entries")
+    shadow_ids: set[str] = set()
+    shadow_set_times: dict[str, str] = {}
+    for shadow in shadows:
+        if (not isinstance(shadow, dict) or
+                set(shadow) != {"id", "set_id", "created_utc"} or
+                any(not isinstance(shadow[field], str) or
+                    not re.fullmatch(
+                        r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",
+                        shadow[field]) for field in ("id", "set_id")) or
+                shadow["id"].casefold() in shadow_ids or
+                not isinstance(shadow["created_utc"], str) or
+                not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+                                 shadow["created_utc"])):
+            raise ValueError("Persona shadow copy entries are invalid")
+        try:
+            dt.datetime.strptime(shadow["created_utc"], "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError as exc:
+            raise ValueError("Persona shadow copy creation time is invalid") from exc
+        shadow_ids.add(shadow["id"].casefold())
+        set_key = shadow["set_id"].casefold()
+        if (set_key in shadow_set_times and
+                shadow_set_times[set_key] != shadow["created_utc"]):
+            raise ValueError("Persona shadow copy set creation times differ")
+        shadow_set_times[set_key] = shadow["created_utc"]
     boot = persona["boot_config"]
     if (not isinstance(boot["loader_guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",

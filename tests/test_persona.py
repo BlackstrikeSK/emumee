@@ -541,6 +541,31 @@ class PersonaContentTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "service entries"):
                 load_persona(path)
 
+    def test_driver_inventory_refreshes_registry_and_rejects_unsafe_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            driver = {"name": "ExampleFilter", "display_name": "Example File Filter",
+                      "path": r"System32\drivers\ExampleFilter.sys", "start": 3,
+                      "type": 2, "running": False}
+            path.write_text(json.dumps({"drivers": [driver]}), encoding="utf-8")
+            persona = load_persona(path)
+            key = next(item for item in persona["registry_keys"]
+                       if item["path"].endswith(r"\Services\ExampleFilter"))
+            values = {item["name"]: item["data"] for item in key["values"]}
+            self.assertEqual(values["Start"], "3")
+            self.assertEqual(values["Type"], "2")
+            self.assertEqual(values["ImagePath"], driver["path"])
+            self.assertFalse(any(item["path"].endswith(r"\Services\ACPI")
+                                 for item in persona["registry_keys"]))
+            for broken in ({**driver, "name": r"..\escape"},
+                           {**driver, "path": r"D:\host.sys"},
+                           {**driver, "type": 16},
+                           {**driver, "start": 4, "running": True}):
+                path.write_text(json.dumps({"drivers": [broken]}), encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaisesRegex(
+                        ValueError, "driver entries"):
+                    load_persona(path)
+
     def test_scheduled_task_inventory_validates_names_and_schedule(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

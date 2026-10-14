@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -81,6 +81,13 @@ and `volumeinfo C:` on x86 and x64. The volume query calls guest
 and maximum component length seen by programs calling that API directly.
 Other drives return path-not-found and unsupported commands exit 87. It does
 not query host volumes.
+
+Generated `driverquery.exe` reports bounded persona `drivers` records through
+its default, `/v`, `/fo list`, `/fo csv`, and `/nh` views. The same records
+create guest Services registry keys. A custom persona can replace the default
+list; a child process cannot enumerate host drivers. `.sys` image content,
+kernel execution, signed driver data, remote queries, and combined flags remain
+unmodeled.
 
 Generated `schtasks.exe` prints the persona's bounded scheduled-task snapshot.
 It supports the default query, `/query`, `/query /fo LIST`, `/query /fo CSV`,

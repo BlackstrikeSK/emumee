@@ -18,6 +18,7 @@ never change host state.
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
+| [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
 | `tasklist.exe` | Yes | Default persona process snapshot and `/svc` service to process view |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
 | `arp.exe` | Yes | `-a` for the modeled IPv4 ARP entry |
@@ -43,7 +44,7 @@ but it is not included by default unless the table above says so.
 | --- | --- | --- |
 | `netstat.exe` beyond the listed forms | UDP, listening sockets, IPv6, and more options | Additional guest endpoint models and output modes. Inbound listening is currently denied. |
 | `fsutil.exe` beyond the listed forms | Other `fsinfo` queries, volumes, and changes | More guest volume data and bounded read command parsing. |
-| [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | The current persona has no kernel driver service records or `.sys` guest files. Add those modeled surfaces before exposing a driver list. |
+| `driverquery.exe` beyond the listed forms | `/si`, combined flags, and remote queries | Signed driver data, more output modes, and `.sys` guest files remain unmodeled; driver images are not executed. |
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
 | `sc.exe` beyond the listed forms | More query options and service changes | A dynamic Service Control Manager model and parser. |
@@ -103,6 +104,13 @@ The included `fsutil.exe` is compiled from repository C source. Its read-only
 `GetVolumeInformationW` model at runtime, so its label, serial, maximum
 component length, and filesystem name agree with that API. An unmodeled drive
 returns path-not-found; unsupported commands exit 87. No host volume is read.
+
+Generated `driverquery.exe` reads only the persona's `drivers` list. Each
+configured driver also creates a guest Services registry key with its type,
+start mode, display name, and image path. The listed `.sys` path is metadata;
+the image file and kernel execution are not modeled. The supported local read
+forms are default table, `/v`, `/fo list`, `/fo csv`, and `/nh`. Remote and
+unmodeled arguments exit 87 without contacting the host.
 
 The included `netstat.exe` is compiled from repository C source and calls a
 guest-only `GetExtendedTcpTable` model. Successful outbound TCP connections

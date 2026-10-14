@@ -213,6 +213,38 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
         if arguments.casefold() == "/g":
             return persona["timezone"] + "_dstoff\r\n"
         raise ValueError("unsupported tzutil arguments")
+    if name == "driverquery.exe":
+        argument = arguments.casefold()
+        if argument not in {"", "/v", "/fo list", "/fo csv", "/nh"}:
+            raise ValueError("unsupported driverquery arguments")
+        drivers = persona["drivers"]
+        if argument == "/fo list" or argument == "/v":
+            return ("".join(
+                f"Module Name: {driver['name']}\r\n"
+                f"Display Name: {driver['display_name']}\r\n"
+                f"Driver Type: {'Kernel' if driver['type'] == 1 else 'File System'}\r\n"
+                f"Start Mode: {driver['start']}\r\n"
+                f"State: {'Running' if driver['running'] else 'Stopped'}\r\n"
+                + (f"Path: C:\\Windows\\{driver['path']}\r\n" if argument == "/v" else "")
+                + "\r\n" for driver in drivers) or "INFO: No drivers found.\r\n")
+        if argument == "/fo csv":
+            def csv(value: str) -> str:
+                return '"' + value.replace('"', '""') + '"'
+
+            rows = ['"Module Name","Display Name","Driver Type","State"']
+            rows.extend(",".join(map(csv, (driver["name"], driver["display_name"],
+                                         "Kernel" if driver["type"] == 1 else "File System",
+                                         "Running" if driver["running"] else "Stopped")))
+                        for driver in drivers)
+            return "\r\n".join(rows) + "\r\n"
+        rows = [] if argument == "/nh" else [
+            "Module Name          Display Name                             Driver Type     State",
+            "==================== ======================================== =============== ======="]
+        rows.extend(f"{driver['name'][:20]:20} {driver['display_name'][:40]:40} "
+                    f"{'Kernel' if driver['type'] == 1 else 'File System':15} "
+                    f"{'Running' if driver['running'] else 'Stopped'}"
+                    for driver in drivers)
+        return "\r\n".join(rows) + "\r\n"
     if name == "systeminfo.exe":
         cpu = persona["cpu"]
         return (f"Host Name:                 {persona['hostname']}\r\n"
@@ -552,7 +584,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
-                 "schtasks.exe"):
+                 "schtasks.exe", "driverquery.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -575,7 +607,8 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                                         (f'"{task["name"]}"' if " " in task["name"]
                                          else task["name"])
                                         for task in persona["scheduled_tasks"][:2])),
-                     "tzutil.exe": ("/g",)}.get(name, ()))
+                     "tzutil.exe": ("/g",),
+                     "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)
                     for argument in commands}

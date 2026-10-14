@@ -431,6 +431,13 @@ def registry_keys(persona: dict) -> list[dict]:
                           value("Start", service["start"], "REG_DWORD"),
                           value("Type", service["type"], "REG_DWORD"),
                           value("DisplayName", service["display_name"])))
+    for driver in persona["drivers"]:
+        keys.append(entry(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services" +
+                          "\\" + driver["name"],
+                          value("Start", driver["start"], "REG_DWORD"),
+                          value("Type", driver["type"], "REG_DWORD"),
+                          value("DisplayName", driver["display_name"]),
+                          value("ImagePath", driver["path"], "REG_EXPAND_SZ")))
     seen = {item["path"].casefold() for item in keys}
     for item in tuple(keys):
         parts = item["path"].split("\\")

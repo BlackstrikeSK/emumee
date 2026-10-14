@@ -16,6 +16,67 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_driverquery_uses_only_configured_guest_drivers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            driver = {"name": "ExampleFilter", "display_name": "Example File Filter",
+                      "path": r"System32\drivers\ExampleFilter.sys", "start": 3,
+                      "type": 2, "running": False}
+            config.write_text(json.dumps({"drivers": [driver]}), encoding="utf-8")
+            persona = load_persona(config)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["driverquery.exe"]
+                    pe = inspect_pe(image, "driverquery.exe")
+                    self.assertEqual(pe.architecture, "x64" if is_x64 else "x86")
+                    for index, (args, expected) in enumerate((
+                            ([], "ExampleFilter"),
+                            (["/v"], r"C:\Windows\System32\drivers\ExampleFilter.sys"),
+                            (["/fo", "csv"], '"ExampleFilter","Example File Filter","File System","Stopped"'),
+                            (["/fo", "list"], "Start Mode: 3"),
+                            (["/nh"], "ExampleFilter"))):
+                        result = run_native(image, pe, persona, root / f"{is_x64}-{index}",
+                                            [], 10, 100_000, guest_args=args)
+                        self.assertFalse(result["errors"])
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertIn(expected, result["console_output"]["stdout"])
+                        self.assertNotIn("Wdf01000", result["console_output"]["stdout"])
+                    rejected = run_native(image, pe, persona, root / f"{is_x64}-remote",
+                                          [], 10, 100_000, guest_args=["/s", "host"])
+                    self.assertFalse(rejected["errors"])
+                    self.assertEqual(rejected["guest_exit_code"], 87)
+                    self.assertEqual(rejected["console_output"]["stdout"], "")
+                    reg_image = enumeration_programs(is_x64, persona)["reg.exe"]
+                    reg_result = run_native(
+                        reg_image, inspect_pe(reg_image, "reg.exe"), persona,
+                        root / f"{is_x64}-registry", [], 10, 100_000,
+                        guest_args=["query", r"HKLM\SYSTEM\CurrentControlSet\Services\ExampleFilter",
+                                    "/v", "ImagePath"])
+                    self.assertFalse(reg_result["errors"])
+                    self.assertEqual(reg_result["guest_exit_code"], 0)
+                    self.assertIn(driver["path"], reg_result["console_output"]["stdout"])
+
+    def test_winexec_launches_guest_driverquery(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"driverquery.exe /v\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("ACPI.sys", result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\driverquery.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_fsutil_reads_guest_volume_and_rejects_other_drives(self):
         persona = load_persona(None)
         for is_x64 in (False, True):

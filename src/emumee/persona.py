@@ -68,6 +68,14 @@ DEFAULT_PERSONA = {
         {"name": "EventLog", "display_name": "Windows Event Log",
          "process": "svchost.exe", "start": 2, "type": 32},
     ],
+    "drivers": [
+        {"name": "ACPI", "display_name": "Microsoft ACPI Driver",
+         "path": r"System32\drivers\ACPI.sys", "start": 0,
+         "type": 1, "running": True},
+        {"name": "Wdf01000", "display_name": "Kernel Mode Driver Framework Runtime",
+         "path": r"System32\drivers\Wdf01000.sys", "start": 3,
+         "type": 1, "running": True},
+    ],
     "scheduled_tasks": [
         {"name": r"\Microsoft\Windows\Defender\Windows Defender Scheduled Scan",
          "status": "Ready", "next_run_minutes": 480},
@@ -226,6 +234,31 @@ def load_persona(path: Path | None) -> dict:
                 service["type"] not in (16, 32)):
             raise ValueError("Persona service entries are invalid")
         service_names.add(service["name"].casefold())
+    drivers = persona["drivers"]
+    if not isinstance(drivers, list) or len(drivers) > 32:
+        raise ValueError("Persona drivers must be an array of at most 32 entries")
+    for driver in drivers:
+        if (not isinstance(driver, dict) or
+                set(driver) != {"name", "display_name", "path", "start", "type", "running"} or
+                not isinstance(driver["name"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", driver["name"]) or
+                driver["name"].casefold() in service_names or
+                not isinstance(driver["display_name"], str) or
+                not 1 <= len(driver["display_name"]) <= 128 or
+                any(ord(char) < 32 for char in driver["display_name"]) or
+                not isinstance(driver["path"], str) or
+                not re.fullmatch(r"System32\\drivers\\[A-Za-z0-9_.-]{1,64}\.sys",
+                                 driver["path"], re.IGNORECASE) or
+                not isinstance(driver["start"], int) or
+                isinstance(driver["start"], bool) or
+                driver["start"] not in (0, 1, 2, 3, 4) or
+                not isinstance(driver["type"], int) or
+                isinstance(driver["type"], bool) or
+                driver["type"] not in (1, 2) or
+                not isinstance(driver["running"], bool) or
+                (driver["start"] == 4 and driver["running"])):
+            raise ValueError("Persona driver entries are invalid")
+        service_names.add(driver["name"].casefold())
     tasks = persona["scheduled_tasks"]
     if not isinstance(tasks, list) or len(tasks) > 32:
         raise ValueError("Persona scheduled_tasks must have at most 32 entries")

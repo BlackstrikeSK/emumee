@@ -24,6 +24,7 @@ never change host state.
 | `whoami.exe` | Yes | Default user name, `/user`, `/groups`, `/priv`, `/all` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | [`nslookup.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/nslookup) | Yes | Noninteractive A, AAAA, and PTR queries against the offline guest DNS catalog; IPv4 reverse lookup; optional explicit primary persona DNS server |
+| [`ping.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/ping) | Yes | IPv4 address or offline DNS name, optional `-4`, `-n 1..16`, `-l 0..4096`, and `-w 0..60000`; replies from guest identity or explicit ICMP fixtures |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
@@ -63,7 +64,8 @@ but it is not included by default unless the table above says so.
 | `auditpol.exe` beyond the listed forms | Named category/subcategory filters, per-user policy, options, ACLs, and changes | An effective-token permission check and dynamic policy changes remain unmodeled. Unsupported command forms exit 87. |
 | `w32tm.exe` beyond the listed forms | Remote status, other formats, monitoring, resync, and configuration changes | Dynamic Windows Time/RPC APIs, NTP packet exchange, clock discipline, effective-token checks, and complete configuration/status fields remain unmodeled. Unsupported forms exit 87. |
 | `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
-| `ping.exe`, `tracert.exe`, `pathping.exe` | Network reachability and route discovery | Guest ICMP and route-hop simulation, with attempted operations logged. Not included by default. |
+| `ping.exe` beyond the listed forms | IPv6, continuous probing, IP options, and error replies | ICMPv6, route errors, fragmentation, and additional flags remain unmodeled; unsupported command forms exit 87. |
+| `tracert.exe`, `pathping.exe` | Route discovery and hop statistics | Guest route-hop simulation is still needed. Not included by default. |
 | `nslookup.exe` beyond the listed forms | Other record types, search suffixes, other servers, and interactive commands | SRV, MX, TXT, CNAME chains, recursive resolution, and interactive mode remain unmodeled; unsupported command forms exit 87. |
 | `cmdkey.exe` beyond `/list` | Target filters and credential changes | A dynamic guest credential store and command parser; unsupported forms exit 87. |
 | `klist.exe` beyond the listed forms | Other logon IDs, sessions, `tgt`, bindings, and cache changes | More guest LSA session and cache models are needed. Encoded tickets and usable keys are not modeled; unsupported forms exit 87. |
@@ -127,6 +129,38 @@ domain-controller A/PTR records derive from persona identity. Up to 64 additiona
 records and duplicate records are rejected. A record has `name`, `type`, `data`,
 and `ttl` fields (TTL is 0–604800 seconds). DNS names are ASCII, case-insensitive,
 and may have a trailing dot. Internationalized names are not modeled.
+The catalog also includes localhost A/PTR records for 127.0.0.1 unless the
+persona uses `localhost` as its own hostname.
+
+Guest `ping.exe` calls the emulated synchronous `IcmpSendEcho` API through
+process-owned `IcmpCreateFile`/`IcmpCloseHandle` handles. The same hooks are
+available to other guest programs through `iphlpapi.dll` and `icmp.dll`.
+Replies echo at most 4096 bytes into checked guest memory, with native x86
+and x64 reply structures. Up to 128 handles can be open across guest processes;
+process exit releases its handles. Asynchronous echo APIs and ICMPv6 are not
+modeled. Only a plain TTL request option is accepted; route-hop behavior and
+ICMP error replies are not simulated.
+
+The guest's own IPv4 address and loopback addresses reply with zero RTT and
+TTL 128. Other addresses time out unless configured in `icmp_responses`, a
+list of at most 64 unique records with exactly these fields:
+
+```json
+{"address": "203.0.113.5", "round_trip_ms": 12, "ttl": 57}
+```
+
+RTT must be 0–60000 milliseconds and TTL 1–255. Fixtures cannot replace
+guest-owned or loopback replies, or target unspecified, multicast, limited
+broadcast, or the guest subnet's directed broadcast address. A fixture whose
+RTT exceeds the caller's timeout also times out. DNS names must separately
+resolve through the guest catalog. Replies, timeouts, and the utility's
+between-request waits advance virtual time. They never sleep on the host,
+open a socket, or use the host resolver or network broker. Attempts appear
+as `guest_icmp_echo` events in the report and dashboard network timeline,
+including status, timeout, payload hash when valid, and `network_used: false`.
+The utility accepts `/` aliases for the listed flags and exits 0 if at least
+one request succeeds, or 1 if none succeeds. Missing DNS names exit 1;
+duplicate flags, unsupported flags, and out-of-range arguments exit 87.
 
 The utility supports `nslookup <name>`, `-type=A`, `-type=AAAA`, `-type=PTR`, and
 IPv4 reverse lookups. An explicit server must be the configured primary guest

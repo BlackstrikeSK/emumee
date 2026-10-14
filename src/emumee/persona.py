@@ -17,6 +17,7 @@ from .kerberos import ENCRYPTION_TYPES, ticket_datetime
 from .audit_policy import validate_policy
 from .dns_records import validate_records
 from .time_service import validate_time_service
+from .icmp import validate_icmp_responses
 
 from .persona_content import (DISPLAY_VERSIONS, PROCESS_PATHS, desktop_files,
                               driver_package_files, registry_keys)
@@ -74,6 +75,7 @@ DEFAULT_PERSONA = {
     "backup_versions": [],
     "stored_credentials": [],
     "dns_records": [],
+    "icmp_responses": [],
     "kerberos": {"logon_id": 0x10001, "tickets": []},
     "boot_config": {
         "loader_guid": "{17f03c5e-781a-429f-90d7-5f6a8e1472c3}",
@@ -772,6 +774,7 @@ def load_persona(path: Path | None) -> dict:
     if cpu["max_mhz"] < cpu["base_mhz"]:
         raise ValueError("Persona cpu max_mhz must be at least base_mhz")
     validate_time_service(persona)
+    validate_icmp_responses(persona)
     if refresh_registry:
         persona["registry_keys"] = registry_keys(persona)
     return persona

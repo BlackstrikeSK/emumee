@@ -1009,4 +1009,6 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
         "guest_native", f"wmic_query_{arch}.exe").read_bytes()
     result["nslookup.exe"] = files("emumee").joinpath(
         "guest_native", f"nslookup_query_{arch}.exe").read_bytes()
+    result["ping.exe"] = files("emumee").joinpath(
+        "guest_native", f"ping_query_{arch}.exe").read_bytes()
     return result

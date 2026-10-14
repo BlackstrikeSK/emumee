@@ -26,6 +26,9 @@ def identity_records(persona):
         result.append({"name": fqdn, "type": "A", "data": persona["network_adapter"]["ipv4"], "ttl": 60})
     result.append({"name": ipaddress.IPv4Address(persona["network_adapter"]["ipv4"]).reverse_pointer,
                    "type": "PTR", "data": fqdn, "ttl": 60})
+    if host != "localhost":
+        result.extend(({"name": "localhost", "type": "A", "data": "127.0.0.1", "ttl": 60},
+                       {"name": "1.0.0.127.in-addr.arpa", "type": "PTR", "data": "localhost", "ttl": 60}))
     for controller in persona["domain_discovery"]["controllers"]:
         result.extend((
             {"name": controller["name"].lower(), "type": "A", "data": controller["address"], "ttl": 60},

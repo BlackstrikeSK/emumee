@@ -5,7 +5,7 @@
 The experimental `powershell` CLI accepts supplied scripts inside Docker
 Desktop's offline Linux VM. It captures evaluated parameters from a pinned,
 instrumented engine and native exec arguments through an external observer.
-Its required guest-tools build exposes all 40 bundled Windows enumeration
+Its required guest-tools build exposes all 41 bundled Windows enumeration
 utilities through the same persona-backed x64 PE CPU/API models inside the
 guest. Dynamic command names, nested evaluation, splatting, native argument
 boundaries, offline DNS/ICMP, timeout retention, and the dashboard have been
@@ -16,6 +16,23 @@ tamper resistance is not established. See
 [POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md) for evidence and limits.
 
 ## Worker build receipt and packaged utility assets
+
+The offline traceroute addition passed **84 source/integration tests** on
+2026-10-14 UTC, including all 41 utilities called from confined PowerShell,
+96-probe trace retention, native x86/x64 TTL-error reply layouts, and threaded
+PowerShell shutdown. The rebuilt worker passed **83 packaged utility cases**
+(41 utilities on each architecture plus source CLI ping), followed by two
+custom routed traceroute cases with twelve probes each. Evidence is
+`output/tracert-verification.log`,
+`output/tracert-package/final-83/verification.json`, and
+`output/tracert-package/route-fixture/verification.json`. Its worker SHA-256 is
+`90fb476f9112d0d149a6b6120f5b0210f0b365ba81212988d2beb455d6fd8717`;
+all 18 native assets match the current source receipt. A scoped cleanup scan
+of the package and traceroute outputs found zero explicit AppContainer SID
+grants, private broker journals, or packaged worker processes across 588
+directories and 9,582 files (`output/tracert-package/cleanup-scan.txt`).
+These fixtures verify the listed modeled forms; they do not establish full
+Windows utility compatibility or complete PowerShell command capture.
 
 The PyInstaller build explicitly includes the generated x86/x64 PE resources.
 `build.ps1` verifies that packaged utility bytes match the source assets, then

@@ -8,6 +8,7 @@ import speakeasy.common as common
 
 
 IP_REQ_TIMED_OUT = 11010
+IP_TTL_EXPIRED_TRANSIT = 11013
 
 
 def _broadcast(persona, address):
@@ -23,10 +24,11 @@ def validate_icmp_responses(persona):
         raise ValueError("Persona icmp_responses must have at most 64 entries")
     seen = set()
     for record in records:
-        if (not isinstance(record, dict) or set(record) != {"address", "round_trip_ms", "ttl"} or
+        if (not isinstance(record, dict) or not {"address", "round_trip_ms", "ttl"} <= set(record) or
+                set(record) - {"address", "round_trip_ms", "ttl", "hops", "responds"} or
                 not isinstance(record["address"], str) or type(record["round_trip_ms"]) is not int or
                 not 0 <= record["round_trip_ms"] <= 60000 or type(record["ttl"]) is not int or
-                not 1 <= record["ttl"] <= 255):
+                not 1 <= record["ttl"] <= 255 or type(record.get("responds", True)) is not bool):
             raise ValueError("Persona icmp_responses fields are invalid")
         try:
             address = ipaddress.IPv4Address(record["address"])
@@ -37,6 +39,23 @@ def validate_icmp_responses(persona):
                 _broadcast(persona, address) or address in seen):
             raise ValueError("Persona icmp_responses address is duplicate, reserved, or guest-owned")
         seen.add(address)
+        hops = record.get("hops", [])
+        if not isinstance(hops, list) or len(hops) > 254:
+            raise ValueError("Persona icmp_responses hops must contain at most 254 entries")
+        for hop in hops:
+            if hop is None:
+                continue
+            if (not isinstance(hop, dict) or set(hop) != {"address", "round_trip_ms", "ttl"} or
+                    not isinstance(hop["address"], str) or type(hop["round_trip_ms"]) is not int or
+                    not 0 <= hop["round_trip_ms"] <= 60000 or type(hop["ttl"]) is not int or not 1 <= hop["ttl"] <= 255):
+                raise ValueError("Persona icmp_responses hop fields are invalid")
+            try:
+                peer = ipaddress.IPv4Address(hop["address"])
+            except ValueError as error:
+                raise ValueError("Persona icmp_responses hop address is invalid") from error
+            if (peer.is_unspecified or peer.is_multicast or peer.is_loopback or _broadcast(persona, peer) or
+                    str(peer) == persona["network_adapter"]["ipv4"] or peer == address):
+                raise ValueError("Persona icmp_responses hop address is reserved or an endpoint")
 
 
 class GuestICMP:
@@ -132,21 +151,33 @@ class GuestICMP:
         event["data_sha256"] = hashlib.sha256(data).hexdigest()
         response = ({"round_trip_ms": 0, "ttl": 128} if destination.is_loopback or
                     host == self.persona["network_adapter"]["ipv4"] else self.responses.get(host))
+        reply_host, reply_status = host, 0
+        if response is not None:
+            hops = response.get("hops", [])
+            if event["request_ttl"] <= len(hops):
+                response = hops[event["request_ttl"] - 1]
+                event["route_hop"] = event["request_ttl"]
+                if response is not None:
+                    reply_host, reply_status = response["address"], IP_TTL_EXPIRED_TRANSIT
+            elif not response.get("responds", True):
+                response = None
         elapsed = response["round_trip_ms"] if response is not None else timeout
         success = response is not None and elapsed <= timeout
         if self.clock is not None:
             self.clock.advance(elapsed if success else timeout)
         if not success:
             return fail(IP_REQ_TIMED_OUT, "no timely simulated reply; no network packet was sent")
-        result = bytearray(header + size)
-        result[:4] = ipaddress.IPv4Address(host).packed
-        struct.pack_into("<IIHH", result, 4, 0, elapsed, size, 0)
-        result[16:16 + width] = (output + header if size else 0).to_bytes(width, "little")
+        reply_data = data if reply_status == 0 else b""
+        result = bytearray(header + len(reply_data))
+        result[:4] = ipaddress.IPv4Address(reply_host).packed
+        struct.pack_into("<IIHH", result, 4, reply_status, elapsed, len(reply_data), 0)
+        result[16:16 + width] = (output + header if reply_data else 0).to_bytes(width, "little")
         result[16 + width] = response["ttl"]
-        result[header:] = data
+        result[header:] = reply_data
         emu.mem_write(output, bytes(result))
         emu.set_last_error(0)
-        event.update(status=0, round_trip_ms=elapsed, ttl=response["ttl"], simulated_reply=True)
+        event.update(status=reply_status, reply_address=reply_host, round_trip_ms=elapsed,
+                     ttl=response["ttl"], simulated_reply=True)
         return 1
 
     def cleanup_process(self, _emu, process):

@@ -32,6 +32,7 @@ and shared mutable Windows state are not modeled. See
 | `ipconfig.exe` | Yes | Default, `/all` |
 | [`nslookup.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/nslookup) | Yes | Noninteractive A, AAAA, and PTR queries against the offline guest DNS catalog; IPv4 reverse lookup; optional explicit primary persona DNS server |
 | [`ping.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/ping) | Yes | IPv4 address or offline DNS name, optional `-4`, `-n 1..16`, `-l 0..4096`, and `-w 0..60000`; replies from guest identity or explicit ICMP fixtures |
+| [`tracert.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/tracert) | Yes | IPv4 address or offline DNS name, `-d`, `-4`, `-h 1..255`, `-w 0..60000`; three probes per hop, offline PTR names, configured router replies and silent hops |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | Yes | Default, `-an`, `-ano` for live guest IPv4 TCP connections |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |
@@ -71,8 +72,9 @@ but it is not included by default unless the table above says so.
 | `auditpol.exe` beyond the listed forms | Named category/subcategory filters, per-user policy, options, ACLs, and changes | An effective-token permission check and dynamic policy changes remain unmodeled. Unsupported command forms exit 87. |
 | `w32tm.exe` beyond the listed forms | Remote status, other formats, monitoring, resync, and configuration changes | Dynamic Windows Time/RPC APIs, NTP packet exchange, clock discipline, effective-token checks, and complete configuration/status fields remain unmodeled. Unsupported forms exit 87. |
 | `netsh.exe` beyond the listed views | Firewall, wireless, proxy, and interface inventory | Additional guest firewall, wireless, and WinHTTP configuration. Unsupported forms exit 87. |
-| `ping.exe` beyond the listed forms | IPv6, continuous probing, IP options, and error replies | ICMPv6, route errors, fragmentation, and additional flags remain unmodeled; unsupported command forms exit 87. |
-| `tracert.exe`, `pathping.exe` | Route discovery and hop statistics | Guest route-hop simulation is still needed. Not included by default. |
+| `ping.exe` beyond the listed forms | IPv6, continuous probing, other IP options, and error replies | ICMPv6, errors other than TTL expiry in transit, fragmentation, and additional flags remain unmodeled; unsupported command forms exit 87. |
+| `tracert.exe` beyond the listed forms | IPv6, source routing, and other IP options | ICMPv6, source address/route selection, ECMP, and non-TTL ICMP errors remain unmodeled; unsupported flags exit 87. |
+| `pathping.exe` | Route discovery and hop statistics | Per-hop loss measurement and its command parser are still needed. Not included by default. |
 | `nslookup.exe` beyond the listed forms | Other record types, search suffixes, other servers, and interactive commands | SRV, MX, TXT, CNAME chains, recursive resolution, and interactive mode remain unmodeled; unsupported command forms exit 87. |
 | `cmdkey.exe` beyond `/list` | Target filters and credential changes | A dynamic guest credential store and command parser; unsupported forms exit 87. |
 | `klist.exe` beyond the listed forms | Other logon IDs, sessions, `tgt`, bindings, and cache changes | More guest LSA session and cache models are needed. Encoded tickets and usable keys are not modeled; unsupported forms exit 87. |
@@ -145,18 +147,31 @@ available to other guest programs through `iphlpapi.dll` and `icmp.dll`.
 Replies echo at most 4096 bytes into checked guest memory, with native x86
 and x64 reply structures. Up to 128 handles can be open across guest processes;
 process exit releases its handles. Asynchronous echo APIs and ICMPv6 are not
-modeled. Only a plain TTL request option is accepted; route-hop behavior and
-ICMP error replies are not simulated.
+modeled. Only a plain TTL request option is accepted. Configured intermediate
+hops return native reply structures with `IP_TTL_EXPIRED_TRANSIT` (11013),
+the router's IPv4 address and reply TTL, and zero data size/pointer. Other
+ICMP error types and fragmentation are not simulated.
 
 The guest's own IPv4 address and loopback addresses reply with zero RTT and
 TTL 128. Other addresses time out unless configured in `icmp_responses`, a
-list of at most 64 unique records with exactly these fields:
+list of at most 64 unique records with these required fields:
 
 ```json
 {"address": "203.0.113.5", "round_trip_ms": 12, "ttl": 57}
 ```
 
-RTT must be 0–60000 milliseconds and TTL 1–255. Fixtures cannot replace
+RTT must be 0–60000 milliseconds and TTL 1–255. Optional `responds` is a boolean
+(default true); false makes the destination silent. Optional `hops` contains
+up to 254 intermediate hop records with the same three required fields, or
+null for a silent hop. Intermediate addresses cannot be the destination or
+guest-owned, loopback, broadcast, multicast, or unspecified addresses. Repeated
+router addresses are allowed. Hop RTTs need not be monotonic. Hop fixtures
+describe TTL-expired replies; they do not implicitly enable direct echo replies
+to those router addresses. See [the route persona](examples/route-persona.json).
+An omitted or empty hop list models a direct simulated reply at TTL 1; supply
+intermediates to describe the desired routed topology.
+
+Fixtures cannot replace
 guest-owned or loopback replies, or target unspecified, multicast, limited
 broadcast, or the guest subnet's directed broadcast address. A fixture whose
 RTT exceeds the caller's timeout also times out. DNS names must separately
@@ -166,8 +181,23 @@ open a socket, or use the host resolver or network broker. Attempts appear
 as `guest_icmp_echo` events in the report and dashboard network timeline,
 including status, timeout, payload hash when valid, and `network_used: false`.
 The utility accepts `/` aliases for the listed flags and exits 0 if at least
-one request succeeds, or 1 if none succeeds. Missing DNS names exit 1;
+one timely reply arrives, or 1 if none arrives. Missing DNS names exit 1;
 duplicate flags, unsupported flags, and out-of-range arguments exit 87.
+TTL-expired replies count as received packets in `ping.exe`, but do not enter
+its successful-echo RTT statistics or establish destination reachability.
+
+Guest `tracert.exe` defaults to 30 hops and a 4000 ms timeout per probe. It
+increments request TTL from 1, sends three probes per hop, and stops after
+the destination replies or the hop limit is reached. Silent/late hops display
+asterisks. Names come only from offline A/PTR queries; `-d` suppresses PTR
+queries, while `-4`, `/4`, and slash aliases of the supported flags are accepted.
+It exits 0 when a resolved target's bounded trace finishes, including a hop-limit
+finish with no destination reply; exit 0 is not evidence of reachability.
+Name resolution and modeled API failures exit 1; invalid/unsupported arguments
+exit 87. Traceroute uses no raw socket, resolver, or host executable. Its ICMP
+events include destination, requested TTL, status, and responding router address,
+and advance only virtual time. The generated x86/x64 PEs are built with
+[`tools/build_guest_tracert.ps1`](tools/build_guest_tracert.ps1).
 
 The utility supports `nslookup <name>`, `-type=A`, `-type=AAAA`, `-type=PTR`, and
 IPv4 reverse lookups. An explicit server must be the configured primary guest
@@ -424,17 +454,15 @@ a guest child launch, with no host Task Scheduler call. Task Scheduler APIs,
 on-disk definitions, and live scheduling are not modeled yet.
 
 `cmd.exe`, VBScript, JavaScript, and Python are outside this native utility
-inventory. PowerShell is a separate future confinement target: the current
-guest child loader rejects managed PEs, and the bounded managed interpreter
-does not run the PowerShell engine. A fixed benign Linux-container prototype
-has verified a separate PowerShell execution and runtime-binding trace path;
-it does not yet reproduce the Windows persona or accept submitted scripts.
-A usable implementation must run script
-code inside a guest execution boundary, deny or broker network operations,
-record the command and arguments at each actual invocation after dynamic
-expansion, and display those records in the dashboard. Source text or static
-deobfuscation alone cannot establish which command ran. No entry in this file
-authorizes a guest command to execute on the host. See
+inventory. The separate `powershell` CLI accepts submitted scripts in Docker
+Desktop's offline Linux VM. Its required utility bridge runs these same
+persona-backed x64 Windows PEs inside that guest. The native PE child loader
+still rejects managed PEs and does not launch this PowerShell mode itself.
+The dashboard displays instrumented-engine evaluated parameters and external
+native exec argument records. General Windows APIs/providers, shared mutable
+Windows state, and complete command capture remain incomplete. Source text or
+static deobfuscation alone cannot establish which command ran. No entry in
+this file authorizes a guest command to execute on the host. See
 [COVERAGE_AND_SAFETY.md](COVERAGE_AND_SAFETY.md) for tested paths and
 containment limits. The required execution and command-capture gates are
 tracked in [POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md).

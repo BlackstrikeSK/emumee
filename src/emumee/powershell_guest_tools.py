@@ -45,7 +45,8 @@ def emulate(program: str, arguments: list[str], persona_path: Path) -> tuple[dic
     with tempfile.TemporaryDirectory(prefix='emumee-tool-', dir='/tmp') as directory:
         with open(os.devnull, 'w') as silent, contextlib.redirect_stdout(silent), contextlib.redirect_stderr(silent):
             result = run_native(image, inspect_pe(image, name), persona, Path(directory), [],
-                                10, 500_000, guest_args=arguments)
+                                30 if name == 'tracert.exe' else 10,
+                                2_000_000 if name == 'tracert.exe' else 500_000, guest_args=arguments)
         with (Path(directory) / result['engine_report']).open('rb') as stream:
             raw_report = stream.read(16 * 1024 * 1024 + 1)
         if len(raw_report) > 16 * 1024 * 1024:
@@ -61,22 +62,43 @@ def emulate(program: str, arguments: list[str], persona_path: Path) -> tuple[dic
              'pe_sha256': hashlib.sha256(image).hexdigest(),
              'guest_exit_code': exit_code, 'completion_reason': result['completion_reason'],
              'errors': [str(e)[:2048] for e in result['errors'][:8]],
-             'network_events': report.get('network_events', [])[:16],
-             'network_events_truncated': len(report.get('network_events', [])) > 16,
+             'network_events': report.get('network_events', [])[:2048],
+             'network_events_truncated': len(report.get('network_events', [])) > 2048,
              'network_broker_available': False, 'architecture': 'x64',
              'console_truncated': any(result['console_output'][s + '_truncated'] for s in ('stdout', 'stderr'))}
     return result['console_output'], event
 
 
+def transport_records(event: dict) -> list[bytes]:
+    """Bound individual frames while retaining long route traces in order."""
+    encode = lambda value: json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode('ascii')
+    chunks, pending = [], []
+    for observation in event['network_events']:
+        if pending and (len(pending) >= 16 or len(encode(pending + [observation])) > 60000):
+            chunks.append(pending)
+            pending = []
+        if len(encode([observation])) > 60000:
+            raise ValueError('Guest network observation exceeds frame limit')
+        pending.append(observation)
+    if pending:
+        chunks.append(pending)
+    base = {**event, 'network_events': [], 'network_event_count': len(event['network_events']),
+            'network_chunk_count': len(chunks)}
+    records = [base]
+    for index, chunk in enumerate(chunks):
+        records.append({**base, 'arguments': [], 'network_events': chunk, 'network_chunk_index': index})
+    payloads = [encode(record) for record in records]
+    if any(len(raw) > 65536 for raw in payloads):
+        raise ValueError('Guest utility record exceeds frame limit')
+    return payloads
+
+
 def main():
     try:
         output, event = emulate(sys.argv[1], sys.argv[2:], Path('/work/persona.json'))
-        raw = json.dumps(event, ensure_ascii=True, separators=(',', ':')).encode('ascii')
-        if len(raw) > 65536:
-            event.update(network_events=[], network_events_truncated=True)
-            raw = json.dumps(event, ensure_ascii=True, separators=(',', ':')).encode('ascii')
-        if len(raw) > 65536 or os.write(197, raw) != len(raw):
-            raise ValueError('Guest utility record transport failed')
+        for raw in transport_records(event):
+            if os.write(197, raw) != len(raw):
+                raise ValueError('Guest utility record transport failed')
         for stream, fd in (('stdout', 1), ('stderr', 2)):
             data = output[stream].encode('utf-8')
             while data:

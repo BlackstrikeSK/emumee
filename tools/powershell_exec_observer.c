@@ -13,6 +13,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <stdint.h>
+#include <setjmp.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -33,6 +34,9 @@ static char payload[300000];
 static size_t used;
 static unsigned long sequence;
 static pid_t root_pid;
+static jmp_buf trace_exit;
+static int allow_exit_race;
+static const char *exit_operation;
 static int script_mode;
 static int persona_mode;
 static size_t console_totals[2];
@@ -61,10 +65,18 @@ static void add(const char *format, ...) {
     used += (size_t)n;
 }
 static void fail(const char *reason) {
+    int native_error = errno;
     if (root_pid > 0) kill(root_pid, SIGKILL);
     for (int i = 0; i < 64; ++i) if (tasks[i].pid > 0) kill(tasks[i].pid, SIGKILL);
-    begin(); add("{\"event\":\"observer_error\",\"reason\":\"%s\"}", reason); emit();
+    begin(); add("{\"event\":\"observer_error\",\"reason\":\"%s\",\"native_errno\":%d}", reason, native_error); emit();
     _exit(95);
+}
+static void trace_error(const char *reason) {
+    if (errno == ESRCH && allow_exit_race) {
+        exit_operation = reason;
+        longjmp(trace_exit, 1);
+    }
+    fail(reason);
 }
 static int task(pid_t pid) {
     for (int i = 0; i < 64; ++i) if (tasks[i].pid == pid) return i;
@@ -74,7 +86,7 @@ static int task(pid_t pid) {
 static unsigned long peek(pid_t pid, unsigned long address) {
     errno = 0;
     long value = ptrace(PTRACE_PEEKDATA, pid, (void *)address, 0);
-    if (value == -1 && errno) fail("tracee_memory_unreadable");
+    if (value == -1 && errno) trace_error("tracee_memory_unreadable");
     return (unsigned long)value;
 }
 static void hex_memory(pid_t pid, unsigned long address, size_t limit, int terminated) {
@@ -245,7 +257,10 @@ int main(int argc, char **argv) {
         pid_t pid = waitpid(-1, &status, __WALL);
         if (pid < 0) {
             if (errno == EINTR) continue;
-            if (errno == ECHILD) break;
+            if (errno == ECHILD) {
+                for (int i = 0; i < 64; ++i) if (tasks[i].pid) fail("tracee_exit_notification_missing");
+                break;
+            }
             fail("trace_wait_failed");
         }
         int index = task(pid);
@@ -257,17 +272,25 @@ int main(int argc, char **argv) {
             continue;
         }
         if (!WIFSTOPPED(status)) fail("unexpected_trace_state");
+        /* SIGKILL/group exit can remove a stopped thread before a ptrace
+           request. Keep it tracked until waitpid confirms its terminal state. */
+        if (setjmp(trace_exit)) {
+            allow_exit_race = 0;
+            begin(); add("{\"event\":\"tracee_exit_pending\",\"pid\":%d,\"operation\":\"%s\"}", pid, exit_operation); emit();
+            continue;
+        }
+        allow_exit_race = 1;
         int signal = WSTOPSIG(status), event = status >> 16;
         if (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK || event == PTRACE_EVENT_CLONE) {
             unsigned long child = 0;
-            if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child)) fail("trace_child_unreadable");
+            if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child)) trace_error("trace_child_unreadable");
             task((pid_t)child);
         } else if (event == PTRACE_EVENT_EXEC) {
             begin(); add("{\"event\":\"native_exec_committed\",\"pid\":%d}", pid); emit();
         } else if (signal == (SIGTRAP | 0x80)) {
             struct ptrace_syscall_info info;
             memset(&info, 0, sizeof(info));
-            if (ptrace(PTRACE_GET_SYSCALL_INFO, pid, sizeof(info), &info) < 0) fail("syscall_info_unavailable");
+            if (ptrace(PTRACE_GET_SYSCALL_INFO, pid, sizeof(info), &info) < 0) trace_error("syscall_info_unavailable");
             if (info.arch != AUDIT_ARCH_X86_64 ||
                     (info.op == PTRACE_SYSCALL_INFO_ENTRY && info.entry.nr & 0x40000000UL))
                 fail("unsupported_tracee_architecture");
@@ -284,9 +307,9 @@ int main(int argc, char **argv) {
                 int error = denied(&info);
                 if (error) {
                     struct user_regs_struct registers;
-                    if (ptrace(PTRACE_GETREGS, pid, 0, &registers)) fail("register_read_failed");
+                    if (ptrace(PTRACE_GETREGS, pid, 0, &registers)) trace_error("register_read_failed");
                     registers.orig_rax = (unsigned long)-1;
-                    if (ptrace(PTRACE_SETREGS, pid, 0, &registers)) fail("syscall_block_failed");
+                    if (ptrace(PTRACE_SETREGS, pid, 0, &registers)) trace_error("syscall_block_failed");
                     tasks[index].blocked = error;
                     begin(); add("{\"event\":\"native_syscall_denied\",\"pid\":%d,\"syscall_number\":%llu,\"errno\":%d}",
                                   pid, (unsigned long long)info.entry.nr, error); emit();
@@ -307,14 +330,15 @@ int main(int argc, char **argv) {
                 tasks[index].console_fd = 0;
             } else if (info.op == PTRACE_SYSCALL_INFO_EXIT && tasks[index].blocked) {
                 struct user_regs_struct registers;
-                if (ptrace(PTRACE_GETREGS, pid, 0, &registers)) fail("register_read_failed");
+                if (ptrace(PTRACE_GETREGS, pid, 0, &registers)) trace_error("register_read_failed");
                 registers.rax = (unsigned long)-tasks[index].blocked;
-                if (ptrace(PTRACE_SETREGS, pid, 0, &registers)) fail("syscall_result_failed");
+                if (ptrace(PTRACE_SETREGS, pid, 0, &registers)) trace_error("syscall_result_failed");
                 tasks[index].blocked = 0;
             }
         }
         int deliver = (signal == (SIGTRAP | 0x80) || signal == SIGTRAP || signal == SIGSTOP) ? 0 : signal;
-        if (ptrace(PTRACE_SYSCALL, pid, 0, (void *)(long)deliver) && errno != ESRCH) fail("trace_resume_failed");
+        if (ptrace(PTRACE_SYSCALL, pid, 0, (void *)(long)deliver)) trace_error("trace_resume_failed");
+        allow_exit_race = 0;
     }
     begin(); add("{\"event\":\"observer_finished\",\"root_exit_code\":%d}", root_exit); emit();
     OPENSSL_cleanse(key, sizeof(key));

@@ -1,0 +1,20 @@
+{
+  "hostname": "ROUTE-PC-42",
+  "clock_utc": "2026-10-14T12:00:00Z",
+  "dns_records": [
+    {"name": "trace.example", "type": "A", "data": "203.0.113.9", "ttl": 60},
+    {"name": "1.1.168.192.in-addr.arpa", "type": "PTR", "data": "router.example", "ttl": 60},
+    {"name": "1.100.51.198.in-addr.arpa", "type": "PTR", "data": "transit.example", "ttl": 60},
+    {"name": "9.113.0.203.in-addr.arpa", "type": "PTR", "data": "trace.example", "ttl": 60}
+  ],
+  "icmp_responses": [
+    {
+      "address": "203.0.113.9", "round_trip_ms": 12, "ttl": 57,
+      "hops": [
+        {"address": "192.168.1.1", "round_trip_ms": 1, "ttl": 64},
+        null,
+        {"address": "198.51.100.1", "round_trip_ms": 7, "ttl": 63}
+      ]
+    }
+  ]
+}

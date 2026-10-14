@@ -120,19 +120,22 @@ void WINAPI entry(void) {
     if (!literal) { print(target); print(L" ["); print_address(ip); print(L"]"); }
     else print_address(ip);
     print(L" with "); print_number(size); print(L" bytes of data:\r\n");
-    DWORD received = 0, total = 0, minimum = 0xffffffff, maximum = 0;
+    DWORD received = 0, echoes = 0, total = 0, minimum = 0xffffffff, maximum = 0;
     for (DWORD i = 0; i < count; ++i) {
         DWORD replies = IcmpSendEcho(handle, ip, request, (WORD)size, 0, reply, sizeof(reply), timeout);
         ICMP_ECHO_REPLY *echo = (ICMP_ECHO_REPLY *)reply;
         DWORD wait = timeout;
         if (replies && echo->Status == IP_SUCCESS && echo->DataSize == size &&
             (!size || (echo->Data && ((BYTE *)echo->Data)[0] == request[0] && ((BYTE *)echo->Data)[size - 1] == request[size - 1]))) {
-            ++received; wait = echo->RoundTripTime; total += wait;
+            ++received; ++echoes; wait = echo->RoundTripTime; total += wait;
             if (wait < minimum) minimum = wait;
             if (wait > maximum) maximum = wait;
             print(L"Reply from "); print_address(echo->Address); print(L": bytes="); print_number(echo->DataSize);
             if (!wait) print(L" time<1ms"); else { print(L" time="); print_number(wait); print(L"ms"); }
             print(L" TTL="); print_number(echo->Options.Ttl); print(L"\r\n");
+        } else if (replies && echo->Status == IP_TTL_EXPIRED_TRANSIT) {
+            ++received; wait = echo->RoundTripTime;
+            print(L"Reply from "); print_address(echo->Address); print(L": TTL expired in transit.\r\n");
         } else if (!replies && GetLastError() == IP_REQ_TIMED_OUT) print(L"Request timed out.\r\n");
         else { print(L"General failure.\r\n"); wait = 0; }
         if (i + 1 < count && wait < 1000) Sleep(1000 - wait);
@@ -141,9 +144,9 @@ void WINAPI entry(void) {
     print(L"\r\nPing statistics for "); print_address(ip); print(L":\r\n    Packets: Sent = "); print_number(count);
     print(L", Received = "); print_number(received); print(L", Lost = "); print_number(count - received);
     print(L" ("); print_number((count - received) * 100 / count); print(L"% loss),\r\n");
-    if (received) {
+    if (echoes) {
         print(L"Approximate round trip times in milli-seconds:\r\n    Minimum = "); print_number(minimum);
-        print(L"ms, Maximum = "); print_number(maximum); print(L"ms, Average = "); print_number(total / received); print(L"ms\r\n");
+        print(L"ms, Maximum = "); print_number(maximum); print(L"ms, Average = "); print_number(total / echoes); print(L"ms\r\n");
     }
     ExitProcess(received ? 0 : 1);
 }

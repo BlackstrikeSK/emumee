@@ -13,7 +13,7 @@ from emumee.dashboard import create_app
 from emumee.persona import load_persona
 from emumee.powershell import project_trace, run_script, save_script_run
 from emumee.powershell_capture import guest_tool_event, docker
-from emumee.powershell_guest_tools import program_names, programs
+from emumee.powershell_guest_tools import program_names, programs, transport_records
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMANDS = {
@@ -30,6 +30,7 @@ COMMANDS = {
     'tzutil.exe':['/g'], 'vssadmin.exe':['list','shadows'], 'w32tm.exe':['/query','/source'],
     'wbadmin.exe':['get','versions'], 'wevtutil.exe':['el'], 'where.exe':['hostname.exe'],
     'whoami.exe':['/all'], 'wmic.exe':['os','get','Version','/value'],
+    'tracert.exe':['-d','-h','1','localhost'],
 }
 
 
@@ -97,6 +98,25 @@ class GuestToolTests(unittest.TestCase):
                 run_script(path,Path('unused'),Path('unused'),persona_path=Path('persona.json'))
             mocked.assert_not_called()
 
+    def test_network_chunks_preserve_long_traces_and_detect_loss_or_forgery(self):
+        record=self.record()
+        record['network_events']=[{'event':'guest_icmp_echo','host':'203.0.113.9','request_ttl':i+1,'status':11013} for i in range(90)]
+        payloads=transport_records(record)
+        events=[{'event':'guest_tool_record','pid':23,'sequence':i+1,'data_hex':raw.hex()} for i,raw in enumerate(payloads)]
+        self.assertTrue(all(len(raw)<=65536 for raw in payloads))
+        commands,network,_,errors=project_trace(events,guest_tools=['whoami.exe'],persona_sha256='1'*64)
+        self.assertEqual(errors,[])
+        self.assertEqual(len(commands),1)
+        self.assertEqual([e['request_ttl'] for e in network],list(range(1,91)))
+        for bad in (events[:-1],events+[events[-1]]):
+            _,_,_,errors=project_trace(bad,guest_tools=['whoami.exe'],persona_sha256='1'*64)
+            self.assertTrue(any('chunk' in e for e in errors))
+        changed=json.loads(payloads[-1])
+        changed['persona_sha256']='3'*64
+        altered=[*events[:-1],{**events[-1],'data_hex':json.dumps(changed).encode().hex()}]
+        _,_,_,errors=project_trace(altered,guest_tools=['whoami.exe'],persona_sha256='1'*64)
+        self.assertTrue(any('inconsistent' in e for e in errors))
+
 
 @unittest.skipUnless(os.environ.get('EMUMEE_POWERSHELL_INTEGRATION')=='1', 'requires trusted guest tools build and Docker Desktop Linux')
 class GuestToolContainerTests(unittest.TestCase):
@@ -116,7 +136,7 @@ class GuestToolContainerTests(unittest.TestCase):
         run=save_script_run(report,ROOT/'output/powershell-persona-gate')
         return report,run
 
-    def test_all_40_tools_emulate_from_powershell_with_one_custom_persona(self):
+    def test_all_bundled_tools_emulate_from_powershell_with_one_custom_persona(self):
         override={'hostname':'LAB-PS-204','user_name':'Sam','user_is_admin':True,'domain':'corp.example',
                   'device_registration':{'domain_joined':True},'clock_utc':'2026-10-14T12:00:00Z',
                   'network_adapter':{'ipv4':'192.0.2.77','gateway':'192.0.2.1','dns_servers':['192.0.2.53']}}
@@ -136,7 +156,7 @@ class GuestToolContainerTests(unittest.TestCase):
         self.assertTrue(all(report['configuration_checks'].values()))
         models=[c for c in report['command_events'] if c['capture']=='guest_windows_emulation']
         self.assertEqual(set(c['command'] for c in models),set(COMMANDS))
-        self.assertEqual(len(models),41)
+        self.assertEqual(len(models),len(COMMANDS)+1)
         images=programs(load_persona(None,document=override))
         for model in models:
             self.assertTrue(model['persona_matches_baseline'],model)
@@ -181,6 +201,20 @@ whoami.exe
         self.assertTrue(models[0]['persona_matches_baseline'])
         self.assertFalse(models[-1]['persona_matches_baseline'])
         self.assertIn('CHANGED-PS\\Alex',report['console_output']['stdout'])
+
+    def test_long_traceroute_retains_all_network_observations(self):
+        report,run=self.execute("tracert.exe -d -h 32 -w 0 203.0.113.250",timeout=120)
+        self.assertEqual(report['errors'],[])
+        models=[c for c in report['command_events'] if c['capture']=='guest_windows_emulation']
+        self.assertEqual(len(models),1)
+        self.assertEqual(models[0]['command'],'tracert.exe')
+        self.assertEqual(models[0]['network_event_count'],96)
+        self.assertGreater(models[0]['network_chunk_count'],1)
+        echoes=[e for e in report['network_events'] if e['event']=='guest_icmp_echo']
+        self.assertEqual(len(echoes),96)
+        self.assertEqual([e['request_ttl'] for e in echoes],[ttl for ttl in range(1,33) for _ in range(3)])
+        self.assertTrue(all(e['network_used'] is False for e in echoes))
+        self.assertIn('Trace complete.',report['console_output']['stdout'])
 
 
 if __name__=='__main__':

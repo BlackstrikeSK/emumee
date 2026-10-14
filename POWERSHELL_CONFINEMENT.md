@@ -110,13 +110,22 @@ Linux `whoami` or `hostname` when Windows enumeration tools are unavailable.
 that option it uses the default Windows persona. The validated persona is
 limited to 4 MiB in transfer, and never becomes an image layer or host mount.
 
-All 40 bundled utilities listed in [the enumeration inventory](ENUMERATION_COVERAGE.md)
+All 41 bundled utilities listed in [the enumeration inventory](ENUMERATION_COVERAGE.md)
 are exposed as native Linux shims. Each shim invokes the guest's isolated
 Python and Emumee CPU emulator with the generated x64 Windows PE and original
 argument array. There is no host process, host resolver, arbitrary PE path,
 or live network broker fallback. Utilities retain their documented supported
 forms and error behavior. `examples/powershell-persona.ps1` exercises identity,
 adapter, registry, DNS, and ICMP queries through these same models.
+
+The harmless routed example uses `examples/powershell-tracert.ps1` with
+`--persona examples/route-persona.json`. It constructs `tracert.exe` at runtime
+and prints two named routers, one silent hop, the destination, and the persona
+hostname. On 2026-10-14 UTC the CLI and live dashboard retained all twelve ICMP
+probes and four offline DNS queries, with no network use and no execution
+errors. The external observer finished; command coverage remains partial.
+Evidence is `output/tracert-package/powershell-demo-verification.json` and
+dashboard run `20261014T233621Z-4a046654`.
 
 The guest bootstrap sets persona COMPUTERNAME, USERNAME, USERDOMAIN (the local
 account's computer name), USERPROFILE, SystemRoot, and windir values. Native
@@ -134,7 +143,10 @@ guest. Complete Windows environment fidelity remains open.
 
 Utility result records use `guest_windows_emulation`, distinct from external
 kernel exec observations. They contain the program and arguments, generated
-PE hash, persona hash, full Windows exit code, and bounded model network events.
+PE hash, persona hash, full Windows exit code, and bounded model network events. Long network traces are split into individually bounded
+frames; missing, duplicate, or inconsistent chunks make the report incomplete.
+A utility can retain up to 2048 model network observations, and the summary
+marks observations omitted from its 1000-entry preview.
 DNS and ICMP observations enter the dashboard timeline with `network_used: false`.
 Linux native exit status exposes only the low eight bits of the Windows code;
 the full code remains visible in the utility record. A known shim that starts
@@ -298,6 +310,12 @@ Neither ptrace privileges nor a host filesystem mount are added. The helper is
 baked into a local derived image from the pinned SDK image before runtime;
 Docker does not allow copying it into an already read-only container root.
 The local image/cache and compiled helper remain available for repeat probes.
+
+If a stopped thread disappears during group exit, an ESRCH ptrace result is
+recorded as an exit pending observation. The collector retains that task until
+`waitpid` reports its terminal state. It does not report a complete lifecycle
+while tracked tasks lack exit notifications; other ptrace failures still stop
+the trace. A background-thread group-exit fixture covers shutdown handling.
 
 The observer makes itself non-dumpable. A fresh host-generated HMAC key arrives
 over stdin, is erased from the forked child's key buffer before exec, and is

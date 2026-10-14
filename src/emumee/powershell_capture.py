@@ -112,6 +112,12 @@ def guest_tool_event(event: dict, program_names: list[str], persona_sha256: str)
             not isinstance(record.get('errors'), list) or len(record['errors']) > 8 or
             any(not isinstance(e, str) or len(e) > 2048 for e in record['errors'])):
         raise ValueError('Guest utility record is malformed')
+    chunks = record.get('network_chunk_count', 0)
+    count = record.get('network_event_count', len(record['network_events']))
+    index = record.get('network_chunk_index')
+    if (type(chunks) is not int or not 0 <= chunks <= 2048 or type(count) is not int or not 0 <= count <= 2048 or
+            index is not None and (type(index) is not int or not 0 <= index < chunks)):
+        raise ValueError('Guest utility network chunk metadata is malformed')
     command = {'event': 'powershell_command_invocation', 'command': record['program'],
                'command_type': 'EmulatedWindowsApplication', 'phase': 'emulation_finished',
                'capture': 'guest_windows_emulation', 'provenance': 'in_process_data',
@@ -119,7 +125,9 @@ def guest_tool_event(event: dict, program_names: list[str], persona_sha256: str)
                'bound_parameters': {}, 'unbound_arguments': record['arguments'],
                'persona_sha256': record['persona_sha256'], 'pe_sha256': record['pe_sha256'],
                'persona_matches_baseline': record['persona_sha256'] == persona_sha256,
-               'reported_guest_exit_code': record['guest_exit_code'], 'errors': record['errors']}
+               'reported_guest_exit_code': record['guest_exit_code'], 'errors': record['errors'],
+               'network_chunk_count': chunks, 'network_event_count': count,
+               'network_chunk_index': index, 'network_events_truncated': record.get('network_events_truncated') is True}
     network = [{**e, 'capture': 'guest_windows_emulation', 'provenance': 'in_process_data',
                 'network_used': False, 'guest_tool_program': record['program'],
                 'observer_sequence': event['sequence'], 'guest_pid': event['pid']}

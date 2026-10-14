@@ -138,15 +138,29 @@ def project_trace(events: list[dict], *, guest_tools=None, persona_sha256='') ->
     commands = command_events(events)
     errors = []
     model_network = []
+    network_chunks = {}
+    model_results = {}
     for event in events:
         if event['event'] == 'guest_tool_record':
             try:
                 command, network = guest_tool_event(event, guest_tools or [], persona_sha256)
+                key = command['guest_pid'], command['command']
+                if command['network_chunk_index'] is not None:
+                    chunks = network_chunks.setdefault(key, {})
+                    index = command['network_chunk_index']
+                    if index in chunks:
+                        errors.append(f"Duplicate guest utility network chunk at observer sequence {event['sequence']}")
+                    else:
+                        chunks[index] = command, network
+                    continue
                 commands.append(command)
+                model_results[key] = command, len(network)
                 model_network.extend(network)
                 if not command['persona_matches_baseline']:
                     errors.append(f"Guest Windows persona changed before invocation at observer sequence {event['sequence']}")
                 errors.extend(command['errors'])
+                if command['network_events_truncated']:
+                    errors.append(f"Guest Windows utility network observations truncated: {command['command']}")
             except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
                 errors.append(f"Rejected malformed guest utility record at observer sequence {event['sequence']}")
             continue
@@ -156,6 +170,19 @@ def project_trace(events: list[dict], *, guest_tools=None, persona_sha256='') ->
             commands.extend(engine_command_events([event]))
         except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
             errors.append(f"Rejected malformed engine record at observer sequence {event['sequence']}")
+    for key, chunks in network_chunks.items():
+        if key not in model_results:
+            errors.append(f'Orphaned guest utility network chunks: {key[1]}')
+    for key, (result, initial_count) in model_results.items():
+        chunks = network_chunks.get(key, {})
+        valid = (set(chunks) == set(range(result['network_chunk_count'])) and all(
+            c['persona_sha256'] == result['persona_sha256'] and c['pe_sha256'] == result['pe_sha256'] and
+            c['network_chunk_count'] == result['network_chunk_count'] and c['network_event_count'] == result['network_event_count']
+            for c, _ in chunks.values()) and initial_count + sum(len(n) for _, n in chunks.values()) == result['network_event_count'])
+        if not valid:
+            errors.append(f'Missing or inconsistent guest utility network chunks: {key[1]}')
+        for index in sorted(chunks):
+            model_network.extend(chunks[index][1])
     commands.sort(key=lambda c: c['observer_sequence'])
     if guest_tools:
         reported = {c['guest_pid'] for c in commands if c['capture'] == 'guest_windows_emulation'}
@@ -331,6 +358,7 @@ def save_script_run(report: dict, root: Path) -> Path:
                'engine_report': 'engine-report.json', 'engine_report_size': len(payload),
                'engine_report_sha256': hashlib.sha256(payload).hexdigest(),
                'network_attempts': report['network_events'][:1000],
+               'network_attempts_omitted': max(0, len(report['network_events']) - 1000),
                'run_manifest': {'probe_only': False, 'execution_boundary': 'docker-desktop-linux-vm',
                                 'network_mode': 'none', 'image': report['image'], 'image_id': report['image_id'],
                                 'configuration_checks': report['configuration_checks'],

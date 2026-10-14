@@ -110,6 +110,22 @@ class PowerShellContainerTests(unittest.TestCase):
         self.assertIn('error-marker', report['console_output']['stderr'])
         self.assertTrue(any('code 13' in error for error in report['errors']))
 
+    def test_background_thread_group_exit_is_fully_reaped(self):
+        source = '''
+Add-Type -TypeDefinition 'using System; using System.Threading; using System.Runtime.InteropServices; public static class ExitGroupFixture { [DllImport("libc")] static extern int getpid(); public static void Start() { for (int i=0;i<8;i++) { var thread=new Thread(() => { while(true) { getpid(); Thread.Sleep(1); } }); thread.IsBackground=true; thread.Start(); } } }'
+[ExitGroupFixture]::Start()
+Write-Output 'exit-group-completed'
+exit 0
+'''
+        for attempt in range(2):
+            with self.subTest(attempt=attempt):
+                report = self.execute(source)
+                self.assertEqual(report['errors'], [])
+                self.assertTrue(report['observer_trace_complete'])
+                self.assertEqual(report['guest_exit_code'], 0)
+                self.assertIn('exit-group-completed', report['console_output']['stdout'])
+                self.assertEqual(report['observer_events'][-1]['event'], 'observer_finished')
+
     def test_no_host_files_environment_or_docker_socket_and_readonly_root(self):
         with tempfile.TemporaryDirectory() as directory:
             host_marker = Path(directory) / 'host-only-marker.txt'

@@ -49,8 +49,11 @@ class _GuestApiMemoryDenied(BaseException):
 
 
 class VirtualProcessBridge:
-    def __init__(self, catalog: ArtifactCatalog):
+    def __init__(self, catalog: ArtifactCatalog,
+                 staged_sources: dict[str, bytes] | None = None):
         self.catalog = catalog
+        self.staged_sources = {key.casefold(): value
+                               for key, value in (staged_sources or {}).items()}
         self.events: list[dict] = []
         self.unsupported: list[str] = []
         self.captured_bytes = 0
@@ -833,12 +836,12 @@ class VirtualProcessBridge:
             event["reason"] = "executable absent from guest filesystem"
             self.unsupported.append(f"{api_name}: executable unavailable in guest: {path}")
             return 2
-        if file.config:
+        data = self._guest_image_bytes(file)
+        if data is None:
             emu.set_last_error(50)
-            event["reason"] = "configured executable mapping unsupported"
-            self.unsupported.append(f"{api_name}: configured executable mapping {path}")
+            event["reason"] = "executable source not verified"
+            self.unsupported.append(f"{api_name}: executable source not verified {path}")
             return 1
-        data = file.data.getvalue() if isinstance(file.data, io.BytesIO) else file.data
         try:
             info = inspect_pe_header(data or b"", ntpath.basename(path))
         except InvalidSample:
@@ -879,8 +882,7 @@ class VirtualProcessBridge:
         emu.set_last_error(0)
         return 33  # A WinExec return above 31 denotes success.
 
-    @staticmethod
-    def _guest_executable(emu, application: str):
+    def _guest_executable(self, emu, application: str):
         """Resolve only files already present in the guest filesystem."""
         names = [application]
         if not ntpath.splitext(application)[1]:
@@ -891,7 +893,8 @@ class VirtualProcessBridge:
             directories = [emu.get_cd()]
         else:
             directories = [emu.get_cd(), r"C:\Windows\System32", r"C:\Windows"]
-        files = {item.path.casefold(): item for item in emu.get_file_manager().files}
+        manager = emu.get_file_manager()
+        files = {item.path.casefold(): item for item in manager.files}
         first = ""
         for directory in directories:
             for name in names:
@@ -899,9 +902,32 @@ class VirtualProcessBridge:
                 if not first:
                     first = path
                 file = files.get(path.casefold())
+                if file is None:
+                    for mapping in getattr(getattr(manager, "file_config", None),
+                                           "files", ()):
+                        if (mapping.mode != "full_path" or
+                                mapping.emu_path.casefold() != path.casefold()):
+                            continue
+                        payload = self.staged_sources.get(str(mapping.path).casefold())
+                        if payload is not None:
+                            file = manager.add_existing_file(path, payload)
+                            files[path.casefold()] = file
+                        break
                 if file is not None:
                     return path, file
         return first, None
+
+    def _guest_image_bytes(self, file) -> bytes | None:
+        if file.config:
+            source = getattr(file.config, "path", None)
+            payload = self.staged_sources.get(str(source).casefold()) if source else None
+            if payload is None:
+                return None
+            # Speakeasy's child loader expects the BytesIO to be populated.
+            # Use the verified worker payload rather than opening a path here.
+            file.data = io.BytesIO(payload)
+            return payload
+        return file.data.getvalue() if isinstance(file.data, io.BytesIO) else file.data
 
     def _create_process(self, emu, api_name, original, params):
         internal = "Internal" in api_name
@@ -929,12 +955,12 @@ class VirtualProcessBridge:
             event["reason"] = "executable absent from guest filesystem"
             self.unsupported.append(f"{api_name}: executable unavailable in guest: {path}")
             return 0
-        if file.config:
+        data = self._guest_image_bytes(file)
+        if data is None:
             emu.set_last_error(50)
-            event["reason"] = "configured executable mapping unsupported"
-            self.unsupported.append(f"{api_name}: configured executable mapping {path}")
+            event["reason"] = "executable source not verified"
+            self.unsupported.append(f"{api_name}: executable source not verified {path}")
             return 0
-        data = file.data.getvalue() if isinstance(file.data, io.BytesIO) else file.data
         try:
             info = inspect_pe_header(data or b"", ntpath.basename(path))
         except InvalidSample:

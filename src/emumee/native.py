@@ -27,6 +27,8 @@ from .crt_startup import CRTStartup
 from .winenvironment import GuestEnvironmentBlocks
 from .heap_checks import GuestHeapChecks
 from .cpu import VirtualCPU
+from .identity import GuestIdentity
+from .guest_programs import hostname_exe
 from .network import NetworkBridge
 from .pe import InvalidSample, SampleInfo, inspect_pe
 from .persona import make_speakeasy_config, materialize_virtual_files
@@ -661,6 +663,16 @@ def run_native(
             "mode": "full_path", "emu_path": guest_path, "path": str(host_path)
         })
         persona_sources[str(host_path)] = persona["virtual_files"][index]["text"].encode("utf-8")
+    program_dir = run_dir / "persona-programs"
+    program_dir.mkdir(parents=True, exist_ok=True)
+    hostname_path = program_dir / "hostname.exe"
+    hostname_bytes = hostname_exe(info.architecture == "x64")
+    hostname_path.write_bytes(hostname_bytes)
+    cfg["filesystem"]["files"].insert(0, {
+        "mode": "full_path", "emu_path": r"C:\Windows\System32\hostname.exe",
+        "path": str(hostname_path),
+    })
+    persona_sources[str(hostname_path)] = hostname_bytes
     input_dir = run_dir / "inputs"
     input_dir.mkdir(parents=True, exist_ok=True)
     mapped_guest_paths: set[str] = set()
@@ -702,12 +714,13 @@ def run_native(
     dll_init_events: list[dict] = _PositionedEvents(se, event_sequence)
     clock = VirtualClock(persona)
     cpu = VirtualCPU(persona, clock)
+    guest_identity = GuestIdentity(persona)
     virtual_files = VirtualFileBridge(persona["current_dir"], catalog, persona_sources,
                                     clock.filetime_ticks(),
                                     desktop_directories(persona["user_name"]))
     bridge = NetworkBridge(catalog, virtual_files)
     virtual_registry = VirtualRegistryBridge(catalog)
-    virtual_process = VirtualProcessBridge(catalog)
+    virtual_process = VirtualProcessBridge(catalog, persona_sources)
     for observer in (bridge, virtual_files, virtual_registry, virtual_process):
         observer.events = _PositionedEvents(se, event_sequence)
     console_output = ConsoleOutput()
@@ -776,6 +789,7 @@ def run_native(
                         "comctl32", "ordinal_17", argc=0)
         clock.install(se)
         cpu.install(se)
+        guest_identity.install(se)
         loaded_guest_dlls: dict[tuple[int, str], object] = {}
         guest_dll_references: dict[int, int] = {}
         guest_dll_sizes: dict[int, int] = {}

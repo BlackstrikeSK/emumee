@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,13 +15,161 @@ from speakeasy.windows.regman import RegistryManager
 from speakeasy.windows.fileman import File as GuestFile
 
 from emumee.artifacts import ArtifactCatalog
+from emumee.guest_programs import hostname_exe
+from emumee.identity import GuestIdentity
+from emumee.native import run_native
+from emumee.pe import inspect_pe
 from emumee.persona import load_persona, make_speakeasy_config, materialize_virtual_files
 from emumee.persona_content import desktop_directories
 from emumee.virtualfs import VirtualFileBridge
 from emumee.virtualprocess import VirtualProcessBridge
+from tests.fixtures.build_native import (build as build_test_pe,
+                                         build_host_process_probe,
+                                         build_host_winexec_probe)
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_computer_and_user_name_api_sizes_and_formats(self):
+        persona = load_persona(None)
+        bridge = GuestIdentity(persona)
+        memory = {0x1000: (2).to_bytes(4, "little")}
+        errors = []
+        emu = SimpleNamespace(
+            mem_read=lambda ptr, size: memory[ptr][:size],
+            mem_write=lambda ptr, data: memory.__setitem__(ptr, data),
+            set_last_error=errors.append,
+        )
+        self.assertEqual(bridge._computer_name(
+            emu, "kernel32.GetComputerNameW", None, [0x2000, 0x1000]), 0)
+        self.assertEqual(errors[-1], 111)
+        self.assertEqual(int.from_bytes(memory[0x1000], "little"), len(persona["hostname"]) + 1)
+        self.assertNotIn(0x2000, memory)
+        self.assertEqual(bridge._computer_name(
+            emu, "kernel32.GetComputerNameW", None, [0x2000, 0x1000]), 1)
+        self.assertEqual(memory[0x2000], (persona["hostname"] + "\0").encode("utf-16-le"))
+        self.assertEqual(int.from_bytes(memory[0x1000], "little"), len(persona["hostname"]))
+
+        memory[0x1000] = (0).to_bytes(4, "little")
+        self.assertEqual(bridge._computer_name_ex(
+            emu, "kernel32.GetComputerNameExA", None, [3, 0, 0x1000]), 0)
+        self.assertEqual(errors[-1], 234)
+        self.assertEqual(int.from_bytes(memory[0x1000], "little"), len(persona["hostname"]) + 1)
+        self.assertEqual(bridge._computer_name_ex(
+            emu, "kernel32.GetComputerNameExA", None, [3, 0x3000, 0x1000]), 1)
+        self.assertEqual(memory[0x3000], persona["hostname"].lower().encode() + b"\0")
+        self.assertEqual(bridge._computer_name_ex(
+            emu, "kernel32.GetComputerNameExA", None, [8, 0x3000, 0x1000]), 0)
+        self.assertEqual(errors[-1], 87)
+
+        memory[0x1000] = (2).to_bytes(4, "little")
+        self.assertEqual(bridge._user_name(
+            emu, "advapi32.GetUserNameW", None, [0x4000, 0x1000]), 0)
+        self.assertEqual(errors[-1], 122)
+        self.assertEqual(int.from_bytes(memory[0x1000], "little"), len(persona["user_name"]) + 1)
+        self.assertEqual(bridge._user_name(
+            emu, "advapi32.GetUserNameW", None, [0x4000, 0x1000]), 1)
+        self.assertEqual(memory[0x4000], (persona["user_name"] + "\0").encode("utf-16-le"))
+        self.assertEqual(int.from_bytes(memory[0x1000], "little"), len(persona["user_name"]) + 1)
+
+    def test_guest_pe_calls_computer_name_hook_on_both_architectures(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                base = 0x400000 if arch == "x86" else 0x140000000
+                image = bytearray(build_test_pe(machine))
+                image[0x470:0x490] = (b"\0\0GetComputerNameW\0").ljust(0x20, b"\0")
+                struct.pack_into("<I", image, 0x5E0, 64)
+                if arch == "x64":
+                    code = bytearray(b"\x48\x83\xec\x28\x48\xb9" +
+                                     struct.pack("<Q", base + 0x21A0) + b"\x48\xba" +
+                                     struct.pack("<Q", base + 0x21E0))
+                    code.extend(b"\xff\x15" + struct.pack(
+                        "<i", 0x2040 - (0x1000 + len(code) + 6)))
+                    code.extend(b"\x48\x83\xc4\x28\xc3")
+                else:
+                    code = (b"\x68" + struct.pack("<I", base + 0x21E0) +
+                            b"\x68" + struct.pack("<I", base + 0x21A0) +
+                            b"\xff\x15" + struct.pack("<I", base + 0x2040) + b"\xc3")
+                image[0x200:0x200 + len(code)] = code
+                name = f"computer_name_{arch}.exe"
+                payload = bytes(image)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, name), load_persona(None),
+                                    root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event.get("api_name") == "kernel32.GetComputerNameW"
+                                    and event.get("ret_val") == "0x1"
+                                    for entry in report["entry_points"]
+                                    for event in entry["events"]))
+
+    def test_staged_guest_pe_runs_as_child_without_host_launch(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                persona = load_persona(None)
+                child = build_test_pe(machine)
+                source = root / "verified-child.exe"
+                source.write_bytes(child)
+                parent = bytearray(build_host_process_probe(machine, "unused-marker"))
+                guest_path = persona["current_dir"] + r"\helper.exe"
+                parent[0x500:0x700] = b"\0" * 0x200
+                parent[0x700:0x900] = b"\0" * 0x200
+                parent[0x500:0x500 + len(guest_path.encode("utf-16-le")) + 2] = (
+                    guest_path + "\0").encode("utf-16-le")
+                parent[0x700:0x700 + len(guest_path.encode("utf-16-le")) + 2] = (
+                    guest_path + "\0").encode("utf-16-le")
+                payload = bytes(parent)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"), persona,
+                                    root / "run", [], 10, 100_000,
+                                    bundle_files=[("helper.exe", source, child)])
+                self.assertFalse(result["errors"])
+                report = json.loads(((root / "run") /
+                                     result["engine_report"]).read_text())
+                created = [item for item in report["virtual_process_events"]
+                           if item["event"] == "virtual_process_create"]
+                self.assertEqual(len(created), 1)
+                self.assertTrue(created[0]["success"])
+                self.assertEqual(len(report["entry_points"]), 2)
+
+    def test_default_hostname_program_executes_and_prints_guest_name(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                utility = hostname_exe(arch == "x64")
+                self.assertEqual(inspect_pe(utility, "hostname.exe").architecture, arch)
+                parent = bytearray(build_host_process_probe(machine, "unused-marker"))
+                guest_path = r"C:\Windows\System32\hostname.exe"
+                encoded = (guest_path + "\0").encode("utf-16-le")
+                parent[0x500:0x700] = b"\0" * 0x200
+                parent[0x700:0x900] = b"\0" * 0x200
+                parent[0x500:0x500 + len(encoded)] = encoded
+                parent[0x700:0x700 + len(encoded)] = encoded
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"), persona,
+                                    root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertEqual(result["console_output"]["stdout"], persona["hostname"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertEqual(len(report["entry_points"]), 2)
+                self.assertTrue(any(item["event"] == "virtual_process_create" and
+                                    item["success"] for item in report["virtual_process_events"]))
+
+    def test_winexec_finds_default_hostname_program_by_bare_name(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                parent[0x700:0x70D] = b"hostname.exe\0"
+                payload = bytes(parent)
+                root = Path(directory)
+                persona = load_persona(None)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"), persona,
+                                    root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertEqual(result["console_output"]["stdout"], persona["hostname"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertEqual(len(report["entry_points"]), 2)
     def test_default_guest_has_coherent_files_registry_and_processes(self):
         persona = load_persona(None)
         config = make_speakeasy_config(persona, "sample.exe", 10, 1000)
@@ -93,11 +242,16 @@ class PersonaContentTests(unittest.TestCase):
         files = SimpleNamespace(files=[system_tool, local_tool])
         emu = SimpleNamespace(get_cd=lambda: r"C:\Users\Alex\Downloads",
                               get_file_manager=lambda: files)
-        resolve = VirtualProcessBridge._guest_executable
+        resolve = VirtualProcessBridge(None)._guest_executable
         self.assertEqual(resolve(emu, "helper"), (local_tool.path, local_tool))
         self.assertEqual(resolve(emu, "whoami"), (system_tool.path, system_tool))
         self.assertEqual(resolve(emu, "absent"),
                          (r"C:\Users\Alex\Downloads\absent", None))
+        files.file_config = SimpleNamespace(files=[SimpleNamespace(
+            mode="full_path", emu_path=r"C:\Windows\System32\not-verified.exe",
+            path=r"D:\outside\not-verified.exe")])
+        self.assertEqual(resolve(emu, "not-verified"),
+                         (r"C:\Users\Alex\Downloads\not-verified", None))
 
     def test_default_guest_directories_include_empty_windows_locations(self):
         directories = desktop_directories("Morgan")

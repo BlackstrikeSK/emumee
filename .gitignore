@@ -1,0 +1,35 @@
+# Local environments and Python build products
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+output/
+
+# .NET fixture build products
+bin/
+obj/
+*.pdb
+tests/fixtures/ManagedReflect/EmbeddedPayload.cs
+tests/fixtures/ManagedZipStage/EmbeddedArchive.cs
+
+# Generated, harmless test PE images and analysis outputs
+*.exe
+*.dll
+*.pe
+*.bin
+/*-check/
+/*-regression/
+/*-final/
+/concurrent-*/
+/debug-lifecycle*/
+/PLAN.md
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key

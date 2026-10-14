@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "local-downloader-stage",
+      "request": {
+        "method": "GET",
+        "url": "http://127.0.0.1/payload.bin",
+        "chunked": false,
+        "headers": {},
+        "body_utf8": ""
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "version": "HTTP/1.1",
+        "headers": [["Content-Type", "application/octet-stream"]],
+        "body_utf8": "harmless fixture payload\n"
+      }
+    },
+    {
+      "id": "exact-post-stage",
+      "request": {
+        "method": "POST",
+        "url": "https://analysis.example.test/submit",
+        "chunked": false,
+        "headers": {"Content-Type": "application/octet-stream", "X-Stage": "one"},
+        "body_base64": "cGluZw=="
+      },
+      "response": {
+        "status": 201,
+        "reason": "Created",
+        "version": "HTTP/1.1",
+        "headers": [["Content-Type", "text/plain"], ["X-Reply", "accepted"]],
+        "body_base64": "b2s="
+      }
+    }
+  ]
+}

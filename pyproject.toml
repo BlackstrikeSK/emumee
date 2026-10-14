@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emumee"
+version = "0.1.0"
+description = "User-mode Windows malware analysis by CPU and API emulation"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+  "speakeasy-emulator==2.0.0b8",
+  "pefile>=2024.8.26",
+  "olefile>=0.47,<1",
+  "dnfile>=0.18.0",
+  "dncil>=1.0.2",
+  "pycryptodome>=3.24,<4",
+  "flask>=3.1,<4",
+]
+
+[project.urls]
+Homepage = "https://github.com/BlackstrikeSK/emumee"
+Source = "https://github.com/BlackstrikeSK/emumee"
+Issues = "https://github.com/BlackstrikeSK/emumee/issues"
+
+[project.scripts]
+emumee = "emumee.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

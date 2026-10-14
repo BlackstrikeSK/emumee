@@ -10,6 +10,7 @@ import ipaddress
 import struct
 
 from .persona_content import PROCESS_PATHS, oem_code_page
+from .tokens import GuestTokens
 
 
 _MAX_TEXT = 32 * 1024
@@ -21,6 +22,29 @@ def _align(value: int, boundary: int) -> int:
 
 def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
     """Render one supported command view from the persona snapshot."""
+    if name == "whoami.exe":
+        identity = f"{persona['hostname']}\\{persona['user_name']}"
+        if not arguments:
+            return identity
+        if arguments.casefold() == "/user":
+            return ("\r\nUSER INFORMATION\r\n"
+                    "----------------\r\n"
+                    "User Name                 SID\r\n"
+                    "========================= =============================================\r\n"
+                    f"{identity:25} {persona['user_sid']}\r\n")
+        if arguments.casefold() == "/groups":
+            tokens = GuestTokens(persona)
+            rows = []
+            for sid, encoded in zip(tokens.group_sids, tokens.groups, strict=True):
+                name, domain, _ = tokens.sid_names[encoded]
+                group = f"{domain}\\{name}" if domain else name
+                rows.append(f"{group:32} {sid}\r\n")
+            return ("\r\nGROUP INFORMATION\r\n"
+                    "-----------------\r\n"
+                    "Group Name                       SID\r\n"
+                    "================================ =============================================\r\n"
+                    + "".join(rows))
+        raise ValueError("unsupported whoami arguments")
     if name == "ipconfig.exe":
         adapter = persona["network_adapter"]
         mask = ipaddress.IPv4Network(
@@ -351,9 +375,10 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
     """Return generated guest executables for the current persona snapshot."""
     code_page = oem_code_page(persona["locale"])
     result = {}
-    for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
+    for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe", "getmac.exe",
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe"):
-        commands = ({"ipconfig.exe": ("/all",),
+        commands = ({"whoami.exe": ("/user", "/groups"),
+                     "ipconfig.exe": ("/all",),
                      "arp.exe": ("-a",),
                      "route.exe": ("print", "print -4"),
                      "netsh.exe": ("interface ipv4 show config",

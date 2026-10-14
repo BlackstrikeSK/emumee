@@ -58,7 +58,8 @@ class EnumerationProgramTests(unittest.TestCase):
             for name, arguments in (("route.exe", "print -4"),
                                     ("tzutil.exe", "/g"),
                                     ("arp.exe", "-a"),
-                                    ("netsh.exe", "interface ipv4 show config")):
+                                    ("netsh.exe", "interface ipv4 show config"),
+                                    ("whoami.exe", "/user")):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -82,7 +83,7 @@ class EnumerationProgramTests(unittest.TestCase):
 
     def test_generated_programs_run_as_guest_children_on_both_architectures(self):
         for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
-            for name in ("ipconfig.exe", "systeminfo.exe", "tasklist.exe",
+            for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
                          "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
                          "tzutil.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
@@ -123,6 +124,10 @@ class EnumerationProgramTests(unittest.TestCase):
     def test_outputs_agree_with_other_persona_surfaces(self):
         persona = load_persona(None)
         config = make_speakeasy_config(persona, "parent.exe", 10, 100_000)
+        self.assertEqual(enumeration_text("whoami.exe", persona),
+                         persona["hostname"] + "\\" + persona["user_name"])
+        self.assertIn(persona["user_sid"],
+                      enumeration_text("whoami.exe", persona, "/user"))
         ipconfig = enumeration_text("ipconfig.exe", persona)
         self.assertIn(persona["network_adapter"]["ipv4"], ipconfig)
         self.assertIn(persona["network_adapter"]["gateway"], ipconfig)
@@ -177,6 +182,34 @@ class EnumerationProgramTests(unittest.TestCase):
                         else:
                             self.assertEqual(result["guest_exit_code"], 87)
                             self.assertEqual(result["console_output"]["stdout"], "")
+
+    def test_whoami_user_and_groups_match_guest_token(self):
+        for arch in ("x86", "x64"):
+            for is_admin in (False, True):
+                with self.subTest(arch=arch, admin=is_admin), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    custom = root / "persona.json"
+                    custom.write_text(json.dumps({"hostname": "DESKTOP-CHECK42",
+                                                  "user_name": "Morgan",
+                                                  "user_sid": "S-1-5-21-1-2-3-1001",
+                                                  "user_is_admin": is_admin}), encoding="utf-8")
+                    persona = load_persona(custom)
+                    image = enumeration_programs(arch == "x64", persona)["whoami.exe"]
+                    for index, argument in enumerate(("/user", "/groups", "/priv")):
+                        result = run_native(image, inspect_pe(image, "whoami.exe"), persona,
+                                            root / str(index), [], 10, 100_000,
+                                            guest_args=[argument])
+                        self.assertFalse(result["errors"])
+                        if argument == "/priv":
+                            self.assertEqual(result["guest_exit_code"], 87)
+                            self.assertEqual(result["console_output"]["stdout"], "")
+                        else:
+                            self.assertEqual(result["guest_exit_code"], 0)
+                            self.assertEqual(result["console_output"]["stdout"],
+                                             enumeration_text("whoami.exe", persona, argument))
+                    groups = enumeration_text("whoami.exe", persona, "/groups")
+                    self.assertIn("BUILTIN\\Users", groups)
+                    self.assertEqual("BUILTIN\\Administrators" in groups, is_admin)
 
     def test_non_ascii_owner_uses_persona_console_code_page(self):
         with tempfile.TemporaryDirectory() as directory:

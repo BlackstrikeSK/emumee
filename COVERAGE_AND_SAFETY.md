@@ -31,6 +31,13 @@ Microsoft binaries staged in earlier compatibility probes. They do not read or
 launch host binaries, and process or network changes made after run setup are
 not reflected in their initial snapshots.
 
+The default `whoami.exe` now uses the same generated, argument-aware guest PE
+builder. Its default view still reports the persona computer and user; `/user`
+reports the configured SID and `/groups` lists the groups in the guest token
+model, including Administrators only for an admin persona. Unsupported `/priv`
+exits 87 without output. The earlier small `GetUserNameA` PE remains a test
+fixture, but is no longer installed as the default guest `whoami.exe`.
+
 ## 2026-10-14 native byte comparison and pantry revision
 
 The default persona now has 54 virtual files. `pantry-inventory-updated.csv` changes the milk count from zero to one while keeping the file the same byte length as `pantry-inventory.csv`; both follow custom guest user names. Locally staged Microsoft x86 and x64 `comp.exe` programs, companion `ulib.dll` binaries, and MUI resource files complete `/M /D` comparisons of the two guest files. Both print `Compare error at OFFSET 18`, `file1 = 48`, and `file2 = 49`, with guest exit 1, empty stderr, no reported emulator errors, and no signature-only calls. A read-only host `comp.exe` comparison of the same bytes returned the same offset and values. Same-file `/M` controls print `Files compare OK` and exit 0 on both architectures; missing-file controls print an error and exit 2. The six reports are `output/probe-comp-pantry-x64`, `output/probe-comp-pantry-x86`, `output/probe-comp-x64-same`, `output/probe-comp-x86-same`, `output/probe-comp-x64-missing`, and `output/probe-comp-x86-missing`. Microsoft binaries are local inputs and are not distributed.

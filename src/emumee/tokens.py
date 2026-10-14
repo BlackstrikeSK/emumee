@@ -85,10 +85,10 @@ class GuestTokens:
     def __init__(self, persona: dict):
         self.persona = persona
         self.sid = encode_sid(persona['user_sid'])
-        groups = ['S-1-1-0', 'S-1-5-11', 'S-1-5-4', 'S-1-5-32-545']
+        self.group_sids = ['S-1-1-0', 'S-1-5-11', 'S-1-5-4', 'S-1-5-32-545']
         if persona['user_is_admin']:
-            groups.append('S-1-5-32-544')
-        self.groups = [encode_sid(value) for value in groups]
+            self.group_sids.append('S-1-5-32-544')
+        self.groups = [encode_sid(value) for value in self.group_sids]
         self.sid_names = {
             self.sid: (persona['user_name'], persona['hostname'], 1),
             encode_sid('S-1-1-0'): ('Everyone', '', 5),

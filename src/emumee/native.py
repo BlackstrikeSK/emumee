@@ -30,7 +30,7 @@ from .network_adapter import GuestNetworkAdapter
 from .feature_config import GuestFeatureConfiguration
 from .cpu import VirtualCPU
 from .identity import GuestIdentity
-from .guest_programs import hostname_exe, whoami_exe
+from .guest_programs import hostname_exe
 from .enumeration_programs import enumeration_programs
 from .network import NetworkBridge
 from .pe import InvalidSample, SampleInfo, inspect_pe
@@ -678,7 +678,6 @@ def run_native(
     program_dir.mkdir(parents=True, exist_ok=True)
     generated_programs = {
         "hostname.exe": hostname_exe(info.architecture == "x64"),
-        "whoami.exe": whoami_exe(info.architecture == "x64", persona["hostname"]),
     }
     generated_programs.update(enumeration_programs(
         info.architecture == "x64", persona))

@@ -4,14 +4,14 @@ Emumee runs native child programs only from verified guest bytes. It never
 launches a host Windows utility to answer a guest command. The default guest
 utilities below are generated PEs, not copies of Microsoft binaries. Their
 output is a snapshot of the configured persona at run setup; later guest
-changes may not appear in that output. The eight newer enumeration utilities
-reject unmodeled arguments with exit code 87; the older `hostname.exe` and
-`whoami.exe` do not yet parse switches. Guest commands never change host state.
+changes may not appear in that output. The nine argument-aware enumeration
+utilities reject unmodeled arguments with exit code 87; `hostname.exe` does
+not yet parse switches. Guest commands never change host state.
 
 | Guest program | Included by default | Modeled read commands |
 | --- | --- | --- |
 | `hostname.exe` | Yes | Default hostname |
-| `whoami.exe` | Yes | Default user name |
+| `whoami.exe` | Yes | Default user name, `/user`, `/groups` from the modeled token |
 | `ipconfig.exe` | Yes | Default, `/all` |
 | `getmac.exe` | Yes | Default adapter MAC and transport name |
 | `systeminfo.exe` | Yes | Default system identity and resources |

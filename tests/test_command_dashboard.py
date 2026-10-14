@@ -1,6 +1,7 @@
 """Command observations retain evaluated data and report integrity in the UI."""
 
 import hashlib
+import html
 import json
 import tempfile
 import unittest
@@ -17,6 +18,47 @@ def probe_report(events):
 
 
 class CommandDashboardTests(unittest.TestCase):
+    def test_display_json_preserves_unicode_and_safely_renders_punctuation(self):
+        value = "Café 日本語 😀 'quoted' <script>alert(1)</script> & " + r"\u0041"
+        event = {"event": "powershell_command_invocation", "command": "Write-Output",
+                 "bound_parameters": {"InputObject": value}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = save_probe_run(probe_report([event]), root, "fixed benign source")
+            page = create_app(root).test_client().get(f"/runs/{run.name}")
+            self.assertEqual(page.status_code, 200)
+            markup = page.get_data(as_text=True)
+            self.assertNotIn("<script>alert(1)</script>", markup)
+            self.assertIn("&lt;script&gt;", markup)
+            display = html.unescape(markup)
+            self.assertIn("Café 日本語 😀 'quoted' <script>alert(1)</script> &", display)
+            self.assertIn(r"\\u0041", display)
+            for escaped in (r"\u00e9", r"\u003c", r"\u0027", r"\ud83d"):
+                self.assertNotIn(escaped, display)
+
+    def test_breakpoint_interruption_is_explicit_in_the_verified_report_and_page(self):
+        report = probe_report([])
+        report["probe"]["capture_integrity_events"] = [
+            {"event": "powershell_capture_breakpoint_update", "update": "Disabled",
+             "scope": "breakpoint-tamper", "breakpoint_id": 2,
+             "timestamp_utc": "2026-10-14T20:32:43Z"},
+            {"event": "powershell_capture_breakpoint_update", "update": "Removed",
+             "scope": "breakpoint-tamper", "breakpoint_id": 2,
+             "timestamp_utc": "2026-10-14T20:32:44Z"}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = save_probe_run(report, root, "fixed benign source")
+            engine = json.loads((run / "engine-report.json").read_text())
+            self.assertEqual(engine["command_capture"]["observer_state"], "interrupted")
+            page = create_app(root).test_client().get(f"/runs/{run.name}")
+            self.assertEqual(page.status_code, 200)
+            html = page.get_data(as_text=True)
+            self.assertIn("Command observer interrupted", html)
+            self.assertIn("Subsequent invocations may be absent", html)
+            self.assertIn("Disabled", html)
+            self.assertIn("Removed", html)
+            self.assertIn("breakpoint-tamper", html)
+
     def test_structured_parameters_are_escaped_and_capture_limits_are_visible(self):
         event = {"event": "powershell_command_invocation", "command": "Write-Output",
                  "phase": "before_execution", "capture": "engine_debugger_command_processor",

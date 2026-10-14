@@ -26,24 +26,56 @@ using System.Management.Automation.Runspaces;
 using System.Reflection;
 using System.Collections;
 public static class EmumeeCommandCapture {
-    public static readonly List<object> Events = new List<object>();
-    public static int DroppedEvents;
-    public static object[] Run(string script) {
+    private static readonly List<object> Events = new List<object>();
+    private static readonly List<object> IntegrityEvents = new List<object>();
+    private static readonly HashSet<int> MonitoredBreakpoints = new HashSet<int>();
+    private static int droppedEvents;
+    private static string captureScope;
+    public static object[] GetEvents() { return Events.ToArray(); }
+    public static object[] GetIntegrityEvents() { return IntegrityEvents.ToArray(); }
+    public static int DroppedEvents { get { return droppedEvents; } }
+    public static object[] Run(string script, string scope) {
+        captureScope = scope;
         using (var runspace = RunspaceFactory.CreateRunspace()) {
             runspace.Open();
             runspace.Debugger.DebuggerStop += OnStop;
             using (var ps = PowerShell.Create()) {
                 ps.Runspace = runspace;
-                ps.AddScript("Set-PSBreakpoint -Command '*' -Action { break } | Out-Null");
-                ps.Invoke();
+                ps.AddScript("Set-PSBreakpoint -Command '*' -Action { break }");
+                var setup = ps.Invoke();
+                if (ps.HadErrors || setup.Count != 1) throw new Exception("Capture breakpoint setup failed");
+                var breakpoint = (Breakpoint)setup[0].BaseObject;
+                MonitoredBreakpoints.Add(breakpoint.Id);
+                runspace.Debugger.BreakpointUpdated += OnBreakpointUpdated;
                 ps.Commands.Clear();
                 ps.AddScript(script);
                 var values = new List<object>();
                 foreach (var value in ps.Invoke()) values.Add(value.BaseObject);
                 if (ps.HadErrors) throw new Exception(ps.Streams.Error[0].ToString());
+                var remainsEnabled = false;
+                foreach (var current in runspace.Debugger.GetBreakpoints()) {
+                    if (current.Id == breakpoint.Id && current.Enabled) remainsEnabled = true;
+                }
+                if (!remainsEnabled) RecordIntegrity(breakpoint.Id, "MissingOrDisabledAtEnd");
+                MonitoredBreakpoints.Remove(breakpoint.Id);
+                runspace.Debugger.BreakpointUpdated -= OnBreakpointUpdated;
                 return values.ToArray();
             }
         }
+    }
+    private static void OnBreakpointUpdated(object sender, BreakpointUpdatedEventArgs args) {
+        if (MonitoredBreakpoints.Contains(args.Breakpoint.Id))
+            RecordIntegrity(args.Breakpoint.Id, args.UpdateType.ToString());
+    }
+    private static void RecordIntegrity(int id, string update) {
+        if (IntegrityEvents.Count >= 128) { droppedEvents++; return; }
+        IntegrityEvents.Add(new Dictionary<string, object> {
+            ["event"] = "powershell_capture_breakpoint_update",
+            ["timestamp_utc"] = DateTime.UtcNow.ToString("O"),
+            ["scope"] = captureScope,
+            ["breakpoint_id"] = id,
+            ["update"] = update
+        });
     }
     private static object Read(object target, string name) {
         if (target == null) return null;
@@ -63,12 +95,13 @@ public static class EmumeeCommandCapture {
         args.ResumeAction = DebuggerResumeAction.Continue;
         if (call.MyCommand == null || actual == null || actual.MyCommand == null ||
             String.IsNullOrEmpty(call.MyCommand.Name) || call.MyCommand.Name != actual.MyCommand.Name) return;
-        if (Events.Count >= 2000) { DroppedEvents++; return; }
+        if (Events.Count >= 2000) { droppedEvents++; return; }
         var native = processor.GetType().Name == "NativeCommandProcessor";
         var binder = native ? Read(processor, "NativeParameterBinderController") : null;
         Events.Add(new Dictionary<string, object> {
             ["event"] = "powershell_command_invocation",
             ["sequence"] = Events.Count + 1,
+            ["scope"] = captureScope,
             ["timestamp_utc"] = DateTime.UtcNow.ToString("O"),
             ["phase"] = "before_execution",
             ["capture"] = "engine_debugger_command_processor",
@@ -123,7 +156,15 @@ Trace-Command -Name CommandDiscovery,ParameterBinding -FilePath /work/trace.log 
     & /bin/echo 'space value' 'quote"value' '' | Out-Null
 }
 '@
-$values = @([EmumeeCommandCapture]::Run($fixtureScript))
+$values = @([EmumeeCommandCapture]::Run($fixtureScript, 'baseline'))
+$tamperScript = @'
+Write-Output ('before-' + 'disable')
+Get-PSBreakpoint | Disable-PSBreakpoint
+Write-Output ('after-' + 'disable')
+Get-PSBreakpoint | Remove-PSBreakpoint
+Write-Output ('after-' + 'remove')
+'@
+$tamperValues = @([EmumeeCommandCapture]::Run($tamperScript, 'breakpoint-tamper'))
 $client = [System.Net.Sockets.TcpClient]::new()
 $connected = $false
 try {
@@ -137,7 +178,9 @@ $status = [IO.File]::ReadAllText('/proc/self/status')
     powershell_version = $PSVersionTable.PSVersion.ToString()
     platform = $PSVersionTable.Platform
     values = $values
-    command_events = @([EmumeeCommandCapture]::Events.ToArray())
+    command_events = @([EmumeeCommandCapture]::GetEvents())
+    capture_integrity_events = @([EmumeeCommandCapture]::GetIntegrityEvents())
+    tamper_values = $tamperValues
     dropped_command_events = [EmumeeCommandCapture]::DroppedEvents
     network_connected = $connected
     root_write_succeeded = $rootWrite
@@ -224,6 +267,9 @@ def probe(image: str, resume_container: str | None = None) -> dict:
             raise RuntimeError("Fixed probe returned invalid JSON: " + repr(raw[:1000])) from None
         expected = ["runtime-resolved-argument", "nested-resolved-argument", "native-resolved-argument"]
         commands = result["command_events"]
+        integrity_events = result["capture_integrity_events"]
+        tamper_updates = {event["update"] for event in integrity_events
+                         if event["scope"] == "breakpoint-tamper"}
         def bound_input(value: list[str]) -> bool:
             return any(event["command"] == "Write-Output" and
                        event["bound_parameters"].get("InputObject") == value for event in commands)
@@ -245,6 +291,12 @@ def probe(image: str, resume_container: str | None = None) -> dict:
             "native_argument_boundaries": any(event["native_arguments"] == ["space value", 'quote"value', ""]
                                               for event in commands),
             "no_dropped_commands": result["dropped_command_events"] == 0,
+            "tamper_fixture_executed": result["tamper_values"] == ["before-disable", "after-disable", "after-remove"],
+            "breakpoint_disable_detected": "Disabled" in tamper_updates,
+            "breakpoint_remove_detected": "Removed" in tamper_updates,
+            "final_breakpoint_loss_detected": "MissingOrDisabledAtEnd" in tamper_updates,
+            "baseline_monitor_unchanged": not any(event["scope"] == "baseline" for event in integrity_events),
+            "capture_gap_verified": not bound_input(["after-disable"]) and not bound_input(["after-remove"]),
         }
         return {"image": image, "image_id": image_info["Id"],
                 "execution_started_at": started_at, "execution_finished_at": finished_at,

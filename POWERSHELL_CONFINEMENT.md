@@ -68,6 +68,14 @@ value types are marked. Breakpoints can still be removed or bypassed, and
 DebuggerHidden paths, new runspaces, and native descendants are not completely
 traced. This remains a fixed-probe tool, not an arbitrary-script analysis mode.
 
+A separate benign tamper fixture disables and removes the observer breakpoint.
+The observer records these updates and checks whether the breakpoint remains
+enabled at the end. The fixture confirms that commands after disabling it are
+absent from the invocation log; the report and dashboard explicitly mark this
+interruption. This detects the tested interruption, without establishing a
+tamper-resistant observer. Evidence is saved in
+`output/powershell-capture-integrity-probe/probe.json`.
+
 Use `--dashboard-root <directory>` on the probe tool to save a partial run in
 the usual integrity-checked report format. The dashboard's Commands section
 shows these records with capture limitations, alongside guest native process

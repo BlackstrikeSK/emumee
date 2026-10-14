@@ -18,10 +18,15 @@ def save_probe_run(report: dict, root: Path, source: str) -> Path:
     now = dt.datetime.now(dt.timezone.utc)
     run_id = now.strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
     limitations = report["limitations"]
+    integrity_events = probe.get("capture_integrity_events", [])
+    interrupted = any(event.get("update") in {"Disabled", "Removed", "MissingOrDisabledAtEnd"}
+                      for event in integrity_events)
     engine = {"command_events": probe["command_events"],
               "command_capture": {"complete": False,
                                   "source": "engine_debugger_command_processor",
                                   "dropped_events": probe["dropped_command_events"],
+                                  "observer_state": "interrupted" if interrupted else "no_interruption_observed",
+                                  "integrity_events": integrity_events,
                                   "limitations": limitations},
               "fixed_probe_source": source, "probe_evidence": report}
     payload = json.dumps(engine, indent=2).encode("utf-8")

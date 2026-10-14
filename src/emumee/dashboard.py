@@ -21,7 +21,7 @@ from .safeio import read_regular_file
 from .networkfixtures import MAX_FIXTURE_FILE, parse_network_fixtures
 
 
-from .dashboard_ui import STYLE, INDEX, COMPARE, DETAIL, ERROR, ui_number, ui_datetime
+from .dashboard_ui import STYLE, INDEX, COMPARE, DETAIL, ERROR, ui_number, ui_datetime, ui_json
 
 
 def _run_dir(root: Path, run_id: str) -> Path:
@@ -322,6 +322,7 @@ def create_app(root: Path) -> Flask:
     app = Flask(__name__)
     app.jinja_env.filters["ui_number"] = ui_number
     app.jinja_env.filters["ui_datetime"] = ui_datetime
+    app.jinja_env.filters["ui_json"] = ui_json
     app.config["MAX_CONTENT_LENGTH"] = 1024
     app.config["TRUSTED_HOSTS"] = ["localhost", "127.0.0.1"]
 

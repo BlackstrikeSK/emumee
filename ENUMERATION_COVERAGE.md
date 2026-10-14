@@ -26,6 +26,7 @@ never change host state.
 | [`net.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/net-user) | Yes | `user`, `user <persona user>`, `localgroup`, `localgroup administrators`, `localgroup users` |
 | `net1.exe` | Yes | Same modeled local account and group views as `net.exe` |
 | [`sc.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/sc-query) | Yes | `query`, `query state= all`, and named queries for up to three modeled services |
+| [`reg.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg-query) | Yes | Selected `query` forms for guest version, desktop, and WinDefend keys |
 
 ## Tracked gaps
 
@@ -37,9 +38,9 @@ but it is not included by default unless the table above says so.
 | Program | Read use | Data or behavior still needed |
 | --- | --- | --- |
 | [`netstat.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat) | `-ano` | Guest socket, listener, and PID state that changes during the run. |
-| [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with services and device state. |
+| [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Default, `/v` | A guest driver inventory consistent with service, device, and driver file probes. |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | `/query` | A virtual scheduled-task store and query semantics. |
-| `reg.exe` | `query` | General guest registry command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
+| `reg.exe` beyond the listed forms | Other keys, values, and recursive queries | A general guest registry command parser; locally staged Microsoft `reg.exe` already works on some tested keys. |
 | `sc.exe` beyond the listed forms | More query options and service changes | A dynamic Service Control Manager model and parser. |
 
 The included generated `arp.exe -a` uses the broadcast row from the guest
@@ -70,6 +71,12 @@ reported as running when its named process appears in the persona process
 snapshot and it is not disabled. The same entries generate guest service
 registry keys unless a custom registry replaces them. Named `sc query` covers
 the first three services; the list forms cover all configured services.
+
+Generated `reg.exe` reads selected exact query forms from the configured guest
+registry. It includes quoted and unquoted paths for Windows version and desktop
+settings, plus the default WinDefend service key when present. Its values and
+immediate subkeys match the guest registry snapshot. Other keys, `/v` and `/s`
+options, and writes remain unmodeled.
 
 `cmd.exe`, PowerShell, VBScript, JavaScript, and Python are outside this native
 utility inventory. No entry in this file authorizes a guest command to execute

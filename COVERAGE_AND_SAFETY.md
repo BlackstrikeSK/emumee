@@ -3,9 +3,9 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, and `sc.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, and `reg.exe` files
 in guest System32, alongside the
-existing generated `hostname.exe` and `whoami.exe`. The fourteen newer PE instructions call
+existing generated `hostname.exe` and `whoami.exe`. The fifteen newer PE instructions call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; the
 argument dispatchers also call guest `lstrcmpiA`. Their
 output bytes are derived only from the selected persona. Direct guest child
@@ -47,6 +47,12 @@ guest service registry keys. The default list has WinDefend and EventLog.
 Only the first three configured services have named query variants; list
 queries include all. Unsupported `stop` exits 87 without changing service
 state. This is a setup snapshot, not a dynamic Service Control Manager.
+
+Generated `reg.exe` answers selected exact `query` commands from the guest
+registry snapshot, including values and immediate subkeys. Both quoted and
+unquoted common paths were exercised; `reg add` exited 87. The generated
+binary does not query or modify the host registry. A locally staged Microsoft
+`reg.exe` remains a separate compatibility path with broader guest API use.
 
 The default `whoami.exe` now uses the same generated, argument-aware guest PE
 builder. Its default view still reports the persona computer and user; `/user`

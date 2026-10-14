@@ -65,7 +65,8 @@ class EnumerationProgramTests(unittest.TestCase):
                                     ("qwinsta.exe", ""),
                                     ("net.exe", "localgroup administrators"),
                                     ("net1.exe", "user"),
-                                    ("sc.exe", "query WinDefend")):
+                                    ("sc.exe", "query WinDefend"),
+                                    ("reg.exe", r'query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"')):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -93,7 +94,7 @@ class EnumerationProgramTests(unittest.TestCase):
             for name in ("whoami.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
                          "getmac.exe", "arp.exe", "route.exe", "netsh.exe",
                          "tzutil.exe", "query.exe", "quser.exe", "qwinsta.exe",
-                         "net.exe", "net1.exe", "sc.exe"):
+                         "net.exe", "net1.exe", "sc.exe", "reg.exe"):
                 with self.subTest(arch=arch, name=name), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     custom = root / "persona.json"
@@ -448,6 +449,44 @@ class EnumerationProgramTests(unittest.TestCase):
                 self.assertIn("STATE              : 1  STOPPED",
                               enumeration_text("sc.exe", persona,
                                                "query WinDefend"))
+
+    def test_reg_queries_use_persona_registry_and_reject_writes(self):
+        for arch in ("x86", "x64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                custom = root / "persona.json"
+                custom.write_text(json.dumps({"user_name": "Morgan",
+                                              "windows_build": 26100}), encoding="utf-8")
+                persona = load_persona(custom)
+                image = enumeration_programs(arch == "x64", persona)["reg.exe"]
+                commands = (
+                    r'query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"',
+                    r'query "HKCU\Control Panel\Desktop"',
+                    r'query HKLM\SYSTEM\CurrentControlSet\Services\WinDefend',
+                    r'add HKCU\Control Panel\Desktop',
+                )
+                for index, command in enumerate(commands):
+                    if command.startswith('query "'):
+                        guest_args = ["query", command[len('query "'):-1]]
+                    else:
+                        guest_args = command.split()
+                    result = run_native(image, inspect_pe(image, "reg.exe"), persona,
+                                        root / str(index), [], 10, 100_000,
+                                        guest_args=guest_args)
+                    self.assertFalse(result["errors"])
+                    if command.startswith("add"):
+                        self.assertEqual(result["guest_exit_code"], 87)
+                        self.assertEqual(result["console_output"]["stdout"], "")
+                    else:
+                        self.assertEqual(result["guest_exit_code"], 0)
+                        self.assertEqual(result["console_output"]["stdout"],
+                                         enumeration_text("reg.exe", persona, command))
+                version = enumeration_text("reg.exe", persona, commands[0])
+                self.assertIn("CurrentBuild    REG_SZ    26100", version)
+                self.assertIn("RegisteredOwner    REG_SZ    Morgan", version)
+                custom.write_text(json.dumps({"registry_keys": []}), encoding="utf-8")
+                empty = load_persona(custom)
+                self.assertIn("reg.exe", enumeration_programs(arch == "x64", empty))
 
     def test_long_but_valid_process_list_fits_guest_program(self):
         persona = load_persona(None)

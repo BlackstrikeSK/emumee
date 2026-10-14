@@ -66,6 +66,13 @@ DEFAULT_PERSONA = {
         "computer": ["Local Group Policy"],
         "user": ["Local Group Policy"],
     },
+    "device_registration": {
+        "azure_ad_joined": False,
+        "enterprise_joined": False,
+        "domain_joined": False,
+        "workplace_joined": False,
+        "azure_ad_prt": False,
+    },
     "locale": "en-US",
     "timezone": "Eastern Standard Time",
     "utc_offset_minutes": -240,
@@ -196,6 +203,19 @@ def load_persona(path: Path | None) -> dict:
                 raise ValueError("Unknown persona group_policy fields: " +
                                  ", ".join(sorted(unknown_policy)))
             persona["group_policy"].update(policy)
+        custom_registration = "device_registration" in supplied
+        if custom_registration:
+            registration = supplied.pop("device_registration")
+            if not isinstance(registration, dict):
+                raise ValueError("Persona device_registration must be an object")
+            unknown_registration = set(registration) - set(persona["device_registration"])
+            if unknown_registration:
+                raise ValueError("Unknown persona device_registration fields: " +
+                                 ", ".join(sorted(unknown_registration)))
+            persona["device_registration"].update(registration)
+        elif "domain" in supplied:
+            persona["device_registration"]["domain_joined"] = (
+                supplied["domain"] != "WORKGROUP")
         custom_registry = "registry_keys" in supplied
         refresh_registry = not custom_registry
         if "drivers" in supplied and "minifilters" not in supplied:
@@ -266,6 +286,13 @@ def load_persona(path: Path | None) -> dict:
                     for entry in entries) or
                 len({entry.casefold() for entry in entries}) != len(entries)):
             raise ValueError("Persona group_policy entries are invalid")
+    registration = persona["device_registration"]
+    if (any(not isinstance(value, bool) for value in registration.values()) or
+            registration["azure_ad_joined"] and registration["enterprise_joined"] or
+            registration["domain_joined"] and persona["domain"] == "WORKGROUP" or
+            registration["azure_ad_prt"] and not (
+                registration["azure_ad_joined"] or registration["workplace_joined"])):
+        raise ValueError("Persona device_registration fields are inconsistent")
     adapter = persona["network_adapter"]
     if (not isinstance(adapter["guid"], str) or
             not re.fullmatch(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}",

@@ -24,6 +24,7 @@ never change host state.
 | [`driverquery.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery) | Yes | Default, `/v`, `/fo list`, `/fo csv`, `/nh` from configured guest drivers |
 | [`pnputil.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax) | Yes | `/enum-drivers`, legacy `-e`, `/enum-devices`, `/enum-devices /connected`, `/enum-classes` from guest driver packages and devices |
 | [`gpresult.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult) | Yes | `/r`, `/scope user /r`, `/scope computer /r` and the equivalent `/r /scope ...` order from guest applied policy lists |
+| [`dsregcmd.exe`](https://learn.microsoft.com/en-us/entra/identity/devices/troubleshoot-device-dsregcmd) | Yes | `/status` device join, user registration, and SSO state from guest registration fields |
 | [`fltmc.exe`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/development-and-testing-tools) | Yes | Default, `filters`, `instances`, `volumes` from guest minifilters and C: volume |
 | `tasklist.exe` | Yes | Default persona process snapshot and `/svc` service to process view |
 | [`schtasks.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-query) | Yes | Default, `/query`, `/query /fo LIST`, `/query /fo CSV`, and named queries for up to two ASCII task names |
@@ -56,6 +57,7 @@ but it is not included by default unless the table above says so.
 | `wevtutil.exe` beyond the listed forms | `qe`, `gli`, publishers, remote queries, and changes | A guest event record store and live status model; only channel names and configuration are modeled. |
 | `bcdedit.exe` beyond the listed forms | `/enum all`, other identifiers, BCD store paths, and changes | A full guest Boot Configuration Data store; the included PE currently renders two configured active entries. |
 | `gpresult.exe` beyond the listed forms | `/v`, `/z`, `/h`, `/x`, remote targets, and other users | Guest policy settings and RSoP details, report files, and remote policy data are not modeled. |
+| `dsregcmd.exe` beyond the listed fields | Device and tenant details, diagnostics, prerequisites, and join or leave operations | A full guest registration and tenant model; status output currently includes only the modeled state fields. |
 | `driverquery.exe` beyond the listed forms | `/si`, combined flags, and remote queries | Signed driver data, more output modes, and `.sys` guest files remain unmodeled; driver images are not executed. |
 | `schtasks.exe` beyond the listed forms | `/v`, `/xml`, more `/tn` forms, remote queries, and task changes | Task Scheduler APIs and task definition files remain unmodeled. |
 | `reg.exe` beyond the listed forms | `/f`, remote keys, and writes | More guest command parsing; locally staged Microsoft `reg.exe` already works on some tested keys. |
@@ -155,6 +157,12 @@ Generated `gpresult.exe /r` reads the persona's `group_policy` computer and
 user applied-policy lists. The scope forms show only the selected list.
 Remote targets, detailed policy settings, and report file writes exit 87;
 the utility never queries host Group Policy or RSoP data.
+
+Generated `dsregcmd.exe /status` reads only the persona's
+`device_registration` flags. The default workgroup guest reports NO for
+device join, workplace join, and Azure AD PRT. A supplied DNS domain sets
+the default domain-joined flag unless registration is explicitly configured.
+Unsupported changes exit 87 without contacting a host or cloud tenant.
 
 Generated `fltmc.exe` reads the persona's `minifilters` list, whose names must
 refer to running file-system driver records. The same records create guest

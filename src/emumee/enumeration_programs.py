@@ -317,6 +317,31 @@ def enumeration_text(name: str, persona: dict, arguments: str = "") -> str:
                 rows.append("    N/A")
             rows.append("")
         return "\r\n".join(rows) + "\r\n"
+    if name == "dsregcmd.exe":
+        if not arguments:
+            return "Usage: dsregcmd /status\r\n"
+        if arguments.casefold() != "/status":
+            raise ValueError("unsupported dsregcmd arguments")
+        state = persona["device_registration"]
+        def yes_no(value: bool) -> str:
+            return "YES" if value else "NO"
+        rows = ["+----------------------------------------------------------------------+",
+                "| Device State                                                         |",
+                "+----------------------------------------------------------------------+",
+                f"             AzureAdJoined : {yes_no(state['azure_ad_joined'])}",
+                f"          EnterpriseJoined : {yes_no(state['enterprise_joined'])}",
+                f"              DomainJoined : {yes_no(state['domain_joined'])}"]
+        if state["domain_joined"]:
+            rows.append(f"                DomainName : {persona['domain']}")
+        rows.extend(("", "+----------------------------------------------------------------------+",
+                     "| User State                                                           |",
+                     "+----------------------------------------------------------------------+",
+                     f"           WorkplaceJoined : {yes_no(state['workplace_joined'])}",
+                     "", "+----------------------------------------------------------------------+",
+                     "| SSO State                                                            |",
+                     "+----------------------------------------------------------------------+",
+                     f"                AzureAdPrt : {yes_no(state['azure_ad_prt'])}"))
+        return "\r\n".join(rows) + "\r\n"
     if name == "bcdedit.exe":
         argument = arguments.casefold()
         if argument not in {"", "/enum", "/enum active", "/v",
@@ -726,7 +751,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                  "arp.exe", "route.exe", "netsh.exe", "tzutil.exe", "query.exe",
                  "quser.exe", "qwinsta.exe", "net.exe", "net1.exe", "sc.exe",
                  "schtasks.exe", "driverquery.exe", "mountvol.exe", "bcdedit.exe",
-                 "fltmc.exe", "pnputil.exe", "gpresult.exe"):
+                 "fltmc.exe", "pnputil.exe", "gpresult.exe", "dsregcmd.exe"):
         commands = ({"whoami.exe": ("/user", "/groups", "/priv", "/all"),
                      "ipconfig.exe": ("/all",),
                      "tasklist.exe": ("/svc",),
@@ -758,6 +783,7 @@ def enumeration_programs(is_x64: bool, persona: dict) -> dict[str, bytes]:
                                      "/enum-devices /connected", "/enum-classes"),
                      "gpresult.exe": ("/r", "/scope user /r", "/r /scope user",
                                       "/scope computer /r", "/r /scope computer"),
+                     "dsregcmd.exe": ("/status",),
                      "driverquery.exe": ("/v", "/fo list", "/fo csv", "/nh")}.get(name, ()))
         commands = tuple(argument for argument in commands if argument.isascii())
         variants = {argument: enumeration_text(name, render_persona, argument)

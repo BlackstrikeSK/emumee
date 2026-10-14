@@ -16,6 +16,56 @@ from tests.fixtures.build_native import build_host_process_probe, build_host_win
 
 
 class EnumerationProgramTests(unittest.TestCase):
+    def test_dsregcmd_reports_guest_registration_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "persona.json"
+            config.write_text(json.dumps({
+                "domain": "guest.example",
+                "device_registration": {"domain_joined": True,
+                                        "azure_ad_joined": True,
+                                        "azure_ad_prt": True}}), encoding="utf-8")
+            persona = load_persona(config)
+            for is_x64 in (False, True):
+                with self.subTest(arch="x64" if is_x64 else "x86"):
+                    image = enumeration_programs(is_x64, persona)["dsregcmd.exe"]
+                    pe = inspect_pe(image, "dsregcmd.exe")
+                    result = run_native(image, pe, persona, root / f"{is_x64}-status",
+                                        [], 10, 100_000, guest_args=["/status"])
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["guest_exit_code"], 0)
+                    output = result["console_output"]["stdout"]
+                    for value in ("AzureAdJoined : YES", "DomainJoined : YES",
+                                  "DomainName : guest.example", "AzureAdPrt : YES",
+                                  "WorkplaceJoined : NO"):
+                        self.assertIn(value, output)
+                    self.assertNotIn("WORKGROUP", output)
+                    rejected = run_native(image, pe, persona, root / f"{is_x64}-leave",
+                                          [], 10, 100_000, guest_args=["/leave"])
+                    self.assertFalse(rejected["errors"])
+                    self.assertEqual(rejected["guest_exit_code"], 87)
+                    self.assertEqual(rejected["console_output"]["stdout"], "")
+
+    def test_winexec_launches_guest_dsregcmd(self):
+        for machine, arch in ((0x14C, "x86"), (0x8664, "x64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                persona = load_persona(None)
+                parent = bytearray(build_host_winexec_probe(machine, "unused-marker"))
+                parent[0x700:0x900] = b"\0" * 0x200
+                command = b"dsregcmd.exe /status\0"
+                parent[0x700:0x700 + len(command)] = command
+                payload = bytes(parent)
+                root = Path(directory)
+                result = run_native(payload, inspect_pe(payload, "parent.exe"),
+                                    persona, root, [], 10, 100_000)
+                self.assertFalse(result["errors"])
+                self.assertIn("DomainJoined : NO", result["console_output"]["stdout"])
+                report = json.loads((root / result["engine_report"]).read_text())
+                self.assertTrue(any(event["event"] == "virtual_process_create" and
+                                    event["success"] and event["path"].casefold() ==
+                                    r"C:\Windows\System32\dsregcmd.exe".casefold()
+                                    for event in report["virtual_process_events"]))
+
     def test_gpresult_reports_only_guest_applied_policies(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

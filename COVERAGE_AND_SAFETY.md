@@ -3,7 +3,7 @@
 ## 2026-10-14 generated enumeration programs
 
 The default native guest now includes generated x86/x64 `ipconfig.exe`,
-`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `pnputil.exe`, `gpresult.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
+`getmac.exe`, `systeminfo.exe`, `tasklist.exe`, `driverquery.exe`, `pnputil.exe`, `gpresult.exe`, `dsregcmd.exe`, `fltmc.exe`, `wevtutil.exe`, `schtasks.exe`, `arp.exe`, `route.exe`, `netsh.exe`, `netstat.exe`, `mountvol.exe`, `bcdedit.exe`, `tzutil.exe`, `query.exe`, `quser.exe`, `qwinsta.exe`, `net.exe`, `net1.exe`, `sc.exe`, `reg.exe`, and `where.exe` files
 in guest System32, alongside the
 existing generated `hostname.exe` and `whoami.exe`. The generated text PEs call
 guest `GetCommandLineA`, `GetStdHandle`, `WriteFile`, and `ExitProcess`; their
@@ -23,6 +23,9 @@ Unsupported change commands exit 87 without host device access.
 `gpresult.exe /r` and its user or computer scope variants list only the
 persona's applied policy names. Remote queries, detailed reports, and report
 file writes exit 87 without host Group Policy or RSoP access.
+`dsregcmd.exe /status` reports only modeled device join, workplace join, and
+Azure AD PRT state from the persona. Unsupported registration changes exit 87;
+the generated PE does not contact a host or cloud tenant.
 Generated `ipconfig.exe /all` prints the persona's
 hostname, adapter description, MAC address, DHCP flag, IPv4 settings, and DNS
 servers. Bare-name and quoted full-path `WinExec` launches reached that output

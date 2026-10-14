@@ -35,6 +35,22 @@ from tests.fixtures.build_native import (build as build_test_pe,
 
 
 class PersonaContentTests(unittest.TestCase):
+    def test_device_registration_follows_guest_domain_and_rejects_inconsistent_states(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "persona.json"
+            self.assertFalse(load_persona(None)["device_registration"]["domain_joined"])
+            path.write_text(json.dumps({"domain": "office.example"}), encoding="utf-8")
+            self.assertTrue(load_persona(path)["device_registration"]["domain_joined"])
+            for broken in ({"azure_ad_joined": True, "enterprise_joined": True},
+                           {"azure_ad_prt": True},
+                           {"domain_joined": True},
+                           {"workplace_joined": "YES"}):
+                path.write_text(json.dumps({"device_registration": broken}),
+                                encoding="utf-8")
+                with self.subTest(broken=broken), self.assertRaisesRegex(
+                        ValueError, "device_registration"):
+                    load_persona(path)
+
     def test_group_policy_accepts_bounded_local_policy_lists(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "persona.json"

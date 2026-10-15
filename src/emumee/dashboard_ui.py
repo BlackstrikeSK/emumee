@@ -1240,6 +1240,8 @@ DETAIL = COMMON + """
 <div class="evidence-list">{% for command in commands %}<article class="panel"{% if command.sequence %} id="command-{{ command.sequence }}"{% endif %}><h3><code>{{ command.path or command.command }}</code></h3>
 <p class="meta-line">{{ command.capture or 'Recorded command' }} · {{ command.phase or 'Invocation' }}{% if command.sequence %} · sequence {{ command.sequence }}{% endif %}</p>
 {% if command.capture == 'guest_windows_emulation' %}<p class="meta-line">Reported Windows exit {{ command.reported_guest_exit_code }} · Persona {{ 'matches configured baseline' if command.persona_matches_baseline else 'differs from configured baseline' }}</p>{% endif %}
+  {% set has_command_values = command.command_type in ('DotNetProperty','DotNetMethod') or command.command_line or command.bound_parameters or (command.native_arguments is defined and command.native_arguments is not none) or command.unbound_arguments %}
+  {% if has_command_values %}<details class="raw command-values"><summary>Values and call details</summary>{% endif %}
 {% if command.command_line %}<div class="label">Guest command line</div><pre>{{ command.command_line }}</pre>{% endif %}
 {% if command.command_type == 'DotNetProperty' %}<div class="label">Resolved .NET property</div><pre>{{ command.declaring_type }}::{{ command.property_name }}</pre>
   <p class="meta-line">{{ 'Read' if command.operation == 'get' else 'Write' }} · {{ command.access_status }} · {{ 'Static' if command.is_static else 'Instance' }} · {{ command.property_type }}{% if command.target_type %} · receiver {{ command.target_type }}{% endif %} · access {{ command.access_id }} · {{ command.dispatch_route }}</p>
@@ -1261,6 +1263,7 @@ DETAIL = COMMON + """
 {% if command.bound_parameters %}<div class="label">Evaluated parameters</div><pre>{{ command.bound_parameters|ui_json(indent=2) }}</pre>{% endif %}
 {% if command.native_arguments is defined and command.native_arguments is not none %}<div class="label">Native argument array</div><pre>{{ command.native_arguments|ui_json(indent=2) }}</pre>{% endif %}
 {% if command.unbound_arguments %}<div class="label">Unbound arguments</div><pre>{{ command.unbound_arguments|ui_json(indent=2) }}</pre>{% endif %}
+  {% if has_command_values %}</details>{% endif %}
 {% if command.reason %}<p>{{ command.reason }}</p>{% endif %}
 {% if command.source_line %}<details class="raw"><summary>Source expression{% if command.source_line_truncated %} · preview{% endif %}</summary>{% if command.source_line_truncated %}<p class="muted">Source preview truncated from {{ command.source_line_length|ui_number }} UTF-16 units. Evaluated parameters are recorded separately.</p>{% endif %}<pre>{{ command.source_line }}</pre></details>{% endif %}
 <details class="raw"><summary>Full invocation record</summary><pre>{{ command|ui_json(indent=2) }}</pre></details></article>{% endfor %}</div>

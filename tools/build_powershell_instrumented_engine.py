@@ -25,6 +25,19 @@ PATCHES = {
          "            typeof(EmumeeInvocationCapture).GetMethod(nameof(EmumeeInvocationCapture.RecordMethod), StaticFlags);\n\n"
          "        internal static readonly MethodInfo MemberInvocationLoggingOps_LogMemberInvocation ="),),
     ENGINE + "/engine/runtime/Binding/Binders.cs": (
+        ("(t, i) => Expression.Call(t, getter, i).Cast(typeof(object))",
+         "(t, i) => EmumeeInvocationCapture.ObserveIndexer(t, getter, i).Cast(typeof(object))"),
+        ("SafeIndexResult(Expression.Call(target.Expression.Cast(getter.DeclaringType), getter, indexExprs))",
+         "SafeIndexResult(EmumeeInvocationCapture.ObserveIndexer(target.Expression.Cast(getter.DeclaringType), getter, indexExprs))"),
+        ("(t, i, v) => Expression.Call(t, setter, i, v)",
+         "(t, i, v) => EmumeeInvocationCapture.ObserveIndexer(t, setter, i, v)"),
+        ("Expression.Call(target.Expression.Cast(setter.DeclaringType), setter, indexExprs)",
+         "EmumeeInvocationCapture.ObserveIndexer(target.Expression.Cast(setter.DeclaringType), setter, indexExprs)"),
+        ("                                    expr = Expression.Property(targetExpr, propertyAccessor);",
+         "                                    expr = EmumeeInvocationCapture.ObserveProperty(Expression.Property(targetExpr, propertyAccessor), propertyAccessor, targetExpr, \"get\");"),
+        ("                        var e = Expression.Variable(typeof(Exception));\n                        expr = Expression.TryCatch(expr.Cast(typeof(object)),",
+         "                        if (propertyInfo != null) expr = EmumeeInvocationCapture.ObserveProperty(expr, propertyInfo, targetExpr, \"set\");\n\n"
+         "                        var e = Expression.Variable(typeof(Exception));\n                        expr = Expression.TryCatch(expr.Cast(typeof(object)),"),
         ("            Expression call;\n            if (constructorInfo != null)",
          """            // Evaluate each converted argument once, then share the value with
             // observation and invocation. Preserve existing ref temporaries so
@@ -61,6 +74,8 @@ PATCHES = {
             Expression call;
             if (constructorInfo != null)"""),
         ("            // We need to add one expression to log the .NET invocation before actually invoking:",
+         "            call = EmumeeInvocationCapture.ObservePropertyInvocation(call, mi,\n"
+         "                methodInfo == null || methodInfo.IsStatic ? null : PSGetMemberBinder.GetTargetExpr(target, methodInfo.DeclaringType), emumeeArgs);\n\n"
          "            if (temps.Count == 0 && initTemps.Count != 0)\n"
          "            {\n"
          "                call = Expression.Block(call.Type, initTemps.Append(call));\n"
@@ -68,6 +83,14 @@ PATCHES = {
          "            }\n\n"
          "            // We need to add one expression to log the .NET invocation before actually invoking:")),
     ENGINE + "/engine/CoreAdapter.cs": (
+        ("return propertyInfo.GetValue(property.baseObject, null);",
+         "return EmumeeInvocationCapture.GetProperty(propertyInfo, property.baseObject, () => propertyInfo.GetValue(property.baseObject, null));"),
+        ("                    return adapterData.getterDelegate(property.baseObject);",
+         "                    return EmumeeInvocationCapture.GetProperty(propertyInfo, property.baseObject, () => adapterData.getterDelegate(property.baseObject));"),
+        ("                    propertyInfo.SetValue(property.baseObject, setValue, null);",
+         "                    EmumeeInvocationCapture.SetProperty(propertyInfo, property.baseObject, setValue, () => propertyInfo.SetValue(property.baseObject, setValue, null));"),
+        ("                    adapterData.setterDelegate(property.baseObject, setValue);",
+         "                    EmumeeInvocationCapture.SetProperty(propertyInfo, property.baseObject, setValue, () => adapterData.setterDelegate(property.baseObject, setValue));"),
         ("                return ctor.Invoke(arguments);",
          "                EmumeeInvocationCapture.RecordMethod(ctor, null, arguments, \"adapter\", -1);\n"
          "                return ctor.Invoke(arguments);"),

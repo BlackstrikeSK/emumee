@@ -13,6 +13,23 @@ from tools.probe_powershell_exec_observer import command_events, engine_command_
 
 
 class ExecObserverTests(unittest.TestCase):
+    def test_verified_runtime_image_is_reused_and_invalid_cache_is_rejected(self):
+        from unittest.mock import patch
+        from emumee.powershell_capture import observer_image
+        digest=hashlib.sha256(b'pinned-image'+b'observer'+b'engine').hexdigest()
+        base={'RootFS':{'Layers':['base-layer']}}
+        cached={'Id':'immutable-id','Config':{'Labels':{'org.emumee.observer.build':digest}},
+                'RootFS':{'Layers':['base-layer','observer-layer']}}
+        for invalid in (None,'label','layers'):
+            candidate=json.loads(json.dumps(cached))
+            if invalid=='label': candidate['Config']['Labels']={}
+            if invalid=='layers': candidate['RootFS']['Layers']=['other-base']
+            with self.subTest(invalid=invalid),patch('emumee.powershell_capture.docker',side_effect=[json.dumps([base]),json.dumps([candidate])]),patch('emumee.powershell_capture.subprocess.run') as build:
+                if invalid:
+                    with self.assertRaises(RuntimeError): observer_image('pinned-image',b'observer',b'engine')
+                else: self.assertEqual(observer_image('pinned-image',b'observer',b'engine'),'immutable-id')
+                build.assert_not_called()
+
     def test_authenticated_trace_larger_than_four_mib_is_retained_and_still_bounded(self):
         from unittest.mock import patch
         events=[{'event':'observer_ready','sequence':1}]

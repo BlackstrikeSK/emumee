@@ -85,8 +85,23 @@ def engine_command_events(events: list[dict]) -> list[dict]:
                 type(record.get("sequence")) is not int or
                 not 1 <= record["sequence"] <= 2000 or record.get("phase") not in
                 {"command_line_bound", "process_record_bound", "script_arguments_bound",
-                 "method_arguments_bound", "reflection_arguments_supplied"}):
+                 "method_arguments_bound", "reflection_arguments_supplied",
+                 "property_get_started", "property_get_completed", "property_get_failed",
+                 "property_set_started", "property_set_completed", "property_set_failed"}):
             raise ValueError("Guest engine invocation record is malformed")
+        if record['phase'].startswith('property_') or record.get('command_type') == 'DotNetProperty':
+            if (record.get('command_type') != 'DotNetProperty' or record.get('operation') not in {'get','set'} or
+                    record.get('access_status') not in {'started','completed','failed'} or
+                    record['phase'] != 'property_'+record['operation']+'_'+record['access_status'] or
+                    any(not isinstance(record.get(key),str) for key in ('property_name','declaring_type','property_type','accessor_signature','dispatch_route','selected_property')) or
+                    any(type(record.get(key)) is not bool for key in ('is_static','value_available')) or
+                    type(record.get('access_id')) is not int or not 1 <= record['access_id'] <= 2000 or
+                    record.get('target_type') is not None and not isinstance(record['target_type'],str) or
+                    record.get('error_type') is not None and not isinstance(record['error_type'],str) or
+                    record.get('value_stage') not in {'returned','converted','supplied_before_clr_conversion'} or
+                    'property_value' not in record or not isinstance(record.get('index_arguments'),list) or
+                    record['value_available'] != (record['operation'] == 'set' or record['access_status'] == 'completed')):
+                raise ValueError('Guest engine property record is malformed')
         if record['phase'] in {'method_arguments_bound', 'reflection_arguments_supplied'} or record.get('command_type') == 'DotNetMethod':
             arguments = record.get('method_arguments')
             if (record.get('command_type') != 'DotNetMethod' or record['phase'] not in {'method_arguments_bound','reflection_arguments_supplied'} or
@@ -165,6 +180,22 @@ def observer_image(image: str, payload: bytes, engine_payload: bytes | None = No
             raise ValueError('Runtime base image tag does not match its immutable ID')
     digest = hashlib.sha256(image.encode("ascii") + payload + (engine_payload or b"")).hexdigest()
     tag = "emumee-pwsh-exec-observer:" + digest[:32]
+
+    def checked_id(info):
+        if info["Config"].get("Labels", {}).get("org.emumee.observer.build") != digest:
+            raise RuntimeError("Observer image label verification failed")
+        if info['RootFS']['Layers'][:len(base['RootFS']['Layers'])] != base['RootFS']['Layers']:
+            raise RuntimeError('Observer runtime does not extend the verified base layers')
+        return info['Id']
+
+    # Rebuilding an existing tag can replace its image ID between inspect and
+    # container creation in another run. Reuse the verified content-derived image.
+    try:
+        cached = json.loads(docker('image', 'inspect', tag))[0]
+    except RuntimeError:
+        pass
+    else:
+        return checked_id(cached)
     archive = io.BytesIO()
     dockerfile = (f"FROM {reference}\nCOPY --chmod=0555 observer /observer\n" +
                   (f"COPY --chmod=0444 engine.dll {ENGINE_HOME}/System.Management.Automation.dll\n" if engine_payload else "") +
@@ -183,10 +214,6 @@ def observer_image(image: str, payload: bytes, engine_payload: bytes | None = No
     if completed.returncode:
         raise RuntimeError("Observer image build failed: " + completed.stderr.decode("utf-8", errors="replace")[-2000:])
     info = json.loads(docker("image", "inspect", tag))[0]
-    if info["Config"].get("Labels", {}).get("org.emumee.observer.build") != digest:
-        raise RuntimeError("Observer image label verification failed")
-    if info['RootFS']['Layers'][:len(base['RootFS']['Layers'])] != base['RootFS']['Layers']:
-        raise RuntimeError('Observer runtime does not extend the verified base layers')
-    return info["Id"]
+    return checked_id(info)
 
 

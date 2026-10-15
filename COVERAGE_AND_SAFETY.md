@@ -45,9 +45,24 @@ compression. Reflection targets are labeled as supplied before CLR conversion.
 All 17 method cases, 20 earlier obfuscation cases, 19 fixed observer checks,
 and the long public BXOR control pass with the rebuilt engine. The 24 focused
 source tests also pass (12 Docker integration tests are separately opt-in).
-Calls entirely inside compiled CLR code, property access, dynamic method bodies,
+Calls entirely inside compiled CLR code, custom/ETS property access, dynamic method bodies,
 and arbitrary object snapshots remain incomplete. See the
 [method capture scope and repeatable verifier](POWERSHELL_CONFINEMENT.md#readable-net-method-calls).
+
+Covered .NET property reads/writes now retain resolved identities, actual getter
+results or setter inputs, index arguments, and started/completed/failed states.
+Successful null results are distinct from failed reads. The same access is
+evaluated once; setters are not read back, and input snapshots survive setter
+mutation. Reflection inputs are explicitly labeled before CLR conversion.
+See [property capture scope and verifier](POWERSHELL_CONFINEMENT.md#readable-net-property-access)
+for coverage and remaining CLR-internal, ETS/custom adapter, field, and byref gaps.
+All 21 property cases pass, including encoded names, PowerShell class properties,
+single-evaluation counters, mutation of a setter's array input, and 40 compressed
+layers. The 17 method and 20 earlier obfuscation cases, 19 observer checks, long
+public BXOR control, and 28 focused source tests also pass. Evidence is linked in
+the confinement document. The final live dashboard check verifies the actual
+returned Unicode value. Concurrent runs reuse a validated runtime image after
+reproducing an image-rebuild race.
 
 ## Worker build receipt and packaged utility assets
 

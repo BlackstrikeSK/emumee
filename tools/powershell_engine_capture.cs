@@ -6,6 +6,7 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Runtime.InteropServices;
 using System.Reflection;
+using System.Linq.Expressions;
 using System.Text.Json;
 using System.Threading;
 
@@ -73,6 +74,7 @@ namespace System.Management.Automation
             int sequence = Interlocked.Increment(ref s_sequence);
             if (sequence > 2000) Environment.FailFast("Emumee invocation budget exceeded");
             record["sequence"] = sequence;
+            if (record.TryGetValue("access_id", out var accessId) && accessId is int id && id == 0) record["access_id"] = sequence;
             byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(record);
             if (bytes.Length > 65536) Environment.FailFast("Emumee invocation record exceeds limit");
             fixed (byte* pointer = bytes)
@@ -89,6 +91,206 @@ namespace System.Management.Automation
             if (method == null || method.GetType().Assembly != typeof(object).Assembly) return false;
             string type = method.GetType().FullName;
             return type == "System.Reflection.RuntimeMethodInfo" || type == "System.Reflection.RuntimeConstructorInfo";
+        }
+
+        private sealed class PropertyAccess
+        {
+            internal PropertyInfo Property;
+            internal object Target;
+            internal string Operation, Route, ValueStage;
+            internal object Value;
+            internal object PassedSnapshot, IndexSnapshot;
+            internal object[] Indexes;
+            internal int Id;
+        }
+
+        private static PropertyAccess BeginProperty(PropertyInfo property, object target, string operation,
+                                                    object value, object[] indexes, string route, string valueStage)
+        {
+            // Only runtime metadata is inspected; no custom PropertyInfo getters.
+            if (s_recording || property == null || property.GetType().Assembly != typeof(object).Assembly ||
+                    property.GetType().FullName != "System.Reflection.RuntimePropertyInfo") return null;
+            var access = new PropertyAccess { Property = property, Target = target, Operation = operation,
+                Value = value, Indexes = indexes ?? Array.Empty<object>(), Route = route, ValueStage = valueStage };
+            access.Id = RecordProperty(access, "started", null, null);
+            return access;
+        }
+
+        private static int RecordProperty(PropertyAccess access, string status, object result, Exception error)
+        {
+            if (access == null || s_recording) return 0;
+            s_recording = true;
+            try
+            {
+                var selected = access.Operation == "get" ? access.Property.GetMethod : access.Property.SetMethod;
+                var resolved = selected == null ? null : ResolveDispatch(selected, access.Target, access.Route);
+                var property = access.Property;
+                if (resolved != selected && resolved?.DeclaringType != null)
+                    foreach (var candidate in resolved.DeclaringType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+                        if ((access.Operation == "get" ? candidate.GetMethod : candidate.SetMethod) == resolved) { property = candidate; break; }
+                bool available = access.Operation == "set" || status == "completed";
+                if (status == "started")
+                {
+                    access.PassedSnapshot = access.Operation == "set" ? Snapshot(access.Value, 0) : null;
+                    access.IndexSnapshot = Snapshot(access.Indexes, 0);
+                }
+                var record = new Dictionary<string, object> {
+                    ["event"] = "powershell_command_invocation", ["timestamp_utc"] = DateTime.UtcNow.ToString("O"),
+                    ["capture"] = "guest_engine_instrumentation", ["provenance"] = "in_process_data",
+                    ["phase"] = "property_" + access.Operation + "_" + status, ["command_type"] = "DotNetProperty",
+                    ["command"] = (property.DeclaringType?.FullName ?? "") + "::" + property.Name,
+                    ["bound_parameters"] = new Dictionary<string, object>(), ["unbound_arguments"] = Array.Empty<object>(),
+                    ["property_name"] = property.Name, ["declaring_type"] = property.DeclaringType?.FullName ?? "",
+                    ["property_type"] = property.PropertyType.FullName ?? property.PropertyType.Name,
+                    ["accessor_signature"] = resolved != null ? Signature(resolved) : "<no accessor>",
+                    ["selected_property"] = (access.Property.DeclaringType?.FullName ?? "") + "::" + access.Property.Name,
+                    ["is_static"] = selected?.IsStatic ?? false, ["target_type"] = access.Target?.GetType().FullName,
+                    ["operation"] = access.Operation, ["access_status"] = status, ["access_id"] = access.Id,
+                    ["dispatch_route"] = access.Route, ["value_stage"] = access.Operation == "get" ? "returned" : access.ValueStage,
+                    ["value_available"] = available, ["property_value"] = available ? access.Operation == "get" ? Snapshot(result, 0) : access.PassedSnapshot : null,
+                    ["index_arguments"] = access.IndexSnapshot, ["error_type"] = error?.GetType().FullName };
+                return Emit(record);
+            }
+            catch (Exception failure) { Environment.FailFast("Emumee property capture failed", failure); return 0; }
+            finally { s_recording = false; }
+        }
+
+        private static void CompleteProperty(PropertyAccess access, object result) => RecordProperty(access, "completed", result, null);
+        private static void FailProperty(PropertyAccess access, Exception error) => RecordProperty(access, "failed", null, error);
+
+        // A write is observed after conversion, immediately before the existing
+        // assignment. The original setter and return-value semantics are retained.
+        private static T BeginPropertyWrite<T>(ref PropertyAccess access, PropertyInfo property, object target, T value)
+        {
+            access = BeginProperty(property, target, "set", value, null, "binder", "converted");
+            return value;
+        }
+
+        private sealed class PropertyAssignmentObserver : ExpressionVisitor
+        {
+            internal PropertyInfo Property;
+            internal Expression Target;
+            internal ParameterExpression Access;
+            protected override Expression VisitBinary(BinaryExpression node)
+            {
+                if (node.NodeType == ExpressionType.Assign && node.Left is MemberExpression member && member.Member == Property)
+                    return Expression.Assign(node.Left, Expression.Call(
+                        typeof(EmumeeInvocationCapture).GetMethod(nameof(BeginPropertyWrite), BindingFlags.NonPublic | BindingFlags.Static).MakeGenericMethod(node.Right.Type),
+                        Access, Expression.Constant(Property, typeof(PropertyInfo)), Target, node.Right));
+                return base.VisitBinary(node);
+            }
+        }
+
+        private static Expression PropertyBoundary(Expression body, ParameterExpression access, Expression begin)
+        {
+            if (body.Type.IsByRef || body.Type.IsByRefLike) return body;
+            var result = body.Type == typeof(void) ? null : Expression.Variable(body.Type);
+            var error = Expression.Variable(typeof(Exception));
+            var complete = typeof(EmumeeInvocationCapture).GetMethod(nameof(CompleteProperty), BindingFlags.NonPublic | BindingFlags.Static);
+            var fail = typeof(EmumeeInvocationCapture).GetMethod(nameof(FailProperty), BindingFlags.NonPublic | BindingFlags.Static);
+            Expression success = result == null
+                ? Expression.Block(body, Expression.Call(complete, access, Expression.Constant(null, typeof(object))))
+                : Expression.Block(Expression.Assign(result, body), Expression.Call(complete, access, Expression.Convert(result, typeof(object))), result);
+            var guarded = Expression.TryCatch(success, Expression.Catch(error,
+                Expression.Block(Expression.Call(fail, access, error), Expression.Rethrow(body.Type))));
+            return Expression.Block(result == null ? new[] { access } : new[] { access, result }, begin, guarded);
+        }
+
+        internal static Expression ObserveProperty(Expression body, PropertyInfo property, Expression target, string operation)
+        {
+            if (body.Type.IsByRef || body.Type.IsByRefLike) return body;
+            target = target == null ? Expression.Constant(null, typeof(object)) : Expression.Convert(target, typeof(object));
+            var access = Expression.Variable(typeof(PropertyAccess));
+            Expression begin;
+            if (operation == "set")
+            {
+                body = new PropertyAssignmentObserver { Property = property, Target = target, Access = access }.Visit(body);
+                begin = Expression.Assign(access, Expression.Constant(null, typeof(PropertyAccess)));
+            }
+            else
+                begin = Expression.Assign(access, Expression.Call(typeof(EmumeeInvocationCapture).GetMethod(nameof(BeginProperty), BindingFlags.NonPublic | BindingFlags.Static),
+                    Expression.Constant(property, typeof(PropertyInfo)), target, Expression.Constant("get"), Expression.Constant(null, typeof(object)),
+                    Expression.Constant(null, typeof(object[])), Expression.Constant("binder"), Expression.Constant("returned")));
+            return PropertyBoundary(body, access, begin);
+        }
+
+        internal static object GetProperty(PropertyInfo property, object target, Func<object> getter)
+        {
+            var access = BeginProperty(property, target, "get", null, null, "adapter", "returned");
+            try { var value = getter(); CompleteProperty(access, value); return value; }
+            catch (Exception error) { FailProperty(access, error); throw; }
+        }
+
+        internal static void SetProperty(PropertyInfo property, object target, object value, Action setter)
+        {
+            var access = BeginProperty(property, target, "set", value, null, "adapter", "converted");
+            try { setter(); CompleteProperty(access, null); }
+            catch (Exception error) { FailProperty(access, error); throw; }
+        }
+
+        private static PropertyAccess BeginPropertyInvocation(MethodBase selected, object receiver, object[] args)
+        {
+            if (receiver is PropertyInfo reflected && selected.Name is "GetValue" or "SetValue")
+            {
+                object target = null, value = null;
+                object[] indexes = null;
+                var parameters = selected.GetParameters();
+                for (int i = 0; i < Math.Min(args.Length, parameters.Length); ++i)
+                {
+                    if (parameters[i].Name == "obj") target = args[i];
+                    if (parameters[i].Name == "value") value = args[i];
+                    if (parameters[i].Name == "index") indexes = args[i] as object[];
+                }
+                return BeginProperty(reflected, target, selected.Name == "GetValue" ? "get" : "set", value, indexes,
+                    "reflection", "supplied_before_clr_conversion");
+            }
+            var method = (MethodInfo)selected;
+            foreach (var property in method.DeclaringType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+            {
+                bool set = property.SetMethod == method;
+                if (!set && property.GetMethod != method) continue;
+                var indexes = new object[args.Length - (set ? 1 : 0)];
+                Array.Copy(args, indexes, indexes.Length);
+                return BeginProperty(property, receiver, set ? "set" : "get", set ? args[^1] : null, indexes, "accessor", "converted");
+            }
+            return null;
+        }
+
+        internal static Expression ObservePropertyInvocation(Expression body, MethodBase selected, Expression receiver, Expression[] args)
+        {
+            if (!RuntimeMetadata(selected) || selected is not MethodInfo method) return body;
+            bool reflection = typeof(PropertyInfo).IsAssignableFrom(method.DeclaringType) && method.Name is "GetValue" or "SetValue";
+            bool accessor = method.IsSpecialName && (method.Name.StartsWith("get_", StringComparison.Ordinal) || method.Name.StartsWith("set_", StringComparison.Ordinal));
+            if (!reflection && !accessor || body.Type.IsByRef || body.Type.IsByRefLike) return body;
+            var access = Expression.Variable(typeof(PropertyAccess));
+            receiver = receiver == null ? Expression.Constant(null, typeof(object)) : Expression.Convert(receiver, typeof(object));
+            var begin = Expression.Assign(access, Expression.Call(typeof(EmumeeInvocationCapture).GetMethod(nameof(BeginPropertyInvocation), BindingFlags.NonPublic | BindingFlags.Static),
+                Expression.Constant(selected, typeof(MethodBase)), receiver, Expression.NewArrayInit(typeof(object), args)));
+            return PropertyBoundary(body, access, begin);
+        }
+
+        internal static Expression ObserveIndexer(Expression target, MethodInfo accessor, params Expression[] arguments)
+        {
+            if (accessor.ReturnType.IsByRef || accessor.ReturnType.IsByRefLike) return Expression.Call(target, accessor, arguments);
+            foreach (var argument in arguments)
+                if (argument.Type.IsByRefLike || argument.Type.IsByRef) return Expression.Call(target, accessor, arguments);
+            var variables = new List<ParameterExpression>();
+            var statements = new List<Expression>();
+            var receiver = Expression.Variable(target.Type);
+            variables.Add(receiver);
+            statements.Add(Expression.Assign(receiver, target));
+            var passed = new Expression[arguments.Length];
+            var boxed = new Expression[arguments.Length];
+            for (int i = 0; i < arguments.Length; ++i)
+            {
+                var value = Expression.Variable(arguments[i].Type);
+                variables.Add(value);
+                statements.Add(Expression.Assign(value, arguments[i]));
+                passed[i] = value;
+                boxed[i] = Expression.Convert(value, typeof(object));
+            }
+            statements.Add(ObservePropertyInvocation(Expression.Call(receiver, accessor, passed), accessor, receiver, boxed));
+            return Expression.Block(variables, statements);
         }
 
         private static string Signature(MethodBase method)

@@ -1241,6 +1241,15 @@ DETAIL = COMMON + """
 <p class="meta-line">{{ command.capture or 'Recorded command' }} · {{ command.phase or 'Invocation' }}{% if command.sequence %} · sequence {{ command.sequence }}{% endif %}</p>
 {% if command.capture == 'guest_windows_emulation' %}<p class="meta-line">Reported Windows exit {{ command.reported_guest_exit_code }} · Persona {{ 'matches configured baseline' if command.persona_matches_baseline else 'differs from configured baseline' }}</p>{% endif %}
 {% if command.command_line %}<div class="label">Guest command line</div><pre>{{ command.command_line }}</pre>{% endif %}
+{% if command.command_type == 'DotNetProperty' %}<div class="label">Resolved .NET property</div><pre>{{ command.declaring_type }}::{{ command.property_name }}</pre>
+  <p class="meta-line">{{ 'Read' if command.operation == 'get' else 'Write' }} · {{ command.access_status }} · {{ 'Static' if command.is_static else 'Instance' }} · {{ command.property_type }}{% if command.target_type %} · receiver {{ command.target_type }}{% endif %} · access {{ command.access_id }} · {{ command.dispatch_route }}</p>
+  <div class="label">Property accessor</div><pre>{{ command.accessor_signature }}</pre>
+  {% if command.value_available %}<div class="label">{{ 'Returned property value' if command.operation == 'get' else 'Passed property value' }}</div><pre>{{ command.property_value|ui_json }}</pre>{% elif command.access_status == 'failed' %}<p class="coverage-note">Property read failed; no returned value was captured.</p>{% else %}<p class="muted">Property read started; no returned value yet.</p>{% endif %}
+  {% if command.value_stage == 'supplied_before_clr_conversion' %}<p class="coverage-note">Write value supplied before CLR reflection conversion.</p>{% endif %}
+  {% if command.operation == 'set' %}<p class="meta-line">The passed value is the setter input. It does not establish the stored value.</p>{% endif %}
+  {% if command.index_arguments %}<div class="label">Property index arguments</div><pre>{{ command.index_arguments|ui_json }}</pre>{% endif %}
+  {% if command.error_type %}<div class="label">Property access error</div><pre>{{ command.error_type }}</pre>{% endif %}
+  {% endif %}
 {% if command.command_type == 'DotNetMethod' %}<div class="label">Resolved .NET method</div><pre>{{ command.method_signature }}</pre>
 {% if not command.metadata_captured %}<p class="coverage-note">Method metadata was not captured for this metadata object type.</p>{% endif %}
 <p class="meta-line">{{ 'Constructor' if command.is_constructor else 'Static' if command.is_static else 'Instance' }}{% if command.target_type %} · receiver {{ command.target_type }}{% endif %} · {{ command.dispatch_route }}</p>

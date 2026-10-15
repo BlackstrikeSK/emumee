@@ -201,7 +201,7 @@ recorded execution error or timeout, and 2 for setup/reporting failures.
 native binaries underneath the Windows utility bridge. General Windows APIs,
 PowerShell's Windows providers, and persistent shared Windows state are not integrated.
 PowerShell-bound .NET methods are observed as described below; calls entirely
-inside compiled CLR code, property access, and dynamic method bodies remain gaps. Engine parameter records
+inside compiled CLR code, custom/ETS properties, and dynamic method bodies remain gaps. Engine parameter records
 are guest-generated and can be forged or bypassed; authenticated transport
 does not prove their truth. Native argv snapshots can race concurrent mutation
 between syscall entry and the kernel's argument copy. Hostile observer
@@ -583,12 +583,72 @@ The engine assembly SHA-256 is
 `6e0d21aefb1255ba39499d5b41d26cdd8a3e0eb8efe8b272d46673acacc012ca`.
 
 This is not a CLR profiler. Calls made only inside compiled code, arbitrary
-dynamic methods, property getters/setters, and unhooked invocation routes remain
+dynamic methods, and unhooked invocation routes remain
 incomplete. Values retain the existing snapshot bounds; arbitrary objects stay
 opaque, and byref-like values that cannot be boxed are explicitly marked
 uncaptured. Ref/out values are observed before the call, not after mutation.
 Method records retain the same guest-generated provenance and tampering limits
 as other engine observations.
+
+### Readable .NET property access
+
+Covered PowerShell .NET property reads and writes produce separate started,
+completed, and failed records. The Commands view shows the resolved property,
+accessor signature, receiver and value types, operation, and readable values.
+Getter results come from the original access, evaluated once. A successful
+`null` result is distinct from a started or failed read with no returned value.
+Setter inputs are captured after PowerShell conversion and before invocation;
+the input snapshot is retained even when the setter mutates the supplied array.
+Completion does not imply that the property stored the same value: setters may
+transform or ignore their input. Logging does not read the property back.
+
+Hooks cover the tested dynamic member binder, .NET property adapter, accessor
+methods/indexers, and reflection `PropertyInfo.GetValue`/`SetValue` paths.
+Reflection write values are labeled as supplied before CLR reflection conversion.
+Virtual accessors identify the resolved implementation. Index arguments are
+captured alongside the property value. Object snapshots retain the existing
+bounds and opaque markers; custom getters, enumerators, and `ToString` are
+never invoked by snapshotting. Started and terminal events share an access ID.
+
+```powershell
+.venv\Scripts\python.exe -m tools.verify_powershell_properties `
+  --output output\powershell-properties\fresh-run
+```
+
+The harmless corpus checks constructed/encoded property names, encoded Unicode
+values, PowerShell class automatic properties, static and instance access, converted and nullable inputs, empty/null
+results, throwing getters/setters, single evaluation, virtual dispatch,
+reflection, the property adapter, indexers, explicit accessors, opaque returned
+objects, mutation of an input array, and 8/40 compressed layers. Expected names
+and values are checked in both saved reports and rendered dashboard rows.
+
+Properties accessed entirely inside compiled CLR code, custom adapters and ETS
+note/script properties, fields, byref/byref-like getters, and other unhooked
+routes remain incomplete. Reflection-based access via other APIs is not a CLR
+profiler hook. Engine-generated records retain the existing tampering limits.
+
+On 2026-10-15 all 21 property cases passed with assembly SHA-256
+`9a7d486468281367217bf9e7a9d6f19ffa0308bbee3e06ef50e17185f2ce7391`.
+The 17 method cases, 20 earlier obfuscation cases (including 120 layers), 19
+fixed observer checks, and long public BXOR control also passed. The 28 focused
+source tests passed; 12 additional Docker integration tests remain opt-in.
+The rebuilt worker receipt is current, and a live HTTP check verified the
+readable getter result after 40 compressed layers. Evidence:
+
+- `output/powershell-properties/final-21/verification.json`
+- `output/powershell-properties/indexer-and-encoded-final/verification.json`
+- `output/powershell-properties/observer-regression.json`
+- `output/powershell-properties/live-dashboard.json`
+- `output/powershell-methods/property-regression-17/verification.json`
+- `output/powershell-obfuscation/property-regression-20/verification.json`
+- `output/public-obfuscators/property-regression-long/verification.json`
+- `output/powershell-property-source-tests.log`
+
+Concurrent verification exposed a runtime-image rebuild race between image
+inspection and container creation. Existing content-derived images are now
+reused after checking their build label and base-layer ancestry; invalid cached
+images are rejected. The cache validation test and concurrent final matrices
+passed.
 
 On 2026-10-14 the combined fixed probe passed 19 checks, including cmdlet values
 after breakpoint removal, nested `Invoke-Expression`, a splatted array, simple

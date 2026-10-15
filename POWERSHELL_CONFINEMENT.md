@@ -7,6 +7,71 @@ native-process observer. It does not run host `powershell.exe` or `pwsh.exe`.
 The PE worker's `CreateProcess` path still
 rejects managed child PEs; it does not route PowerShell into this separate mode.
 
+## Readable values from obfuscated scripts
+
+Capture happens after PowerShell binds a command's parameters, including
+pipeline binding immediately before processing a record. Consequently a
+constructed command name, decoded string, or splatted argument is recorded
+as its evaluated value. Native exec records independently retain argument
+arrays, including spaces, quotes, empty arguments, and UTF-8 bytes. This is
+runtime observation; source text containing a command in an unexecuted branch
+does not establish an invocation.
+
+The repeatable harmless obfuscation corpus is:
+
+```powershell
+.venv\Scripts\python.exe -m tools.verify_powershell_obfuscation `
+  --output output\powershell-obfuscation\fresh-run
+```
+
+It requires the observer, instrumented engine, and guest-tools build described
+below. Every fixture executes in the offline guest. Cases cover concatenation,
+formatting, character codes, XOR, aliases and backticks, splatting and type
+conversion, pipeline binding, dynamic script blocks, nested expression
+evaluation, 8/40/120 compressed layers, decoded dot-sourced files, new
+runspaces, child `-EncodedCommand`, native argument boundaries, persona utility
+arguments, a dead-code decoy, a long encoded source line, and typed URI/header
+parameters, plus a decoded real `Invoke-WebRequest` whose network calls are
+denied. The verifier compares exact parameter structures at the invocation
+boundary and checks dashboard rendering; console text alone does not pass it.
+Use repeated `--case <name>` arguments for a focused run.
+
+Source expressions in invocation rows are previews of at most 1024 UTF-16
+units, with original length and an explicit truncation flag. This prevents a
+long encoded line from filling a record before its decoded arguments are
+captured. The submitted script's complete original bytes remain in the report.
+Source preview truncation does not truncate the separate parameter snapshot.
+Parameter snapshots have their own existing limits: strings at 4096 UTF-16
+units, arrays/lists and supported dictionaries at 32 entries, recursion at six
+levels, and at most 64 bound parameters. Truncated values carry markers.
+Exact built-in `Uri`, `Guid`, and `Version` values have readable representations;
+exact built-in hashtables, ordered dictionaries, and string/object dictionaries
+retain bounded string-keyed entries. Other object types remain opaque. Capture
+does not call arbitrary getters, `ToString`, or user-defined enumerators.
+
+This corpus verifies the covered invocation paths, not every obfuscator,
+arbitrary method invocation, or resistance to hostile capture tampering.
+
+On 2026-10-15 (Europe/Berlin), all **20 cases passed** against engine SHA-256
+`80e45c32f42bddd36ba5be3dbe91e681dafb5eb4bcd3a29cde963abad01bdcf5`.
+The 120-layer case's decoded values are in dashboard run
+`20261015T000329Z-6e4c00f8`, command 282; the real web request's readable URI,
+headers, and canonical timeout parameter are in
+`20261015T000507Z-f2a84369`, command 102. External socket denials follow that
+request's bound invocation. The opaque object's script-property getter was
+not invoked. All nineteen fixed observer regression checks and fifteen
+focused source tests also passed. Evidence:
+`output/powershell-obfuscation/final-20-verification.json`,
+`output/powershell-obfuscation/observer-regression.json`.
+The final rebuilt guest image also passed the long-source, typed URI/header,
+and real web-request cases again:
+`output/powershell-obfuscation/final-artifacts/verification.json`.
+
+The long-source fixture originally reproduced an engine abort at the 64 KiB
+record limit before its reporting function ran. Bounding source previews
+fixed that case while preserving its exact evaluated arguments. The original
+failure is retained in `output/powershell-obfuscation/initial-long`.
+
 ## Supplied scripts
 
 Build the observer and instrumented engine using the commands in the

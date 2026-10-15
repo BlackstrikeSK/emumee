@@ -1237,7 +1237,7 @@ DETAIL = COMMON + """
 {% if commands %}<p class="meta-line">Page {{ commands_page }} of {{ command_pages }}.
 {% if commands_page > 1 %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page, broker_page=broker_page, commands_page=commands_page - 1) }}#commands">Previous commands</a>{% endif %}
 {% if commands_page < command_pages %}<a href="{{ url_for('detail', run_id=run.id, events_page=events_page, broker_page=broker_page, commands_page=commands_page + 1) }}#commands">Next commands</a>{% endif %}</p>
-<div class="evidence-list">{% for command in commands %}<article class="panel"><h3><code>{{ command.path or command.command }}</code></h3>
+<div class="evidence-list">{% for command in commands %}<article class="panel"{% if command.sequence %} id="command-{{ command.sequence }}"{% endif %}><h3><code>{{ command.path or command.command }}</code></h3>
 <p class="meta-line">{{ command.capture or 'Recorded command' }} · {{ command.phase or 'Invocation' }}{% if command.sequence %} · sequence {{ command.sequence }}{% endif %}</p>
 {% if command.capture == 'guest_windows_emulation' %}<p class="meta-line">Reported Windows exit {{ command.reported_guest_exit_code }} · Persona {{ 'matches configured baseline' if command.persona_matches_baseline else 'differs from configured baseline' }}</p>{% endif %}
 {% if command.command_line %}<div class="label">Guest command line</div><pre>{{ command.command_line }}</pre>{% endif %}
@@ -1245,7 +1245,7 @@ DETAIL = COMMON + """
 {% if command.native_arguments is defined and command.native_arguments is not none %}<div class="label">Native argument array</div><pre>{{ command.native_arguments|ui_json(indent=2) }}</pre>{% endif %}
 {% if command.unbound_arguments %}<div class="label">Unbound arguments</div><pre>{{ command.unbound_arguments|ui_json(indent=2) }}</pre>{% endif %}
 {% if command.reason %}<p>{{ command.reason }}</p>{% endif %}
-{% if command.source_line %}<details class="raw"><summary>Source expression</summary><pre>{{ command.source_line }}</pre></details>{% endif %}
+{% if command.source_line %}<details class="raw"><summary>Source expression{% if command.source_line_truncated %} · preview{% endif %}</summary>{% if command.source_line_truncated %}<p class="muted">Source preview truncated from {{ command.source_line_length|ui_number }} UTF-16 units. Evaluated parameters are recorded separately.</p>{% endif %}<pre>{{ command.source_line }}</pre></details>{% endif %}
 <details class="raw"><summary>Full invocation record</summary><pre>{{ command|ui_json(indent=2) }}</pre></details></article>{% endfor %}</div>
 {% else %}<div class="empty">No command invocation records in this report.</div>{% endif %}</section>
 <section class="section" id="coverage">{% if run.sample and run.sample.kind in ('powershell', 'powershell-probe') %}

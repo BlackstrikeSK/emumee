@@ -2,6 +2,8 @@
 // Guest-generated data is NOT an independent proof of engine behavior.
 using System;
 using System.Collections.Generic;
+using System.Collections;
+using System.Collections.Specialized;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
@@ -33,6 +35,10 @@ namespace System.Management.Automation
                     bound[item.Key] = Snapshot(item.Value, 0);
                 }
 
+                string sourceLine = info.Line ?? string.Empty;
+                int previewLength = Math.Min(sourceLine.Length, 1024);
+                if (previewLength < sourceLine.Length && previewLength > 0 &&
+                        char.IsHighSurrogate(sourceLine[previewLength - 1])) --previewLength;
                 var record = new Dictionary<string, object>
                 {
                     ["event"] = "powershell_command_invocation",
@@ -45,7 +51,9 @@ namespace System.Management.Automation
                     ["invocation_name"] = info.InvocationName,
                     ["bound_parameters"] = bound,
                     ["unbound_arguments"] = Snapshot(info.UnboundArguments?.ToArray(), 0),
-                    ["source_line"] = info.Line,
+                    ["source_line"] = sourceLine.Substring(0, previewLength),
+                    ["source_line_length"] = sourceLine.Length,
+                    ["source_line_truncated"] = previewLength < sourceLine.Length,
                     ["script_name"] = info.ScriptName,
                     ["script_line_number"] = info.ScriptLineNumber,
                     ["provenance"] = "in_process_data"
@@ -79,6 +87,28 @@ namespace System.Management.Automation
                 return value;
             if (value is double real && double.IsFinite(real)) return value;
             if (value is float single && float.IsFinite(single)) return value;
+            // Exact framework types only: never dispatch a user override of
+            // ToString, an arbitrary dictionary enumerator, or a custom getter.
+            Type valueType = value.GetType();
+            if (valueType == typeof(Uri)) return Snapshot(((Uri)value).OriginalString, depth + 1);
+            if (valueType == typeof(Guid)) return ((Guid)value).ToString("D");
+            if (valueType == typeof(Version)) return ((Version)value).ToString();
+            if (valueType == typeof(Hashtable) || valueType == typeof(OrderedDictionary) ||
+                    valueType == typeof(Dictionary<string, object>))
+            {
+                var dictionary = (IDictionary)value;
+                var entries = new Dictionary<string, object>(StringComparer.Ordinal);
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key is not string key)
+                        return new { type = valueType.FullName, capture_status = "opaque_non_string_dictionary_keys" };
+                    if (entries.Count == 32)
+                        return new { type = valueType.FullName, entries, capture_truncated = true };
+                    entries[key] = Snapshot(entry.Value, depth + 1);
+                }
+
+                return entries;
+            }
             if (value.GetType() == typeof(List<object>))
             {
                 var list = (List<object>)value;

@@ -15,6 +15,17 @@ mutable Windows state remain incomplete, and complete capture or hostile
 tamper resistance is not established. See
 [POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md) for evidence and limits.
 
+The 2026-10-15 obfuscation corpus verifies exact bound parameters through
+ordinary transformations, 120 compressed layers, dynamic script blocks,
+runspaces, child encoded commands, native argv, and a denied real web request.
+All 20 cases pass. A reproduced long-source record overflow is fixed with
+explicit source previews; built-in URI/header values are now readable without
+running custom getters. Nineteen observer regression checks and fifteen
+focused source tests pass. See
+`output/powershell-obfuscation/final-20-verification.json` and the detailed
+reproduction command in the confinement document. These checks do not prove
+capture of every .NET method or unbounded parameter value.
+
 ## Worker build receipt and packaged utility assets
 
 On 2026-10-15 (Europe/Berlin), pathping and deterministic ICMP reply patterns

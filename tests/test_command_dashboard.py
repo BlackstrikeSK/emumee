@@ -18,6 +18,21 @@ def probe_report(events):
 
 
 class CommandDashboardTests(unittest.TestCase):
+    def test_source_preview_truncation_keeps_evaluated_parameters_readable(self):
+        event = {"event":"powershell_command_invocation", "command":"Invoke-ReadableProbe",
+                 "source_line":"encoded-prefix", "source_line_length":112345,
+                 "source_line_truncated":True, "bound_parameters":{"Text":"decoded café 日本語 😀"}}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            run=save_probe_run(probe_report([event]),root,"benign encoded source")
+            response=create_app(root).test_client().get(f'/runs/{run.name}')
+            self.assertEqual(response.status_code,200)
+            display=html.unescape(response.get_data(as_text=True))
+            self.assertIn('Source expression · preview',display)
+            self.assertIn('112,345 UTF-16 units',display)
+            self.assertIn('decoded café 日本語 😀',display)
+            self.assertIn('Evaluated parameters are recorded separately',display)
+
     def test_display_json_preserves_unicode_and_safely_renders_punctuation(self):
         value = "Café 日本語 😀 'quoted' <script>alert(1)</script> & " + r"\u0041"
         event = {"event": "powershell_command_invocation", "command": "Write-Output",

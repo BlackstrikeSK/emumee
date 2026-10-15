@@ -37,6 +37,18 @@ artifacts also pass the long control. Evidence and unsupported upstream
 outputs are documented in
 [POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md#public-obfuscator-regression-runs).
 
+PowerShell-bound .NET calls now record resolved method/constructor identities,
+closed generic types, and ordered evaluated values in the dashboard. The binder
+and adapter hooks cover the tested static, instance, virtual, ref/out, optional,
+`params`, reflection, and delegate paths, including encoded values and deep
+compression. Reflection targets are labeled as supplied before CLR conversion.
+All 17 method cases, 20 earlier obfuscation cases, 19 fixed observer checks,
+and the long public BXOR control pass with the rebuilt engine. The 24 focused
+source tests also pass (12 Docker integration tests are separately opt-in).
+Calls entirely inside compiled CLR code, property access, dynamic method bodies,
+and arbitrary object snapshots remain incomplete. See the
+[method capture scope and repeatable verifier](POWERSHELL_CONFINEMENT.md#readable-net-method-calls).
+
 ## Worker build receipt and packaged utility assets
 
 On 2026-10-15 (Europe/Berlin), pathping and deterministic ICMP reply patterns

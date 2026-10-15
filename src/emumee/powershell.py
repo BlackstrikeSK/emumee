@@ -24,7 +24,7 @@ LIMITATIONS = [
     "Experimental Linux PowerShell runtime; Windows commands, APIs, and persona integration are incomplete",
     "Engine invocation values are guest-generated and can be forged or bypassed with arbitrary .NET/native access",
     "Native argv bytes are observed at syscall entry and confirmed on exec; concurrent argument mutation can race observation",
-    "Method calls and arbitrary object values are not fully captured; command capture is incomplete",
+    "PowerShell-bound .NET methods and reflection targets are observed before invocation; CLR-internal calls, dynamic method bodies, property access, and arbitrary object values remain incomplete",
     "Console capture covers successful write/writev calls to guest stdout/stderr backing files, including duplicated descriptors, up to 64 KiB per stream and 4096 bytes per syscall; other redirections are not captured",
     "The container boundary depends on Docker Desktop's Linux VM and kernel; container escape resistance is not established",
 ]

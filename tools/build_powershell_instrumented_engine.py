@@ -19,6 +19,61 @@ SOURCE_TAG_OBJECT = "f8c5ff6aaeca83dc1e08eeb0b55d8e88d0133ac7"
 SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk@sha256:2f5eb32870b4c0074a3d5b5191a03553bcab7b74463a76a7c0a5f3ef65c90fe5"
 ENGINE = "src/System.Management.Automation"
 PATCHES = {
+    ENGINE + "/engine/parser/Compiler.cs": (
+        ("        internal static readonly MethodInfo MemberInvocationLoggingOps_LogMemberInvocation =",
+         "        internal static readonly MethodInfo Emumee_RecordMethod =\n"
+         "            typeof(EmumeeInvocationCapture).GetMethod(nameof(EmumeeInvocationCapture.RecordMethod), StaticFlags);\n\n"
+         "        internal static readonly MethodInfo MemberInvocationLoggingOps_LogMemberInvocation ="),),
+    ENGINE + "/engine/runtime/Binding/Binders.cs": (
+        ("            Expression call;\n            if (constructorInfo != null)",
+         """            // Evaluate each converted argument once, then share the value with
+            // observation and invocation. Preserve existing ref temporaries so
+            // the original copy-out expressions still see method mutations.
+            var emumeeArgs = new Expression[argExprs.Length];
+            for (int i = 0; i < argExprs.Length; ++i)
+            {
+                if (argExprs[i].Type.IsByRefLike)
+                {
+                    emumeeArgs[i] = Expression.Constant(null, typeof(object));
+                }
+                else if (parameters[i].ParameterType.IsByRef)
+                {
+                    emumeeArgs[i] = argExprs[i].Cast(typeof(object));
+                }
+                else
+                {
+                    var observed = Expression.Variable(argExprs[i].Type);
+                    temps.Add(observed);
+                    initTemps.Add(Expression.Assign(observed, argExprs[i]));
+                    argExprs[i] = observed;
+                    emumeeArgs[i] = observed.Cast(typeof(object));
+                }
+            }
+
+            initTemps.Add(Expression.Call(
+                CachedReflectionInfo.Emumee_RecordMethod,
+                Expression.Constant(mi, typeof(MethodBase)),
+                methodInfo == null || methodInfo.IsStatic ? Expression.Constant(null, typeof(object)) : PSGetMemberBinder.GetTargetExpr(target, methodInfo.DeclaringType).Cast(typeof(object)),
+                Expression.NewArrayInit(typeof(object), emumeeArgs),
+                Expression.Constant(invocationType.ToString()),
+                Expression.Constant(args.Length)));
+
+            Expression call;
+            if (constructorInfo != null)"""),
+        ("            // We need to add one expression to log the .NET invocation before actually invoking:",
+         "            if (temps.Count == 0 && initTemps.Count != 0)\n"
+         "            {\n"
+         "                call = Expression.Block(call.Type, initTemps.Append(call));\n"
+         "                initTemps.Clear();\n"
+         "            }\n\n"
+         "            // We need to add one expression to log the .NET invocation before actually invoking:")),
+    ENGINE + "/engine/CoreAdapter.cs": (
+        ("                return ctor.Invoke(arguments);",
+         "                EmumeeInvocationCapture.RecordMethod(ctor, null, arguments, \"adapter\", -1);\n"
+         "                return ctor.Invoke(arguments);"),
+        ("            if (!_useReflection)\n            {",
+         "            EmumeeInvocationCapture.RecordMethod(method, target, arguments, \"adapter\", -1);\n\n"
+         "            if (!_useReflection)\n            {")),
     ENGINE + "/engine/CommandProcessor.cs": (
         ("this.CmdletParameterBinderController.BindCommandLineParameters(arguments);",
          "this.CmdletParameterBinderController.BindCommandLineParameters(arguments);\n"
@@ -74,7 +129,7 @@ LABEL org.emumee.engine.patch={digest} org.emumee.engine.source={SOURCE_COMMIT}
                         b'<add key="nuget.org" value="https://api.nuget.org/v3/index.json" />'
                         b'</packageSources></configuration>')
             if relative in PATCHES:
-                text = data.decode("utf-8")
+                text = data.decode("utf-8").replace("\r\n", "\n")
                 for old, new in PATCHES[relative]:
                     if text.count(old) != 1:
                         raise ValueError("Pinned engine patch point changed: " + relative)

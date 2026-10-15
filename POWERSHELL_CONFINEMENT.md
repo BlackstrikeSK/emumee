@@ -200,7 +200,8 @@ recorded execution error or timeout, and 2 for setup/reporting failures.
 **Remaining requirements:** this is Linux PowerShell, with Linux identity and
 native binaries underneath the Windows utility bridge. General Windows APIs,
 PowerShell's Windows providers, and persistent shared Windows state are not integrated.
-Arbitrary .NET method calls are not fully observed. Engine parameter records
+PowerShell-bound .NET methods are observed as described below; calls entirely
+inside compiled CLR code, property access, and dynamic method bodies remain gaps. Engine parameter records
 are guest-generated and can be forged or bypassed; authenticated transport
 does not prove their truth. Native argv snapshots can race concurrent mutation
 between syscall entry and the kernel's argument copy. Hostile observer
@@ -532,9 +533,62 @@ git clone --depth 1 --branch v7.5.12 --filter=blob:none https://github.com/Power
 The assembly build sidecar records source, patch, and assembly hashes. The
 runtime image verifies that evidence and replaces only the matching pinned
 SDK's engine assembly. The supplied-script mode now uses this same assembly.
-General method-call capture, a Windows persona, native child PowerShell engine
+Complete CLR-internal method capture, a Windows persona, native child PowerShell engine
 propagation checks, and resistance to hostile engine/observer tampering remain
 unverified.
+
+### Readable .NET method calls
+
+The engine observes PowerShell's dynamic method binder and reflection adapter
+after argument conversion and before invocation. Records include the selected
+overload, resolved virtual/interface implementation, closed generic types,
+constructor identity, receiver type, and ordered parameter names/types/values.
+Converted arguments are evaluated once and shared with the invocation; existing
+ref/out temporaries and their copy-out behavior are preserved. Expanded `params`
+arrays and optional defaults are recorded as passed to the method. A zero-argument
+method still produces a record. The dashboard Commands view shows a resolved
+signature and a readable argument table, including decoded Unicode values.
+
+For `MethodInfo.Invoke` and `ConstructorInfo.Invoke`, a separate target record
+identifies the method and the supplied argument array. This is explicitly marked
+**before CLR reflection conversion**, rather than claiming final converted
+values or a successful return. Delegate invocation also lists registered target
+signatures. Calls that later throw retain their before-invocation record.
+
+The repeatable harmless method corpus is:
+
+```powershell
+.venv\Scripts\python.exe -m tools.verify_powershell_methods `
+  --output output\powershell-methods\fresh-run
+```
+
+It covers dynamically constructed method names, encoded arguments, overloads,
+constructors, instance/static/zero-argument calls, ref/out copy-out, `params`,
+optional defaults, generics, virtual/interface dispatch, reflection, delegates,
+throwing calls, conversion/evaluation counts, opaque objects with hostile
+getters/enumerators, and 8/40 compressed layers. Each expected method identity
+and passed value is checked in the saved report and rendered dashboard row.
+
+On 2026-10-15 all 17 method cases passed, as did the 20 earlier obfuscation
+cases, 19 fixed observer checks, and the long public BXOR control. The live dashboard also served the final
+decoded `Probe::Echo(System.String)` call after 40 compressed layers. Evidence:
+`output/powershell-methods/final-17/verification.json`,
+`output/powershell-methods/final-artifacts/verification.json`,
+`output/powershell-methods/observer-regression.json`,
+`output/powershell-methods/live-dashboard.json`, and
+`output/public-obfuscators/method-regression-long/verification.json`.
+The full earlier-corpus regression is retained in
+`output/powershell-obfuscation/method-regression-20/verification.json`.
+The engine assembly SHA-256 is
+`6e0d21aefb1255ba39499d5b41d26cdd8a3e0eb8efe8b272d46673acacc012ca`.
+
+This is not a CLR profiler. Calls made only inside compiled code, arbitrary
+dynamic methods, property getters/setters, and unhooked invocation routes remain
+incomplete. Values retain the existing snapshot bounds; arbitrary objects stay
+opaque, and byref-like values that cannot be boxed are explicitly marked
+uncaptured. Ref/out values are observed before the call, not after mutation.
+Method records retain the same guest-generated provenance and tampering limits
+as other engine observations.
 
 On 2026-10-14 the combined fixed probe passed 19 checks, including cmdlet values
 after breakpoint removal, nested `Invoke-Expression`, a splatted array, simple

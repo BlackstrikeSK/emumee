@@ -84,8 +84,24 @@ def engine_command_events(events: list[dict]) -> list[dict]:
                 not isinstance(record.get("bound_parameters"), dict) or
                 type(record.get("sequence")) is not int or
                 not 1 <= record["sequence"] <= 2000 or record.get("phase") not in
-                {"command_line_bound", "process_record_bound", "script_arguments_bound"}):
+                {"command_line_bound", "process_record_bound", "script_arguments_bound",
+                 "method_arguments_bound", "reflection_arguments_supplied"}):
             raise ValueError("Guest engine invocation record is malformed")
+        if record['phase'] in {'method_arguments_bound', 'reflection_arguments_supplied'} or record.get('command_type') == 'DotNetMethod':
+            arguments = record.get('method_arguments')
+            if (record.get('command_type') != 'DotNetMethod' or record['phase'] not in {'method_arguments_bound','reflection_arguments_supplied'} or
+                    any(not isinstance(record.get(key), str) for key in ('method_name', 'declaring_type', 'method_signature', 'dispatch_route')) or
+                    any(type(record.get(flag)) is not bool for flag in ('is_static','is_constructor','metadata_captured')) or
+                    record.get('target_type') is not None and not isinstance(record['target_type'],str) or
+                    not isinstance(record.get('generic_arguments'),list) or any(not isinstance(item,str) for item in record['generic_arguments']) or
+                    not isinstance(arguments, list) or len(arguments) > 32 or
+                    type(record.get('arguments_truncated')) is not bool or
+                    any(not isinstance(arg, dict) or arg.get('position') != index or
+                        type(arg.get('position')) is not int or not isinstance(arg.get('name'), str) or
+                        arg.get('parameter_type') is not None and not isinstance(arg['parameter_type'], str) or
+                        'value' not in arg or any(type(arg.get(flag)) is not bool for flag in ('by_ref','is_out','is_optional'))
+                        for index, arg in enumerate(arguments))):
+                raise ValueError('Guest engine method record is malformed')
         record.update(capture="guest_engine_instrumentation", provenance="in_process_data",
                       guest_pid=event["pid"], observer_sequence=event["sequence"],
                       engine_sequence=record["sequence"])

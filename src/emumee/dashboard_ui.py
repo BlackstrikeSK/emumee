@@ -1241,6 +1241,14 @@ DETAIL = COMMON + """
 <p class="meta-line">{{ command.capture or 'Recorded command' }} · {{ command.phase or 'Invocation' }}{% if command.sequence %} · sequence {{ command.sequence }}{% endif %}</p>
 {% if command.capture == 'guest_windows_emulation' %}<p class="meta-line">Reported Windows exit {{ command.reported_guest_exit_code }} · Persona {{ 'matches configured baseline' if command.persona_matches_baseline else 'differs from configured baseline' }}</p>{% endif %}
 {% if command.command_line %}<div class="label">Guest command line</div><pre>{{ command.command_line }}</pre>{% endif %}
+{% if command.command_type == 'DotNetMethod' %}<div class="label">Resolved .NET method</div><pre>{{ command.method_signature }}</pre>
+{% if not command.metadata_captured %}<p class="coverage-note">Method metadata was not captured for this metadata object type.</p>{% endif %}
+<p class="meta-line">{{ 'Constructor' if command.is_constructor else 'Static' if command.is_static else 'Instance' }}{% if command.target_type %} · receiver {{ command.target_type }}{% endif %} · {{ command.dispatch_route }}</p>
+{% if command.phase == 'reflection_arguments_supplied' %}<p class="coverage-note">Reflection target and supplied values before CLR reflection conversion. This record does not establish successful invocation.</p>{% else %}<p class="meta-line">Arguments captured before invocation; no successful return is implied.</p>{% endif %}
+{% if command.generic_arguments %}<div class="label">Generic type arguments</div><pre>{{ command.generic_arguments|ui_json }}</pre>{% endif %}
+{% if command.delegate_targets %}<div class="label">Registered delegate targets</div><pre>{{ command.delegate_targets|ui_json }}</pre>{% endif %}
+{% if command.arguments_truncated %}<p class="coverage-note">Method arguments truncated after 32 positions.</p>{% endif %}
+{% if command.method_arguments %}<div class="label">Passed method arguments</div><div class="table-wrap"><table><thead><tr><th>Position</th><th>Parameter</th><th>Type</th><th>Passed value</th></tr></thead><tbody>{% for argument in command.method_arguments %}<tr><td>{{ argument.position }}</td><td>{{ argument.name }}{% if argument.by_ref %} ({{ 'out' if argument.is_out else 'ref' }}){% endif %}</td><td><code>{{ argument.parameter_type or 'unknown' }}</code></td><td><pre>{{ argument.value|ui_json }}</pre></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">No method arguments.</p>{% endif %}{% endif %}
 {% if command.bound_parameters %}<div class="label">Evaluated parameters</div><pre>{{ command.bound_parameters|ui_json(indent=2) }}</pre>{% endif %}
 {% if command.native_arguments is defined and command.native_arguments is not none %}<div class="label">Native argument array</div><pre>{{ command.native_arguments|ui_json(indent=2) }}</pre>{% endif %}
 {% if command.unbound_arguments %}<div class="label">Unbound arguments</div><pre>{{ command.unbound_arguments|ui_json(indent=2) }}</pre>{% endif %}

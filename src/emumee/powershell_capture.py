@@ -10,6 +10,7 @@ import tarfile
 
 SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk@sha256:2f5eb32870b4c0074a3d5b5191a03553bcab7b74463a76a7c0a5f3ef65c90fe5"
 SOURCE_COMMIT = "3ad470239de5c9c52d470917b071831f16b02fc3"
+MAX_OBSERVER_BYTES = 8 * 1024 * 1024
 ENGINE_HOME = "/usr/share/powershell/.store/powershell.linux.x64/7.5.12/powershell.linux.x64/7.5.12/tools/net9.0/any"
 
 
@@ -23,7 +24,7 @@ def docker(*args: str, timeout=30) -> str:
 
 def verified_events(raw: bytes, key: bytes, *, require_finished=True) -> list[dict]:
     """Reject forged, reordered, missing, or malformed observer records."""
-    if len(raw) > 4 * 1024 * 1024:
+    if len(raw) > MAX_OBSERVER_BYTES:
         raise ValueError("Observer output exceeds trace limit")
     result = []
     for line in raw.splitlines():

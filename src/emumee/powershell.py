@@ -14,12 +14,12 @@ import time
 import uuid
 from pathlib import Path
 
-from .powershell_capture import (SDK_IMAGE, SOURCE_COMMIT, command_events, docker,
+from .powershell_capture import (SDK_IMAGE, SOURCE_COMMIT, MAX_OBSERVER_BYTES, command_events, docker,
                                 engine_command_events, guest_tool_event, observer_image, verified_events)
 from .reports import ENGINE_INTEGRITY, valid_summary
 
 MAX_SCRIPT = 1024 * 1024
-MAX_TRACE = 4 * 1024 * 1024
+MAX_TRACE = MAX_OBSERVER_BYTES
 LIMITATIONS = [
     "Experimental Linux PowerShell runtime; Windows commands, APIs, and persona integration are incomplete",
     "Engine invocation values are guest-generated and can be forged or bypassed with arbitrary .NET/native access",

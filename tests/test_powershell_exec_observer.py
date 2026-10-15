@@ -13,6 +13,20 @@ from tools.probe_powershell_exec_observer import command_events, engine_command_
 
 
 class ExecObserverTests(unittest.TestCase):
+    def test_authenticated_trace_larger_than_four_mib_is_retained_and_still_bounded(self):
+        from unittest.mock import patch
+        events=[{'event':'observer_ready','sequence':1}]
+        for sequence in range(2,603):
+            events.append({'event':'native_exec_attempt','sequence':sequence,'pid':5,
+                           'path_hex':b'/missing'.hex(),'argv_hex':[(b'x'*4096).hex()]})
+        events.append({'event':'observer_finished','sequence':603,'root_exit_code':0})
+        raw=self.signed(events)
+        self.assertGreater(len(raw),4*1024*1024)
+        self.assertEqual(verified_events(raw,b'k'*32),events)
+        with patch('emumee.powershell_capture.MAX_OBSERVER_BYTES',len(raw)-1):
+            with self.assertRaisesRegex(ValueError,'trace limit'):
+                verified_events(raw,b'k'*32)
+
     def test_engine_payloads_cannot_claim_external_provenance_or_native_argv(self):
         record = {"event": "powershell_command_invocation", "sequence": 1, "command": "Write-Output",
                   "phase": "command_line_bound", "bound_parameters": {"InputObject": ["after-remove"]},

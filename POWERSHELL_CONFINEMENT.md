@@ -127,9 +127,60 @@ denials appear in the dashboard network timeline. A fresh key authenticates
 record order and transport. On timeout or trace-budget exhaustion the CLI
 terminates the container, checks that execution stopped, and removes it.
 Whole authenticated records received before termination are retained and
-marked incomplete. Host trace buffering is capped at 4 MiB and Docker attach
+marked incomplete. Host trace buffering and authenticated trace validation
+share an 8 MiB cap, and Docker attach
 diagnostics at 64 KiB. Invalid engine payloads are rejected individually;
 they do not discard independent native exec records.
+
+### Public obfuscator regression runs
+
+The public-tool verifier uses clean, pinned checkouts of
+[Invoke-Obfuscation](https://github.com/danielbohannon/Invoke-Obfuscation/tree/f20e7f843edd0a3a7716736e9eddfa423395dd26)
+and [Obfell](https://github.com/Jael-G/Obfell/tree/7467840b9ba28d51a8ae16e1d7472a2065369b9a)
+under `output/public-obfuscators/repos`. It runs the generators and stock
+PowerShell reference in an offline, read-only Docker guest without host mounts.
+Generated scripts contain only a benign reporting function and known values.
+The instrumented runner then checks their exact final arguments and dashboard.
+Upstream code is not redistributed with Emumee.
+
+```powershell
+git clone https://github.com/danielbohannon/Invoke-Obfuscation output/public-obfuscators/repos/Invoke-Obfuscation
+git -C output/public-obfuscators/repos/Invoke-Obfuscation checkout --detach f20e7f843edd0a3a7716736e9eddfa423395dd26
+git clone https://github.com/Jael-G/Obfell output/public-obfuscators/repos/Obfell
+git -C output/public-obfuscators/repos/Obfell checkout --detach 7467840b9ba28d51a8ae16e1d7472a2065369b9a
+.venv\Scripts\python.exe -m tools.verify_public_powershell_obfuscators `
+  --output output\public-obfuscators\fresh-run
+```
+
+Use `--case invoke-bxor-long` for the trace-size regression, or
+`--replay <saved-generation.json> --case invoke-layered` to repeat an exact
+generated output with its saved stock-runtime evidence. Generator revisions,
+settings, source hashes, reference failures, and runtime parity are retained.
+The verifier exits nonzero for incompatible upstream outputs as well as capture
+failures; `classification` distinguishes them.
+
+On 2026-10-15, the original layered Invoke-Obfuscation output exhausted the old
+4 MiB trace budget. With the shared 8 MiB cap, its 5,156,533-byte authenticated
+trace finishes and retains decoded `Invoke-Expression` arguments in dashboard
+run `20261015T175930Z-f2854298`, command 1558. The script then fails with the
+same exit code as stock PowerShell; its invalid generated command never reaches
+the intended reporting function. This is not counted as a successful payload.
+
+A valid public BXOR variant crosses the former limit with a 5,487,613-byte
+trace and reaches its final decoded call. Dashboard run
+`20261015T180108Z-82ad6825`, command 1666, contains exact typed parameters,
+Unicode, spaces, quotes, and the empty array item. Evidence is
+`output/public-obfuscators/bxor-long-8m/verification.json` and
+`output/public-obfuscators/layered-8m/verification.json`. The earlier eleven
+variants are retained in `output/public-obfuscators/first-11` and
+`output/public-obfuscators/incompatible-instrumented`: six preserve expected
+behavior and pass capture checks, while five fail in stock PowerShell too.
+Sixteen focused source tests pass, including authenticated traces above 4 MiB
+and rejection above the configured cap. The Docker trace-budget/cleanup test
+also passes. Invocation-count, time, memory, and other existing limits remain
+in force.
+The rebuilt worker and current guest-tools image passed the valid long BXOR
+case again in `output/public-obfuscators/bxor-long-final/verification.json`.
 
 Console capture observes successful `write`/`writev` calls to the guest's
 stdout/stderr backing files, including duplicated descriptors used by .NET.

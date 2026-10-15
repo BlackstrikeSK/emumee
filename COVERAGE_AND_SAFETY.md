@@ -26,6 +26,17 @@ focused source tests pass. See
 reproduction command in the confinement document. These checks do not prove
 capture of every .NET method or unbounded parameter value.
 
+The public-obfuscator matrix uses pinned Invoke-Obfuscation and Obfell sources
+and retains stock-runtime reference results. Its layered trace reproduced the
+4 MiB host capture limit. Both capture and authenticated validation now use a
+shared 8 MiB cap. The original layered trace finishes with the same script
+failure as stock PowerShell; a valid public BXOR control retains its final
+decoded invocation after more than 5 MiB of trace data. Sixteen focused source
+tests and the Docker trace-budget/cleanup probe pass. The current rebuilt
+artifacts also pass the long control. Evidence and unsupported upstream
+outputs are documented in
+[POWERSHELL_CONFINEMENT.md](POWERSHELL_CONFINEMENT.md#public-obfuscator-regression-runs).
+
 ## Worker build receipt and packaged utility assets
 
 On 2026-10-15 (Europe/Berlin), pathping and deterministic ICMP reply patterns

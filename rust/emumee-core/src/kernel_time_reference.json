@@ -1,0 +1,729 @@
+{
+  "schema": "kernel-time-legacy-reference-v1",
+  "source_sha256": "29440f1a6291a849cd17a0158e764049f4a594e5192eec5ce33355e5688abf4d",
+  "generation": "Only AST-extracted two conversion functions executed against fixed bounded fake bytearray and explicit offset; Python datetime is reference-only, never Rust production runtime. No emulator/backend import.",
+  "cases": [
+    {
+      "api": "fields",
+      "ticks": -9223372036854775808,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "fields",
+      "ticks": -504911232000000001,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "fields",
+      "ticks": -504911232000000000,
+      "output_hex": "01000100010000000000000000000100"
+    },
+    {
+      "api": "fields",
+      "ticks": -504860256018765441,
+      "output_hex": "010002001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": -504860256018765433,
+      "output_hex": "010002001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": -504859392018765441,
+      "output_hex": "01000300010017003b003a007b000400"
+    },
+    {
+      "api": "fields",
+      "ticks": -504859392018765433,
+      "output_hex": "01000300010017003b003a007b000400"
+    },
+    {
+      "api": "fields",
+      "ticks": -504595872018765441,
+      "output_hex": "01000c001f0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": -504595872018765433,
+      "output_hex": "01000c001f0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": -378948672018765441,
+      "output_hex": "900102001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": -378948672018765433,
+      "output_hex": "900102001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": -378946944018765441,
+      "output_hex": "90010300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": -378946944018765433,
+      "output_hex": "90010300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": -378683424018765441,
+      "output_hex": "90010c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": -378683424018765433,
+      "output_hex": "90010c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": -265248018765441,
+      "output_hex": "400602001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": -265248018765433,
+      "output_hex": "400602001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": -263520018765441,
+      "output_hex": "40060300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": -263520018765433,
+      "output_hex": "40060300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": -864000000001,
+      "output_hex": "40060c001e0017003b003b00e7030600"
+    },
+    {
+      "api": "fields",
+      "ticks": -18765441,
+      "output_hex": "40060c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": -18765433,
+      "output_hex": "40060c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": -10001,
+      "output_hex": "40060c001f0017003b003b00e6030000"
+    },
+    {
+      "api": "fields",
+      "ticks": -10000,
+      "output_hex": "40060c001f0017003b003b00e7030000"
+    },
+    {
+      "api": "fields",
+      "ticks": -9999,
+      "output_hex": "40060c001f0017003b003b00e7030000"
+    },
+    {
+      "api": "fields",
+      "ticks": -11,
+      "output_hex": "40060c001f0017003b003b00e7030000"
+    },
+    {
+      "api": "fields",
+      "ticks": -10,
+      "output_hex": "40060c001f0017003b003b00e7030000"
+    },
+    {
+      "api": "fields",
+      "ticks": -9,
+      "output_hex": "40060c001f0017003b003b00e7030000"
+    },
+    {
+      "api": "fields",
+      "ticks": -1,
+      "output_hex": "40060c001f0017003b003b00e7030000"
+    },
+    {
+      "api": "fields",
+      "ticks": 0,
+      "output_hex": "41060100010000000000000000000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 1,
+      "output_hex": "41060100010000000000000000000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 9,
+      "output_hex": "41060100010000000000000000000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 10,
+      "output_hex": "41060100010000000000000000000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 9999,
+      "output_hex": "41060100010000000000000000000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 10000,
+      "output_hex": "41060100010000000000000001000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 863999999999,
+      "output_hex": "41060100010017003b003b00e7030100"
+    },
+    {
+      "api": "fields",
+      "ticks": 864000000000,
+      "output_hex": "41060100020000000000000000000200"
+    },
+    {
+      "api": "fields",
+      "ticks": 50975981234559,
+      "output_hex": "410602001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 50975981234567,
+      "output_hex": "410602001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 51839981234559,
+      "output_hex": "41060300010017003b003a007b000400"
+    },
+    {
+      "api": "fields",
+      "ticks": 51839981234567,
+      "output_hex": "41060300010017003b003a007b000400"
+    },
+    {
+      "api": "fields",
+      "ticks": 315359981234559,
+      "output_hex": "41060c001f0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 315359981234567,
+      "output_hex": "41060c001f0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 31292351981234559,
+      "output_hex": "a40602001c0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 31292351981234567,
+      "output_hex": "a40602001c0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 31293215981234559,
+      "output_hex": "a4060300010017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 31293215981234567,
+      "output_hex": "a4060300010017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 31556735981234559,
+      "output_hex": "a4060c001f0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 31556735981234567,
+      "output_hex": "a4060c001f0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 62849087981234559,
+      "output_hex": "080702001c0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 62849087981234567,
+      "output_hex": "080702001c0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 62849951981234559,
+      "output_hex": "08070300010017003b003a007b000600"
+    },
+    {
+      "api": "fields",
+      "ticks": 62849951981234567,
+      "output_hex": "08070300010017003b003a007b000600"
+    },
+    {
+      "api": "fields",
+      "ticks": 63113471981234559,
+      "output_hex": "08070c001f0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 63113471981234567,
+      "output_hex": "08070c001f0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 94405823981234559,
+      "output_hex": "6c0702001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 94405823981234567,
+      "output_hex": "6c0702001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 94406687981234559,
+      "output_hex": "6c070300010017003b003a007b000400"
+    },
+    {
+      "api": "fields",
+      "ticks": 94406687981234567,
+      "output_hex": "6c070300010017003b003a007b000400"
+    },
+    {
+      "api": "fields",
+      "ticks": 94670207981234559,
+      "output_hex": "6c070c001f0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 94670207981234567,
+      "output_hex": "6c070c001f0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 125962559981234559,
+      "output_hex": "d00702001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 125962559981234567,
+      "output_hex": "d00702001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 125964287981234559,
+      "output_hex": "d0070300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 125964287981234567,
+      "output_hex": "d0070300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 126227807981234559,
+      "output_hex": "d0070c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 126227807981234567,
+      "output_hex": "d0070c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 133536383981234559,
+      "output_hex": "e80702001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 133536383981234567,
+      "output_hex": "e80702001c0017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 133538111981234559,
+      "output_hex": "e8070300010017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 133538111981234567,
+      "output_hex": "e8070300010017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 133801631981234559,
+      "output_hex": "e8070c001f0017003b003a007b000200"
+    },
+    {
+      "api": "fields",
+      "ticks": 133801631981234567,
+      "output_hex": "e8070c001f0017003b003a007b000200"
+    },
+    {
+      "api": "fields",
+      "ticks": 157520159981234559,
+      "output_hex": "340802001c0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 157520159981234567,
+      "output_hex": "340802001c0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 157521023981234559,
+      "output_hex": "34080300010017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 157521023981234567,
+      "output_hex": "34080300010017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 157784543981234559,
+      "output_hex": "34080c001f0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 157784543981234567,
+      "output_hex": "34080c001f0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 252190367981234559,
+      "output_hex": "600902001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 252190367981234567,
+      "output_hex": "600902001c0017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 252192095981234559,
+      "output_hex": "60090300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 252192095981234567,
+      "output_hex": "60090300010017003b003a007b000300"
+    },
+    {
+      "api": "fields",
+      "ticks": 252455615981234559,
+      "output_hex": "60090c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 252455615981234567,
+      "output_hex": "60090c001f0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650203359981234559,
+      "output_hex": "0f2702001c0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650203359981234567,
+      "output_hex": "0f2702001c0017003b003a007b000000"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650204223981234559,
+      "output_hex": "0f270300010017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650204223981234567,
+      "output_hex": "0f270300010017003b003a007b000100"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650467743981234559,
+      "output_hex": "0f270c001f0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650467743981234567,
+      "output_hex": "0f270c001f0017003b003a007b000500"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650467743999999999,
+      "output_hex": "0f270c001f0017003b003b00e7030500"
+    },
+    {
+      "api": "fields",
+      "ticks": 2650467744000000000,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "fields",
+      "ticks": 9223372036854775807,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036854775808,
+      "offset_minutes": -840,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036854775808,
+      "offset_minutes": -240,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036854775808,
+      "offset_minutes": -90,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036854775808,
+      "offset_minutes": 0,
+      "output_ticks": -9223372036854775808
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036854775808,
+      "offset_minutes": 120,
+      "output_ticks": -9223371964854775808
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036854775808,
+      "offset_minutes": 840,
+      "output_ticks": -9223371532854775808
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036254775808,
+      "offset_minutes": -840,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036254775808,
+      "offset_minutes": -240,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036254775808,
+      "offset_minutes": -90,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036254775808,
+      "offset_minutes": 0,
+      "output_ticks": -9223372036254775808
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036254775808,
+      "offset_minutes": 120,
+      "output_ticks": -9223371964254775808
+    },
+    {
+      "api": "local",
+      "ticks": -9223372036254775808,
+      "offset_minutes": 840,
+      "output_ticks": -9223371532254775808
+    },
+    {
+      "api": "local",
+      "ticks": -1,
+      "offset_minutes": -840,
+      "output_ticks": -504000000001
+    },
+    {
+      "api": "local",
+      "ticks": -1,
+      "offset_minutes": -240,
+      "output_ticks": -144000000001
+    },
+    {
+      "api": "local",
+      "ticks": -1,
+      "offset_minutes": -90,
+      "output_ticks": -54000000001
+    },
+    {
+      "api": "local",
+      "ticks": -1,
+      "offset_minutes": 0,
+      "output_ticks": -1
+    },
+    {
+      "api": "local",
+      "ticks": -1,
+      "offset_minutes": 120,
+      "output_ticks": 71999999999
+    },
+    {
+      "api": "local",
+      "ticks": -1,
+      "offset_minutes": 840,
+      "output_ticks": 503999999999
+    },
+    {
+      "api": "local",
+      "ticks": 0,
+      "offset_minutes": -840,
+      "output_ticks": -504000000000
+    },
+    {
+      "api": "local",
+      "ticks": 0,
+      "offset_minutes": -240,
+      "output_ticks": -144000000000
+    },
+    {
+      "api": "local",
+      "ticks": 0,
+      "offset_minutes": -90,
+      "output_ticks": -54000000000
+    },
+    {
+      "api": "local",
+      "ticks": 0,
+      "offset_minutes": 0,
+      "output_ticks": 0
+    },
+    {
+      "api": "local",
+      "ticks": 0,
+      "offset_minutes": 120,
+      "output_ticks": 72000000000
+    },
+    {
+      "api": "local",
+      "ticks": 0,
+      "offset_minutes": 840,
+      "output_ticks": 504000000000
+    },
+    {
+      "api": "local",
+      "ticks": 133537247981234567,
+      "offset_minutes": -840,
+      "output_ticks": 133536743981234567
+    },
+    {
+      "api": "local",
+      "ticks": 133537247981234567,
+      "offset_minutes": -240,
+      "output_ticks": 133537103981234567
+    },
+    {
+      "api": "local",
+      "ticks": 133537247981234567,
+      "offset_minutes": -90,
+      "output_ticks": 133537193981234567
+    },
+    {
+      "api": "local",
+      "ticks": 133537247981234567,
+      "offset_minutes": 0,
+      "output_ticks": 133537247981234567
+    },
+    {
+      "api": "local",
+      "ticks": 133537247981234567,
+      "offset_minutes": 120,
+      "output_ticks": 133537319981234567
+    },
+    {
+      "api": "local",
+      "ticks": 133537247981234567,
+      "offset_minutes": 840,
+      "output_ticks": 133537751981234567
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036254775807,
+      "offset_minutes": -840,
+      "output_ticks": 9223371532254775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036254775807,
+      "offset_minutes": -240,
+      "output_ticks": 9223371892254775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036254775807,
+      "offset_minutes": -90,
+      "output_ticks": 9223371982254775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036254775807,
+      "offset_minutes": 0,
+      "output_ticks": 9223372036254775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036254775807,
+      "offset_minutes": 120,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036254775807,
+      "offset_minutes": 840,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036854775807,
+      "offset_minutes": -840,
+      "output_ticks": 9223371532854775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036854775807,
+      "offset_minutes": -240,
+      "output_ticks": 9223371892854775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036854775807,
+      "offset_minutes": -90,
+      "output_ticks": 9223371982854775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036854775807,
+      "offset_minutes": 0,
+      "output_ticks": 9223372036854775807
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036854775807,
+      "offset_minutes": 120,
+      "error_type": "OverflowError"
+    },
+    {
+      "api": "local",
+      "ticks": 9223372036854775807,
+      "offset_minutes": 840,
+      "error_type": "OverflowError"
+    }
+  ]
+}

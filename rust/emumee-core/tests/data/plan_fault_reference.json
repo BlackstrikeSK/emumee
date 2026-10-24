@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "scope": "Independent expected metadata for fixed compiler-owned cases; not execution evidence",
+  "cases": [
+    {
+      "fault": "crash-after-checkpoint",
+      "status": "failed",
+      "report_available": true,
+      "checkpoint_recovered": true,
+      "broker_complete": true,
+      "worker_deadline_ms": 33000,
+      "broker_deadline_ms": 48000,
+      "broker_attempts": 0
+    },
+    {
+      "fault": "timeout-after-checkpoint",
+      "status": "timeout",
+      "report_available": true,
+      "checkpoint_recovered": true,
+      "broker_complete": true,
+      "worker_deadline_ms": 7000,
+      "broker_deadline_ms": 9000,
+      "broker_attempts": 0
+    },
+    {
+      "fault": "broker-death",
+      "status": "failed",
+      "report_available": false,
+      "checkpoint_recovered": false,
+      "broker_complete": false,
+      "worker_deadline_ms": 33000,
+      "broker_deadline_ms": 48000,
+      "broker_attempts": 1
+    },
+    {
+      "fault": "broker-partial",
+      "status": "failed",
+      "report_available": false,
+      "checkpoint_recovered": false,
+      "broker_complete": false,
+      "worker_deadline_ms": 33000,
+      "broker_deadline_ms": 48000,
+      "broker_attempts": 1
+    },
+    {
+      "fault": "controller-exit",
+      "status": null,
+      "report_available": false,
+      "checkpoint_recovered": false,
+      "broker_complete": false,
+      "worker_deadline_ms": 33000,
+      "broker_deadline_ms": 48000,
+      "broker_attempts": 0
+    },
+    {
+      "fault": "controller-partial",
+      "status": null,
+      "report_available": false,
+      "checkpoint_recovered": false,
+      "broker_complete": false,
+      "worker_deadline_ms": 33000,
+      "broker_deadline_ms": 48000,
+      "broker_attempts": 0
+    },
+    {
+      "fault": "reconfigure",
+      "status": "partial",
+      "report_available": true,
+      "checkpoint_recovered": false,
+      "broker_complete": true,
+      "worker_deadline_ms": 33000,
+      "broker_deadline_ms": 48000,
+      "broker_attempts": 0
+    },
+    {
+      "fault": "guest-timeout",
+      "status": "timeout",
+      "report_available": true,
+      "checkpoint_recovered": false,
+      "broker_complete": true,
+      "worker_deadline_ms": 30001,
+      "broker_deadline_ms": 45001,
+      "broker_attempts": 0
+    },
+    {
+      "fault": "output-directories",
+      "status": "failed",
+      "report_available": false,
+      "checkpoint_recovered": false,
+      "broker_complete": false,
+      "worker_deadline_ms": 33000,
+      "broker_deadline_ms": 48000,
+      "broker_attempts": 0
+    }
+  ]
+}

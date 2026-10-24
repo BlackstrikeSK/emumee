@@ -226,9 +226,11 @@ class LegacyCRTStreams:
                 match = _FORMAT_SPEC.match(fmt, cursor)
                 if match is None:
                     raise ValueError("unsupported format specifier")
-                _flags, width, precision, _length, kind = match.groups()
+                _flags, width, precision, length, kind = match.groups()
                 if kind != "%":
                     arguments += 1 + (width == "*") + (precision == "*")
+                    if emu.get_ptr_size() == 4 and length in ("ll", "I64") and kind in "diuoxX":
+                        arguments += 1
                 cursor = match.end()
             if arguments > 64:
                 raise ValueError("format argument limit exceeded")
@@ -251,9 +253,10 @@ class LegacyCRTStreams:
                 for value in values))
             result = self._vsnwprintf(emu, api_name, None,
                                       [buffer, count, format_ptr, temporary])
-            if result < 0:
+            if result < 0 or result >= count:
                 emu.mem_write(buffer + (count - 1) * 2 if truncate else buffer,
                               b"\0\0")
+                return -1
             return result
         except Exception as exc:
             self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
@@ -858,6 +861,8 @@ class LegacyCRTStreams:
                     rendered = chr(value & (0xFFFF if kind == "c" else 0xFF))
                 else:
                     bits = 64 if length in ("ll", "I64") or kind == "p" else 32
+                    if pointer_size == 4 and length in ("ll", "I64"):
+                        value |= next_arg() << 32
                     number = value & ((1 << bits) - 1)
                     if kind in "di" and number & (1 << (bits - 1)):
                         number -= 1 << bits
@@ -892,7 +897,7 @@ class LegacyCRTStreams:
                     emu, buffer, len(output)):
                 raise ValueError("guest CRT write denied")
             emu.mem_write(buffer, output)
-            return length if length < count else -1
+            return length if length <= count else -1
         except Exception as exc:
             self.unsupported.append(f"{api_name}: {type(exc).__name__}: {exc}")
             return -1

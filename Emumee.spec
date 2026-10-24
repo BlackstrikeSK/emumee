@@ -4,7 +4,8 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 datas = []
 binaries = []
 hiddenimports = []
-datas += collect_data_files('emumee', includes=['guest_native/*.exe'])
+datas += collect_data_files('emumee', includes=['guest_native/*.exe', '_driver_trace.pyx'])
+hiddenimports += ['emumee._driver_trace']
 tmp_ret = collect_all('speakeasy')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('unicorn')

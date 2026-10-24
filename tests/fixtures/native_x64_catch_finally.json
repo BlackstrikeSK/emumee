@@ -1,0 +1,1 @@
+{"schema":"emumee.native_catch_finally.v1","order":[1,2,3],"filter_code":2147483651,"catch_code":2147483651,"abnormal_termination":1,"same_target_frame":true,"result":42,"user_mode_only":true,"driver_code_executed":false}

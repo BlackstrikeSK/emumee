@@ -15,8 +15,11 @@ from .bundle import (MAX_BUNDLE_BYTES, MAX_BUNDLE_FILES, MAX_BUNDLE_FILE_BYTES,
 from .managed import run_managed
 from .msi import inspect_msi
 from .native import run_native
+from .driver import run_driver
 from .pe import InvalidSample, inspect_pe, inspect_pe_header
 from .safeio import read_regular_file
+from .kernel_code_reference import MAX_REFERENCE_BYTES
+from .memory_strings import validate_options as validate_memory_strings
 
 
 MAX_STAGED_INPUT_BYTES = 128 * 1024 * 1024
@@ -53,6 +56,7 @@ def execute(run_dir: Path, expected_request_sha256: str | None = None) -> dict:
     request = json.loads(request_raw)
     if not isinstance(request, dict):
         raise InvalidSample("Staged request must be a JSON object")
+    memory_strings = validate_memory_strings(request.get("memory_strings"))
     data = read_regular_file(run_dir / "input.pe", MAX_STAGED_INPUT_BYTES,
                              containment_root=run_dir)
     if data is None:
@@ -61,6 +65,18 @@ def execute(run_dir: Path, expected_request_sha256: str | None = None) -> dict:
             hashlib.sha256(data).hexdigest() != request.get("input_sha256")):
         _preflight_failure(run_dir, "Staged execution input changed")
     companion_hashes = request.get("companions_sha256")
+    kernel_reference_data = None
+    reference_hash = request.get('kernel_code_reference_sha256')
+    reference_path = run_dir / 'kernel-code-reference.pe'
+    if reference_hash is not None:
+        if (not isinstance(reference_hash, str) or len(reference_hash) != 64 or
+                any(c not in '0123456789abcdef' for c in reference_hash)):
+            _preflight_failure(run_dir, 'Invalid staged kernel code reference digest')
+        kernel_reference_data = read_regular_file(reference_path, MAX_REFERENCE_BYTES, containment_root=run_dir)
+        if kernel_reference_data is None or hashlib.sha256(kernel_reference_data).hexdigest() != reference_hash:
+            _preflight_failure(run_dir, 'Staged kernel code reference changed or is unsafe')
+    elif reference_path.exists():
+        _preflight_failure(run_dir, 'Unbound staged kernel code reference')
     if expected_request_sha256 is not None and not isinstance(companion_hashes, dict):
         raise InvalidSample("Staged companion hashes are missing")
     if isinstance(companion_hashes, dict):
@@ -112,6 +128,8 @@ def execute(run_dir: Path, expected_request_sha256: str | None = None) -> dict:
         raise InvalidSample("Invalid companion guest path")
     header_info = inspect_pe_header(data, request["sample_name"])
     persona = request["persona"]
+    if kernel_reference_data is not None and (header_info.kind != 'driver' or header_info.architecture != 'x64' or persona['windows_build'] != 22631):
+        _preflight_failure(run_dir, 'Kernel code reference requires an x64 build22631 driver profile')
     started = datetime.now(timezone.utc).isoformat()
     summary = {"id": run_dir.name, "started_at": started, "sample": header_info.to_dict(),
                "persona": persona, "status": "running", "worker_containment": containment}
@@ -124,10 +142,22 @@ def execute(run_dir: Path, expected_request_sha256: str | None = None) -> dict:
         else:
             info = inspect_pe(data, request["sample_name"])
             summary["sample"] = info.to_dict()
+            if (type(request.get("driver_unload", False)) is not bool or
+                    (request.get("driver_unload") and info.kind != "driver")):
+                raise InvalidSample("Driver unload requires a driver input")
             if (type(request.get("all_exports", False)) is not bool or
                     (request.get("all_exports") and (info.kind != "dll" or info.managed))):
                 raise InvalidSample("Export emulation requires a native DLL")
-            if info.managed:
+            if info.kind == "driver":
+                if request["dlls"] or request.get("guest_args") or request.get("guest_env"):
+                    raise InvalidSample("Driver inputs do not accept DLLs, process arguments, or environment overrides")
+                result = run_driver(data, info, persona, run_dir, request["timeout"],
+                                    request["max_instructions"],
+                                    unload=request.get("driver_unload", False),
+                                    kernel_code_reference=kernel_reference_data,
+                                    memory_strings=memory_strings,
+                                    bundle_files=bundle_files, bundle_guest_root=guest_root)
+            elif info.managed:
                 companions = []
                 for name in request["dlls"]:
                     if not isinstance(name, str) or Path(name).name != name:
@@ -144,6 +174,7 @@ def execute(run_dir: Path, expected_request_sha256: str | None = None) -> dict:
                     companions.append((name, companion_data))
                 result = run_managed(data, info, persona, run_dir,
                                      request["max_instructions"], companions=companions,
+                                     memory_strings=memory_strings,
                                      guest_args=request.get("guest_args"),
                                      guest_env=request.get("guest_env"),
                                      bundle_files=[(name, payload) for name, _, payload in bundle_files],
@@ -159,7 +190,8 @@ def execute(run_dir: Path, expected_request_sha256: str | None = None) -> dict:
                                     bundle_guest_root=guest_root,
                                     companion_guest_paths=companion_guest_paths,
                                     emulate_exports=emulate_exports,
-                                    quoted_arg_indices=request.get("quoted_arg_indices"))
+                                    quoted_arg_indices=request.get("quoted_arg_indices"),
+                                    memory_strings=memory_strings)
                 (run_dir / "worker-stage.txt").write_text("native runner returned", encoding="utf-8")
         summary.update(result)
         summary["status"], completion_error = _result_status(result)

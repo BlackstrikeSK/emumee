@@ -129,7 +129,10 @@ class ManagedRunner:
                  guest_args: list[str] | None = None,
                  guest_env: dict[str, str] | None = None,
                  bundle_files: list[tuple[str, bytes]] | None = None,
-                 bundle_guest_root: str | None = None):
+                 bundle_guest_root: str | None = None,
+                 memory_strings: dict | None = None):
+        from .memory_strings import MemoryStringCapture
+        self.string_capture = MemoryStringCapture(memory_strings)
         self.pe = dnfile.dnPE(data=data)
         if self.pe.net is None:
             raise ValueError("Not a managed PE")
@@ -469,6 +472,8 @@ class ManagedRunner:
         this = stack.pop() if has_this and not constructor else None
         for value in args:
             self._track_managed_buffer(value)
+            if isinstance(value, str):
+                self.string_capture.scan_string(value, f"managed_argument:{name}")
         secret = name.startswith("System.Security.Cryptography.Rfc2898DeriveBytes.")
         self._record_event({"event": "managed_call", "method": name,
                             "args": (["[redacted]" for _ in args] if secret else
@@ -528,6 +533,8 @@ class ManagedRunner:
                 raise
         if constructor or returns:
             self._track_managed_buffer(result)
+            if isinstance(result, str):
+                self.string_capture.scan_string(result, f"managed_return:{name}")
             stack.append(result)
 
     def _companion_member(self, member, args: list, this, constructor: bool,
@@ -4035,6 +4042,7 @@ class ManagedRunner:
                     token = int(operand.value if hasattr(operand, "value") else operand)
                     value = self.pe.net.user_strings.get(token & 0xFFFFFF)
                     stack.append(str(value))
+                    self.string_capture.scan_string(str(value), f"managed_ldstr:0x{token:08x}")
                 elif op == "ldnull":
                     stack.append(None)
                 elif op.startswith("ldc.i4.") and op not in {"ldc.i4.s"}:
@@ -4374,6 +4382,7 @@ class ManagedRunner:
             "untracked_framework_calls": self.untracked_framework_calls,
         }
         report = {"engine": "emumee-cil", "entry_point": f"0x{token:08x}",
+                  "memory_strings": self.string_capture.report(),
                   "instructions": self.instructions, "events": self.events,
                   "network_events": self.network.events,
                   "stdout": self.stdout, "console_output": self.console_output.report(),
@@ -4389,6 +4398,7 @@ class ManagedRunner:
                   "aes_plaintext_capture": self._aes_plaintext_capture_report()}
         (run_dir / "engine-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         return {"engine": "emumee-cil", "engine_report": "engine-report.json",
+                "memory_strings": self.string_capture.report(),
                 "artifacts": self.catalog.items, "entry_points": 1,
                 "artifact_groups": self.catalog.groups(),
                 "artifact_capture": self.catalog.capture_summary(),
@@ -4414,8 +4424,10 @@ def run_managed(data: bytes, info: SampleInfo, persona: dict, run_dir: Path,
                 guest_args: list[str] | None = None,
                 guest_env: dict[str, str] | None = None,
                 bundle_files: list[tuple[str, bytes]] | None = None,
-                bundle_guest_root: str | None = None) -> dict:
+                bundle_guest_root: str | None = None,
+                memory_strings: dict | None = None) -> dict:
     return ManagedRunner(data, info, persona, run_dir, max_instructions,
                          companions=companions, guest_args=guest_args,
                          guest_env=guest_env, bundle_files=bundle_files,
-                         bundle_guest_root=bundle_guest_root).run(run_dir)
+                         bundle_guest_root=bundle_guest_root,
+                         memory_strings=memory_strings).run(run_dir)

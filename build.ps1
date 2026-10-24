@@ -7,6 +7,8 @@ if (-not (Test-Path -LiteralPath $python)) {
     Write-Error 'Run .\setup.ps1 first.'
     exit 1
 }
+& $python 'tools\build_driver_trace.py'
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $python -m PyInstaller --noconfirm --clean 'Emumee.spec'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $python 'tools\patch_bootloader_cfg.py' 'dist\Emumee\Emumee.exe'

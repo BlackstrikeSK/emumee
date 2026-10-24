@@ -1124,7 +1124,7 @@ COMMON = """
 <aside class="sidebar" aria-label="Workspace navigation">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">E</span>Emumee</a><div class="brand-caption">Windows emulation</div>
 <div class="nav-label">Workspace</div><nav class="side-nav"><a href="/"{% if view == 'runs' %} class="active" aria-current="page"{% endif %}>Analysis runs</a></nav>
-{% if view == 'detail' %}<div class="nav-label">This run</div><nav class="side-nav" aria-label="Run sections"><a href="#overview">Overview</a><a href="#artifacts">Artifacts</a><a href="#console">Console</a><a href="#commands">Commands</a><a href="#coverage">API coverage</a><a href="#network">Network</a><a href="#events">Event timeline</a></nav>{% elif view == 'compare' %}<div class="nav-label">This comparison</div><nav class="side-nav" aria-label="Comparison sections"><a href="#outcomes">Outcomes</a><a href="#changes">API &amp; persona</a><a href="#artifacts">Artifacts</a><a href="#behavior">Behavior</a></nav>{% endif %}
+{% if view == 'detail' %}<div class="nav-label">This run</div><nav class="side-nav" aria-label="Run sections"><a href="#overview">Overview</a><a href="#artifacts">Artifacts</a><a href="#console">Console</a><a href="#commands">Commands</a><a href="#coverage">API coverage</a><a href="#strings">Memory strings</a><a href="#network">Network</a><a href="#events">Event timeline</a></nav>{% elif view == 'compare' %}<div class="nav-label">This comparison</div><nav class="side-nav" aria-label="Comparison sections"><a href="#outcomes">Outcomes</a><a href="#changes">API &amp; persona</a><a href="#artifacts">Artifacts</a><a href="#behavior">Behavior</a></nav>{% endif %}
 <div class="sidebar-footer"><span class="local-dot"></span>Local workspace<br>Completed analysis reports</div></aside>
 <div class="workspace"><header class="topbar"><div class="crumb"><a href="/">Workspace</a><span class="crumb-separator">/</span><span class="current">{{ title }}</span></div><span class="local-label">Read-only reports</span></header><main class="wrap" id="main">
 {%- endmacro %}
@@ -1187,6 +1187,15 @@ DETAIL = COMMON + """
 {% for label, value in (('Engine trace', trace_integrity), ('Network report', broker_integrity), ('Instruction limit', 'Reached' if run.instruction_limit_reached else 'Not reached'), ('Wall-clock limit', 'Reached' if run.timeout_reached else 'Not reached'), ('Guest exit code', run.guest_exit_code if run.guest_exit_code is defined and run.guest_exit_code is not none else 'Unknown'), ('Entry return', run.guest_entry_return if run.guest_entry_return is defined and run.guest_entry_return is not none else '—')) %}<div><div class="label">{{ label }}</div><div class="fact-value">{{ value }}</div></div>{% endfor %}
 {% if run.cil_coverage %}<div><div class="label">CIL opcode attempts</div><div class="fact-value">{{ run.cil_coverage.opcode_attempts|ui_number }} · {{ run.cil_coverage.tracked_opcodes|ui_number }} tracked names</div></div><div><div class="label">Framework call attempts</div><div class="fact-value">{{ run.cil_coverage.framework_calls|ui_number }}</div></div>{% else %}<div><div class="label">Observed API calls</div><div class="fact-value">{{ run.api_coverage.api_calls|ui_number if run.api_coverage else '—' }}</div></div><div><div class="label">Distinct API names</div><div class="fact-value">{{ run.api_coverage.observed_apis|ui_number if run.api_coverage and run.api_coverage.observed_apis is defined else '—' }}</div></div><div><div class="label">Signature-only API names</div><div class="fact-value">{{ run.api_coverage.signature_only_calls|length if run.api_coverage else '—' }}</div></div>{% endif %}
 </div></div>
+{% if run.driver %}
+<h3>Kernel driver</h3><div class="panel"><div class="kv">
+<div><span class="k">DriverEntry NTSTATUS</span>{{ '0x%08X'|format(run.driver.entry_status) if run.driver.entry_status is not none else 'Not returned' }}</div>
+<div><span class="k">Initialization</span>{{ 'Succeeded' if run.driver.initialization_succeeded else 'Failed' if run.driver.entry_status is not none else 'Not observed' }}</div>
+<div><span class="k">Unload</span>{{ 'Completed' if run.driver.unload_completed else 'Not registered' if run.driver.unload_requested and not run.driver.unload_registered else 'Not completed' if run.driver.unload_requested else 'Not requested' }}</div>
+<div class="wide"><span class="k">Service registry path</span><code>{{ run.driver.registry_path }}</code></div>
+<div class="wide"><span class="k">Scope</span>{{ run.driver.scope }}</div>
+</div><h4>Created devices</h4><pre>{{ run.driver.devices_created|ui_json(indent=2) }}</pre><h4>Registered dispatch routines</h4><pre>{{ run.driver.dispatch_routines|ui_json(indent=2) }}</pre></div>
+{% endif %}
 {% if run.errors %}<h3>Coverage limits and errors</h3><div class="alert danger"><pre>{{ run.errors|ui_json(indent=2) }}</pre></div>{% endif %}
 {% if run.guest_trace_complete is sameas false %}<div class="alert danger">The worker did not finish its guest trace report. Guest API, file, process, memory, and console observations may be incomplete.</div>{% endif %}
 {% if run.artifact_checkpoint_recovered %}<div class="alert warn">Artifacts below were recovered from a verified worker checkpoint. Later payloads and observations may be missing.</div>{% endif %}
@@ -1291,6 +1300,19 @@ DETAIL = COMMON + """
 {% else %}<div class="empty">Per-API call counts were not recorded for this run.</div>{% endif %}
 {% if run.api_coverage and run.api_coverage.signature_only_calls %}<h2>Signature-only API calls</h2><details class="block"><summary>Signature-only API calls <span class="count-tag">({{ run.api_coverage.signature_only_calls|length }})</span></summary><div class="body"><pre>{{ run.api_coverage.signature_only_calls|ui_json(indent=2) }}</pre></div></details>{% endif %}
 {% endif %}
+</section>
+<section class="section" id="strings"><h2>Memory strings{% if run.memory_strings %} <span class="count-tag">({{ run.memory_strings.matches|length }})</span>{% endif %}</h2>
+{% if run.memory_strings %}
+<p class="muted">IP addresses, URLs, and custom regex matches observed in guest memory. A match does not establish a network connection. Native and driver captures use final live memory; managed captures include loaded strings and method arguments and returns. Offsets are bytes for native memory and characters for managed strings.</p>
+{% if not run.memory_strings.enabled %}<div class="empty">Memory string capture was disabled for this run.</div>
+{% else %}
+{% if run.memory_strings.truncated %}<div class="alert warn">Capture is incomplete: {{ run.memory_strings.limits|join(', ') }}.</div>{% endif %}
+{% if run.memory_strings.regex %}<details class="block"><summary>Custom patterns</summary><div class="body"><ol>{% for pattern in run.memory_strings.regex %}<li><code>{{ pattern }}</code></li>{% endfor %}</ol></div></details>{% endif %}
+{% if run.memory_strings.matches %}<div class="table-wrap"><table><thead><tr><th>Format</th><th>Value</th><th>Location</th><th>Encoding</th></tr></thead><tbody>
+{% for item in run.memory_strings.matches %}<tr><td>{{ item.format }}</td><td><code>{{ item.value }}</code></td><td><code>{{ item.address or item.source }}</code><div class="muted">{{ item.source }} · offset {{ item.offset }}</div></td><td>{{ item.encoding }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<div class="empty">No matching strings were captured.</div>{% endif %}
+{% endif %}
+{% else %}<div class="empty">Memory string capture was not recorded for this run.</div>{% endif %}
 </section>
 <section class="section" id="network"><h2>Network broker events <span class="count-tag">({{ broker_event_count }})</span></h2>
 <p class="meta-line">Showing {{ broker_first }}–{{ broker_last }} of {{ broker_event_count }} · page {{ broker_page }} of {{ broker_pages }}.

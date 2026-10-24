@@ -82,7 +82,9 @@ class PathpingTests(unittest.TestCase):
             self.assertEqual(result['guest_exit_code'],0)
             self.assertIn('0/100 = 0%',result['console_output']['stdout'])
             self.assertEqual(len([e for e in report['network_events'] if e['event']=='guest_icmp_echo']),101)
-            result,report=self.run_case(root,'x64',['-n','-h','255','-q','1','-w','0','203.0.113.250'],program='pathping.exe')
+            # The maximum-hop fixture is CPU-heavy under concurrent analysis;
+            # retain its instruction cap and allow a larger test wall budget.
+            result,report=self.run_case(root,'x64',['-n','-h','255','-q','1','-w','0','203.0.113.250'],program='pathping.exe',timeout=60)
             self.assertEqual(result['guest_exit_code'],0)
             self.assertEqual(len([e for e in report['network_events'] if e['event']=='guest_icmp_echo']),765)
 

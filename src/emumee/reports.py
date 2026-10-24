@@ -10,6 +10,7 @@ from pathlib import Path
 from .safeio import read_regular_file
 from .console_output import MAX_CONSOLE_CHARS
 from .artifacts import groups_from_payloads
+from .memory_strings import valid_capture
 
 
 MAX_SUMMARY_BYTES = 5 * 1024 * 1024
@@ -25,10 +26,40 @@ ENGINE_INTEGRITY = "sha256-v1"
 def valid_summary(value) -> bool:
     if not isinstance(value, dict):
         return False
+    if "memory_strings" in value and not valid_capture(value["memory_strings"]):
+        return False
     if not isinstance(value.get("id"), str) or not RUN_ID.fullmatch(value["id"]):
         return False
     if not isinstance(value.get("sample"), dict):
         return False
+    if "execution_mode" in value and value["execution_mode"] not in {"kernel", "user"}:
+        return False
+    driver = value.get("driver")
+    if driver is not None:
+        if not isinstance(driver, dict) or value.get("execution_mode") != "kernel":
+            return False
+        status = driver.get("entry_status")
+        if status is not None and (type(status) is not int or not 0 <= status <= 0xFFFFFFFF):
+            return False
+        for field in ("initialization_succeeded", "unload_requested", "unload_registered", "unload_completed"):
+            if type(driver.get(field)) is not bool:
+                return False
+        if driver["initialization_succeeded"] != (status is not None and not bool(status & 0x80000000)):
+            return False
+        for field in ("registry_path", "driver_object", "scope"):
+            if not isinstance(driver.get(field), str) or len(driver[field]) > 32767:
+                return False
+        devices = driver.get("devices_created")
+        routines = driver.get("dispatch_routines")
+        if (not isinstance(devices, list) or len(devices) > 64 or
+                any(not isinstance(item, dict) or
+                    any(not isinstance(item.get(key), str) or len(item[key]) > 1024
+                        for key in ("name", "address")) for item in devices) or
+                not isinstance(routines, dict) or len(routines) > 28 or
+                any(key not in {str(i) for i in range(28)} or
+                    not isinstance(address, str) or not re.fullmatch(r"0x[0-9a-f]{1,16}", address)
+                    for key, address in routines.items())):
+            return False
     if value.get("status") not in {"running", "completed", "partial", "failed", "timeout"}:
         return False
     artifacts = value.get("artifacts", [])
@@ -49,7 +80,7 @@ def valid_summary(value) -> bool:
         return False
     for field in ("instruction_count", "denied_operations"):
         if field in value and (type(value[field]) is not int or
-                               not 0 <= value[field] <= 100_000_000):
+                               not 0 <= value[field] <= ((1 << 64) - 1 if field == "instruction_count" else 100_000_000)):
             return False
     if "instruction_limit_reached" in value and type(value["instruction_limit_reached"]) is not bool:
         return False
@@ -68,7 +99,7 @@ def valid_summary(value) -> bool:
         return False
     if "completion_reason" in value and value["completion_reason"] not in {
             "exit_process", "entry_return", "instruction_limit", "timeout", "error",
-            "worker_failure", "unknown", "static_inspection"}:
+            "worker_failure", "unknown", "static_inspection", "cancelled"}:
         return False
     if (value["status"] == "completed" and
             value.get("completion_reason") not in (None, "exit_process", "entry_return")):

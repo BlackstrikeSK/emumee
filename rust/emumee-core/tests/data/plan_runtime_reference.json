@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "scope": "Independent tiny fixed input/expected return metadata. No guest execution evidence or arbitrary input authority.",
+  "cases": [
+    {
+      "case": "native-a",
+      "expected_status": "completed",
+      "guest_entry_return": 559366986,
+      "broker_attempts": 0,
+      "mode": "native",
+      "hostname": "ALFA",
+      "token": "ONE!",
+      "mounted_file_hex": "44415441"
+    },
+    {
+      "case": "native-b",
+      "expected_status": "completed",
+      "guest_entry_return": 625565019,
+      "broker_attempts": 0,
+      "mode": "native",
+      "hostname": "BETA",
+      "token": "TWO!",
+      "mounted_file_hex": "4d4f5245"
+    },
+    {
+      "case": "native-replay",
+      "expected_status": "completed",
+      "guest_entry_return": 50462976,
+      "broker_attempts": 1,
+      "mode": "native",
+      "hostname": "ALFA",
+      "token": "ONE!",
+      "mounted_file_hex": "44415441"
+    },
+    {
+      "case": "native-deny",
+      "expected_status": "completed",
+      "guest_entry_return": 0,
+      "broker_attempts": 1,
+      "mode": "native",
+      "hostname": "ALFA",
+      "token": "ONE!",
+      "mounted_file_hex": "44415441"
+    },
+    {
+      "case": "kernel17",
+      "expected_status": "completed",
+      "guest_entry_return": 17,
+      "broker_attempts": 0,
+      "mode": "kernel",
+      "hostname": "ALFA",
+      "token": "ONE!",
+      "mounted_file_hex": null
+    },
+    {
+      "case": "kernel19",
+      "expected_status": "completed",
+      "guest_entry_return": 19,
+      "broker_attempts": 0,
+      "mode": "kernel",
+      "hostname": "ALFA",
+      "token": "ONE!",
+      "mounted_file_hex": null
+    },
+    {
+      "case": "static-msi",
+      "expected_status": "partial",
+      "guest_entry_return": null,
+      "broker_attempts": 0,
+      "mode": "static",
+      "hostname": "ALFA",
+      "token": "ONE!",
+      "mounted_file_hex": null
+    }
+  ]
+}

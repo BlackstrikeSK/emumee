@@ -1,0 +1,22 @@
+[package]
+name = "emumee-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "emumee-rs"
+path = "src/main.rs"
+
+[dependencies]
+emumee-core = { path = "../emumee-core" }
+emumee-engine = { path = "../emumee-engine" }
+emumee-platform = { path = "../emumee-platform" }
+anyhow.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+sha2.workspace = true
+base64 = "=0.22.1"
+
+[build-dependencies]
+sha2.workspace = true

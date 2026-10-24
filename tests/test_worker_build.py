@@ -14,7 +14,7 @@ from emumee.worker_build import RECEIPT, verify_receipt, write_receipt
 
 class WorkerBuildTests(unittest.TestCase):
     def fixture(self, root):
-        for name in ('Emumee.spec','launcher.py','pyproject.toml','build.ps1','tools/patch_bootloader_cfg.py','src/emumee/model.py'):
+        for name in ('Emumee.spec','launcher.py','pyproject.toml','build.ps1','tools/patch_bootloader_cfg.py','tools/build_driver_trace.py','src/emumee/model.py'):
             path=root/name
             path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text('# harmless fixture\n',encoding='utf-8')
@@ -79,6 +79,29 @@ class WorkerBuildTests(unittest.TestCase):
             self.assertEqual(result,2)
             self.assertIn('build.ps1',errors.getvalue())
             sandbox.assert_not_called()
+
+    def test_native_trace_binary_and_source_binding_are_verified_portably(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            worker=self.fixture(root)
+            source=root/'src/emumee'
+            package=worker.parent/'_internal/emumee'
+            for folder in (source,package):
+                (folder/'_driver_trace.fixture.pyd').write_bytes(b'MZ harmless native receipt fixture')
+                (folder/'_driver_trace.pyx').write_bytes(b'# harmless native source fixture')
+            expected=write_receipt(worker,root)
+            self.assertEqual(verify_receipt(worker),expected)
+            (package/'_driver_trace.pyx').write_bytes(b'# modified binding')
+            with self.assertRaisesRegex(ValueError,'native driver trace differs'):
+                verify_receipt(worker)
+            (package/'_driver_trace.pyx').write_bytes(b'# harmless native source fixture')
+            (package/'_driver_trace.fixture.pyd').write_bytes(b'MZ modified native binary')
+            with self.assertRaisesRegex(ValueError,'native driver trace differs'):
+                verify_receipt(worker)
+            (package/'_driver_trace.fixture.pyd').write_bytes(b'MZ harmless native receipt fixture')
+            (source/'_driver_trace.pyx').write_bytes(b'# source changed without rebuilding')
+            with self.assertRaisesRegex(ValueError,'stale'):
+                verify_receipt(worker,root)
 
 
 if __name__=='__main__':

@@ -30,12 +30,14 @@ from .bundle import (MAX_BUNDLE_BYTES, MAX_BUNDLE_FILES, MAX_BUNDLE_FILE_BYTES,
                      collect_bundle, normalize_relative)
 from .network import MAX_TRANSFER
 from .console_output import MAX_CONSOLE_CHARS
+from .memory_strings import validate_options as validate_memory_strings
 from .pe import InvalidSample, inspect_pe_header
 from .persona import DEFAULT_PERSONA, MAX_NATIVE_API_CALLS, load_persona
 from .reports import (ENGINE_INTEGRITY, MAX_ENGINE_BYTES, MAX_NETWORK_REPORT_BYTES,
                       MAX_SUMMARY_BYTES, recover_artifact_checkpoint,
                       valid_summary, verify_artifact_manifest)
 from .safeio import read_regular_file
+from .kernel_code_reference import MAX_REFERENCE_BYTES, reference_identity
 
 
 MAX_INPUT_BYTES = 128 * 1024 * 1024
@@ -215,6 +217,8 @@ def _staged_input_errors(run_dir: Path, manifest: dict) -> list[str]:
                     for item in manifest["companions"])
     expected.extend(("inputs/" + item["path"], item["sha256"], MAX_BUNDLE_FILE_BYTES)
                     for item in manifest.get("bundle_files", []))
+    if manifest.get('kernel_code_reference') is not None:
+        expected.append(('kernel-code-reference.pe', manifest['kernel_code_reference']['sha256'], MAX_REFERENCE_BYTES))
     errors = []
     for relative, digest, limit in expected:
         payload = read_regular_file(run_dir / relative, limit)
@@ -326,12 +330,37 @@ def run(args: argparse.Namespace) -> int:
             else:
                 bundled = {}
         info = inspect_pe_header(data, sample.name)
+        memory_strings = validate_memory_strings({
+            "enabled": not getattr(args, "no_memory_strings", False),
+            "regex": getattr(args, "string_regex", []) or []})
+        if info.kind == "msi" and memory_strings["regex"]:
+            raise ValueError("--string-regex requires a PE input")
         if info.kind == "msi" and (directory_input or getattr(args, "dll", []) or
                                     getattr(args, "launch", None)):
             raise ValueError("MSI inspection accepts a direct MSI input without --dll or --launch")
         apphost_target = _managed_apphost_target(sample, data, info)
         execution_data, execution_info = apphost_target or (data, info)
         emulate_exports = bool(getattr(args, "all_exports", False))
+        driver_unload = bool(getattr(args, "driver_unload", False))
+        kernel_reference_data = None
+        kernel_reference_identity = None
+        if getattr(args, 'kernel_code_reference', None):
+            if (execution_info.kind != 'driver' or execution_info.architecture != 'x64' or
+                    persona['windows_build'] != 22631):
+                raise ValueError('--kernel-code-reference requires an x64 build22631 driver profile')
+            reference_path = Path(args.kernel_code_reference).resolve(strict=True)
+            kernel_reference_data = read_regular_file(reference_path, MAX_REFERENCE_BYTES)
+            if kernel_reference_data is None:
+                raise ValueError('Kernel code reference is unsafe or exceeds32 MiB')
+            reference_info = inspect_pe_header(kernel_reference_data, reference_path.name)
+            if reference_info.architecture != 'x64' or reference_info.managed:
+                raise ValueError('Kernel code reference must be a native x64 PE')
+            kernel_reference_identity = reference_identity(kernel_reference_data)
+        if driver_unload and execution_info.kind != "driver":
+            raise ValueError("--driver-unload requires a driver input")
+        if execution_info.kind == "driver" and (getattr(args, "dll", []) or
+                getattr(args, "guest_arg", []) or getattr(args, "guest_env", [])):
+            raise ValueError("Driver inputs do not accept --dll, --guest-arg, or --guest-env")
         if emulate_exports and (execution_info.kind != "dll" or execution_info.managed):
             raise ValueError("--all-exports requires a native DLL-style PE input")
         guest_args = list(getattr(args, "guest_arg", []) or [])
@@ -376,6 +405,8 @@ def run(args: argparse.Namespace) -> int:
         return 2
     seen_companions: set[str] = set()
     for relative, dll_data in bundled.items():
+        if execution_info.kind == "driver":
+            continue
         if Path(relative).suffix.casefold() != ".dll" or relative == launch_relative:
             continue
         try:
@@ -432,6 +463,8 @@ def run(args: argparse.Namespace) -> int:
     ipc_dir.mkdir()
     (run_dir / "inputs").mkdir()
     (run_dir / "input.pe").write_bytes(execution_data)
+    if kernel_reference_data is not None:
+        (run_dir / 'kernel-code-reference.pe').write_bytes(kernel_reference_data)
     if apphost_target is not None:
         (run_dir / "inputs" / sample.name).write_bytes(data)
     if fixture_document is not None:
@@ -453,10 +486,13 @@ def run(args: argparse.Namespace) -> int:
         companion_hashes.append({"name": name, "sha256": digest})
         companion_guest_paths[name] = guest_path
     request = {"sample_name": execution_info.name, "persona": persona, "dlls": companions,
+               "memory_strings": memory_strings,
                "timeout": args.timeout, "max_instructions": args.max_instructions,
                "guest_args": guest_args, "guest_env": guest_env,
                "quoted_arg_indices": quoted_arg_indices,
                "all_exports": emulate_exports,
+               "driver_unload": driver_unload,
+               "kernel_code_reference_sha256": kernel_reference_identity['sha256'] if kernel_reference_identity else None,
                "network_mode": network_mode,
                "input_sha256": hashlib.sha256(execution_data).hexdigest(),
                "companions_sha256": {name: digest for name, _, digest, _ in companion_inputs},
@@ -479,9 +515,12 @@ def run(args: argparse.Namespace) -> int:
         "bundle_launch": launch_relative if bundled else None,
         "request_sha256": hashlib.sha256(request_raw).hexdigest(),
         "guest_args": guest_args,
+        "memory_strings": memory_strings,
         "quoted_arg_indices": quoted_arg_indices,
         "guest_env": guest_env,
         "all_exports": emulate_exports,
+        "driver_unload": driver_unload,
+        "kernel_code_reference": kernel_reference_identity,
         "network_mode": network_mode,
         "engine_report_integrity": ENGINE_INTEGRITY,
         "network_broker_report_integrity": ENGINE_INTEGRITY,
@@ -701,6 +740,8 @@ def run(args: argparse.Namespace) -> int:
     print(json.dumps({"run": run_id, "status": summary["status"], "report": str(run_dir / "summary.json"),
                       "guest_exit_code": summary.get("guest_exit_code"),
                       "guest_entry_return": summary.get("guest_entry_return"),
+                      "execution_mode": summary.get("execution_mode"),
+                      "driver": summary.get("driver"),
                       "completion_reason": summary.get("completion_reason"),
                       "worker_exit_code": worker_exit,
                       "worker_failure_reason": summary.get("worker_failure_reason"),
@@ -727,6 +768,7 @@ def batch(args: argparse.Namespace) -> int:
         if not directory.is_dir():
             raise ValueError("Batch input must be a directory")
         extensions = ({".exe", ".scr", ".com", ".msi", ".msp", ".mst"} |
+                      ({".sys"} if getattr(args, "include_driver", False) else set()) |
                       ({".dll", ".ocx", ".cpl", ".ax"} if args.include_dll else set()))
         pending = [directory]
         samples: list[Path] = []
@@ -777,6 +819,14 @@ def batch(args: argparse.Namespace) -> int:
 
 
 def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--string-regex", action="append", default=[], metavar="REGEX",
+                        help="Capture memory strings matching a custom regex; repeatable (up to 16)")
+    parser.add_argument("--no-memory-strings", action="store_true",
+                        help="Disable IP, URL, and custom memory string capture")
+    parser.add_argument('--kernel-code-reference',
+                        help='Use a native x64 PE as non-executable NTOS code inspection data (build22631 driver profile)')
+    parser.add_argument("--driver-unload", action="store_true",
+                        help="After successful DriverEntry, call a registered DriverUnload routine")
     parser.add_argument("--dll", action="append", default=[], help="Explicit guest DLL input; repeatable")
     parser.add_argument("--all-exports", action="store_true",
                         help="After native DLL attach, emulate up to ten exports with placeholder arguments")
@@ -801,7 +851,7 @@ def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="emumee", description="User-mode Windows PE emulation and payload extraction")
+    parser = argparse.ArgumentParser(prog="emumee", description="Windows PE and driver emulation and payload extraction")
     parser.add_argument("--version", action="version", version=f"emumee {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
     p_run = sub.add_parser("run", help="Emulate a PE or statically inspect an MSI")
@@ -813,6 +863,7 @@ def main(argv: list[str] | None = None) -> int:
     p_batch.add_argument("directory", help="Directory containing samples to analyze")
     p_batch.add_argument("--recursive", action="store_true", help="Include subdirectories without following links")
     p_batch.add_argument("--include-dll", action="store_true", help="Also analyze DLL files as primary inputs")
+    p_batch.add_argument("--include-driver", action="store_true", help="Also analyze native SYS drivers as primary inputs")
     p_batch.add_argument("--all-pe", action="store_true", help="Also inspect other filenames with a PE signature")
     p_batch.add_argument("--max-samples", type=int, default=1000, help="Reject batches larger than this count (maximum 1000)")
     _add_analysis_options(p_batch)
@@ -833,6 +884,14 @@ def main(argv: list[str] | None = None) -> int:
     p_powershell.add_argument("--timeout", type=int, default=60, help="Container deadline in seconds (1..300)")
     p_powershell.set_defaults(func=_powershell)
     args = parser.parse_args(argv)
+    if args.command in {"run", "batch"}:
+        try:
+            validate_memory_strings({"enabled": not args.no_memory_strings,
+                                     "regex": args.string_regex})
+        except ValueError as exc:
+            parser.error(str(exc))
+        if args.no_memory_strings and args.string_regex:
+            parser.error("--string-regex cannot be combined with --no-memory-strings")
     if (getattr(args, "timeout", 1) <= 0 or getattr(args, "max_instructions", 1) <= 0
             or getattr(args, "memory_mb", 1) <= 0 or getattr(args, "max_output_mb", 1) <= 0):
         parser.error("limits must be positive")

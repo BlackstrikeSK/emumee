@@ -268,7 +268,7 @@ def _engine_error_text(error: object) -> str:
     if not isinstance(error, dict):
         return "Native emulation error with unrecognized detail"
     parts = ["Native emulation error"]
-    for key, limit in (("type", 80), ("pc", 64), ("context_summary", 760)):
+    for key, limit in (("type", 80), ("api_name", 160), ("pc", 64), ("context_summary", 760)):
         value = error.get(key)
         if isinstance(value, str) and value:
             clean = "".join(char if char.isprintable() else " " for char in value[:limit])
@@ -667,7 +667,12 @@ def run_native(
     companion_guest_paths: dict[str, str] | None = None,
     emulate_exports: bool = False,
     quoted_arg_indices: list[int] | None = None,
+    memory_strings: dict | None = None,
 ) -> dict:
+    from .memory_strings import MemoryStringCapture
+    string_capture = MemoryStringCapture(memory_strings)
+    if info.kind == "driver":
+        raise InvalidSample("Driver targets require the kernel runner")
     cfg = make_speakeasy_config(persona, info.name, timeout, max_instructions,
                                 guest_args, guest_env, quoted_arg_indices)
     persona_sources = {}
@@ -2376,6 +2381,10 @@ def run_native(
             # Their bytes are historical evidence, not live final memory.
             if is_free:
                 continue
+            mapped_module = se.emu.get_mod_from_addr(base)
+            if (not str(tag).startswith("emu.module.") or
+                    mapped_module is not None and not mapped_module.is_decoy()):
+                string_capture.scan_memory(blob, f"memory:{tag}", base)
             remaining = MAX_MEMORY_SCAN - scanned
             if len(blob) > remaining:
                 catalog.note_omission(f"memory:{tag}:0x{base:x}",
@@ -2406,6 +2415,7 @@ def run_native(
             ][:16]
             if associated:
                 context["subsequent_remote_threads"] = associated
+        report["memory_strings"] = string_capture.report()
         (run_dir / "engine-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         (run_dir / "worker-stage.txt").write_text("saving native manifest", encoding="utf-8")
         report["artifact_capture"] = catalog.capture_summary()
@@ -2441,6 +2451,7 @@ def run_native(
         return {
             "engine": "speakeasy-unicorn",
             "engine_report": "engine-report.json",
+            "memory_strings": string_capture.report(),
             "artifacts": catalog.items,
             "artifact_groups": catalog.groups(),
             "artifact_capture": catalog.capture_summary(),

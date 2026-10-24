@@ -159,13 +159,13 @@ class AVXFallback:
             engine.reg_write(register, int(engine.reg_read(register)) & _MASK128)
         return True
 
-    def observe_instruction(self, engine, address: int, size: int) -> None:
+    def observe_instruction(self, engine, address: int, size: int, *, code=None) -> None:
         # Unicorn accepts VZEROUPPER on this CPU model but leaves YMM upper
         # lanes unchanged. The existing guest instruction hook calls this
         # before execution; the engine's accepted instruction then completes.
         if size not in (3, 4):
             return
-        code = bytes(engine.mem_read(address, size))
+        code = bytes(engine.mem_read(address, size)) if code is None else code
         if code not in (b"\xc5\xf8\x77", b"\xc4\xe1\x78\x77"):
             return
         for index in range(16 if self.pointer_size == 8 else 8):

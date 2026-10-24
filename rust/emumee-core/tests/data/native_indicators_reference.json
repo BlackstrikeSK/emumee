@@ -1,0 +1,872 @@
+{
+  "schema": 1,
+  "scope": "Static generated recipe and actual Python MemoryStringCapture only; no guest execution proof",
+  "python": "3.13.6",
+  "legacy_scanner_sha256": "312b9b4ca273bced5adc1d8cb1f9f9b4bdd34aa9ff6e02cd050f54fbd242cfa4",
+  "cases": [
+    {
+      "architecture": "x86",
+      "case": "native",
+      "analysis_case": "native-indicators",
+      "input_size": 2048,
+      "input_sha256": "229f38446b1181aff5b08ee88383c5af121164d002bb8949def401b96f445d9e",
+      "initial_image_sha256": "3d318ae814b96a9d880b7edc0b4707ef9ae9b01109d3cef411815556085fd4ac",
+      "golden_settled_sha256": "f67a21eccd7c7c0b4d5f0e62de9ca28726f7db43cbd7273152f2b4b35f9cd024",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x402038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x402020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x40212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x402101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": true,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x86",
+      "case": "kernel",
+      "analysis_case": "kernel-indicators",
+      "input_size": 2048,
+      "input_sha256": "dd15a3e2906969596b3d0333ce2d5419c160a5a603a45bf3bc6ea4fefc3bae50",
+      "initial_image_sha256": "096e1568efc9aa0f5c2f334b692ec97af8de97f91b1aca8101cd7f8314dae296",
+      "golden_settled_sha256": "2dd999ffa80522b085e2f7a277ba184c8c7e92ef42f8c0234710fb6f1e15fa73",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x402038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x402020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x40212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x402101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": true,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x86",
+      "case": "native-none",
+      "analysis_case": "native-indicators-none",
+      "input_size": 2048,
+      "input_sha256": "229f38446b1181aff5b08ee88383c5af121164d002bb8949def401b96f445d9e",
+      "initial_image_sha256": "3d318ae814b96a9d880b7edc0b4707ef9ae9b01109d3cef411815556085fd4ac",
+      "golden_settled_sha256": "f67a21eccd7c7c0b4d5f0e62de9ca28726f7db43cbd7273152f2b4b35f9cd024",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x402038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x402020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x40212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x402101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": false,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x86",
+      "case": "kernel-none",
+      "analysis_case": "kernel-indicators-none",
+      "input_size": 2048,
+      "input_sha256": "dd15a3e2906969596b3d0333ce2d5419c160a5a603a45bf3bc6ea4fefc3bae50",
+      "initial_image_sha256": "096e1568efc9aa0f5c2f334b692ec97af8de97f91b1aca8101cd7f8314dae296",
+      "golden_settled_sha256": "2dd999ffa80522b085e2f7a277ba184c8c7e92ef42f8c0234710fb6f1e15fa73",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x402038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x402020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x40212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x402101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": false,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x86",
+      "case": "native-disabled",
+      "analysis_case": "native-indicators-disabled",
+      "input_size": 2048,
+      "input_sha256": "229f38446b1181aff5b08ee88383c5af121164d002bb8949def401b96f445d9e",
+      "initial_image_sha256": "3d318ae814b96a9d880b7edc0b4707ef9ae9b01109d3cef411815556085fd4ac",
+      "golden_settled_sha256": "f67a21eccd7c7c0b4d5f0e62de9ca28726f7db43cbd7273152f2b4b35f9cd024",
+      "expected": {
+        "enabled": false,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "disabled",
+      "omissions": []
+    },
+    {
+      "architecture": "x86",
+      "case": "kernel-disabled",
+      "analysis_case": "kernel-indicators-disabled",
+      "input_size": 2048,
+      "input_sha256": "dd15a3e2906969596b3d0333ce2d5419c160a5a603a45bf3bc6ea4fefc3bae50",
+      "initial_image_sha256": "096e1568efc9aa0f5c2f334b692ec97af8de97f91b1aca8101cd7f8314dae296",
+      "golden_settled_sha256": "2dd999ffa80522b085e2f7a277ba184c8c7e92ef42f8c0234710fb6f1e15fa73",
+      "expected": {
+        "enabled": false,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "disabled",
+      "omissions": []
+    },
+    {
+      "architecture": "x86",
+      "case": "native-read-budget",
+      "analysis_case": "native-indicators-read-budget",
+      "input_size": 2048,
+      "input_sha256": "229f38446b1181aff5b08ee88383c5af121164d002bb8949def401b96f445d9e",
+      "initial_image_sha256": "3d318ae814b96a9d880b7edc0b4707ef9ae9b01109d3cef411815556085fd4ac",
+      "golden_settled_sha256": "f67a21eccd7c7c0b4d5f0e62de9ca28726f7db43cbd7273152f2b4b35f9cd024",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 1024,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "read_budget"
+      ]
+    },
+    {
+      "architecture": "x86",
+      "case": "kernel-read-budget",
+      "analysis_case": "kernel-indicators-read-budget",
+      "input_size": 2048,
+      "input_sha256": "dd15a3e2906969596b3d0333ce2d5419c160a5a603a45bf3bc6ea4fefc3bae50",
+      "initial_image_sha256": "096e1568efc9aa0f5c2f334b692ec97af8de97f91b1aca8101cd7f8314dae296",
+      "golden_settled_sha256": "2dd999ffa80522b085e2f7a277ba184c8c7e92ef42f8c0234710fb6f1e15fa73",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 1024,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "read_budget"
+      ]
+    },
+    {
+      "architecture": "x86",
+      "case": "native-read-denied",
+      "analysis_case": "native-indicators-read-denied",
+      "input_size": 2048,
+      "input_sha256": "f77485304d175636906d321fe7fbd789f483b157e517a35686ff1dab7fae8d84",
+      "initial_image_sha256": "3b1c4e22e390d2bab25cba0929a3cb0c47a48eabff306fd068b2b76d3f865867",
+      "golden_settled_sha256": "a998ca7e3e790e2ba06b972a30a2389178d2ca7fab6a5db267835aa4cd849644",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "root_not_readable"
+      ]
+    },
+    {
+      "architecture": "x86",
+      "case": "kernel-read-denied",
+      "analysis_case": "kernel-indicators-read-denied",
+      "input_size": 2048,
+      "input_sha256": "91357deacd4f2a05832810541830d09bbfb89599181f66b8c84f0b1fdd008ab7",
+      "initial_image_sha256": "1a7ee6cdbc619fc5c368ea587f9387918e19f133612b30fc2b426fa6e81502f6",
+      "golden_settled_sha256": "2557fb92df267e6789974ce32162d2167c81672c7f5be85b76cc3eb8d075c4e6",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "root_not_readable"
+      ]
+    },
+    {
+      "architecture": "x86",
+      "case": "native-scan-budget",
+      "analysis_case": "native-indicators-scan-budget",
+      "input_size": 2048,
+      "input_sha256": "229f38446b1181aff5b08ee88383c5af121164d002bb8949def401b96f445d9e",
+      "initial_image_sha256": "3d318ae814b96a9d880b7edc0b4707ef9ae9b01109d3cef411815556085fd4ac",
+      "golden_settled_sha256": "f67a21eccd7c7c0b4d5f0e62de9ca28726f7db43cbd7273152f2b4b35f9cd024",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 8192,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 8192,
+      "read_bytes": 12288,
+      "selected_bytes": 8192,
+      "retained_snapshot": false,
+      "coverage": "selected_root_prefix",
+      "omissions": [
+        "scan_profile_limit"
+      ]
+    },
+    {
+      "architecture": "x86",
+      "case": "kernel-scan-budget",
+      "analysis_case": "kernel-indicators-scan-budget",
+      "input_size": 2048,
+      "input_sha256": "dd15a3e2906969596b3d0333ce2d5419c160a5a603a45bf3bc6ea4fefc3bae50",
+      "initial_image_sha256": "096e1568efc9aa0f5c2f334b692ec97af8de97f91b1aca8101cd7f8314dae296",
+      "golden_settled_sha256": "2dd999ffa80522b085e2f7a277ba184c8c7e92ef42f8c0234710fb6f1e15fa73",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 8192,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 8192,
+      "read_bytes": 12288,
+      "selected_bytes": 8192,
+      "retained_snapshot": false,
+      "coverage": "selected_root_prefix",
+      "omissions": [
+        "scan_profile_limit"
+      ]
+    },
+    {
+      "architecture": "x64",
+      "case": "native",
+      "analysis_case": "native-indicators",
+      "input_size": 2048,
+      "input_sha256": "c28ee48135225ba82a336dccc932cc63828f49b4527f2a18c069029879c0c2f8",
+      "initial_image_sha256": "2d170a61676fb739ef91163097ecc75b8f8cf38bf7f123914d8788da50f52308",
+      "golden_settled_sha256": "a66ef128a8bb29227bd8ed668e4b708a1f6e7efe4a4214c7af2e5974b98188b3",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x140002038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x140002020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x14000212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x140002101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": true,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x64",
+      "case": "kernel",
+      "analysis_case": "kernel-indicators",
+      "input_size": 2048,
+      "input_sha256": "bc4bdf5b3f8e76b3fb8e76d8747a24c2b2a5c2da040fc861cd15a6a41cff7156",
+      "initial_image_sha256": "6fbb49f3b0382b3fd25ad72bd65137e4351629ae8d93d611bf7d394c1fb6ca83",
+      "golden_settled_sha256": "ff4be3e097a3d75586ac6da5557ba09a435f23a60f1abd9395d360bb64c68fa8",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x140002038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x140002020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x14000212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x140002101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": true,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x64",
+      "case": "native-none",
+      "analysis_case": "native-indicators-none",
+      "input_size": 2048,
+      "input_sha256": "c28ee48135225ba82a336dccc932cc63828f49b4527f2a18c069029879c0c2f8",
+      "initial_image_sha256": "2d170a61676fb739ef91163097ecc75b8f8cf38bf7f123914d8788da50f52308",
+      "golden_settled_sha256": "a66ef128a8bb29227bd8ed668e4b708a1f6e7efe4a4214c7af2e5974b98188b3",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x140002038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x140002020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x14000212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x140002101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": false,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x64",
+      "case": "kernel-none",
+      "analysis_case": "kernel-indicators-none",
+      "input_size": 2048,
+      "input_sha256": "bc4bdf5b3f8e76b3fb8e76d8747a24c2b2a5c2da040fc861cd15a6a41cff7156",
+      "initial_image_sha256": "6fbb49f3b0382b3fd25ad72bd65137e4351629ae8d93d611bf7d394c1fb6ca83",
+      "golden_settled_sha256": "ff4be3e097a3d75586ac6da5557ba09a435f23a60f1abd9395d360bb64c68fa8",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [
+          {
+            "format": "ipv4",
+            "value": "192.0.2.77",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8248,
+            "address": "0x140002038"
+          },
+          {
+            "format": "url",
+            "value": "http://settled.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "ascii",
+            "offset": 8224,
+            "address": "0x140002020"
+          },
+          {
+            "format": "ipv6",
+            "value": "2001:db8::77",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8493,
+            "address": "0x14000212d"
+          },
+          {
+            "format": "url",
+            "value": "https://wide.example/",
+            "source": "memory:closed_settled_root",
+            "encoding": "utf-16le",
+            "offset": 8449,
+            "address": "0x140002101"
+          }
+        ],
+        "scanned_bytes": 12288,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 12288,
+      "selected_bytes": 12288,
+      "retained_snapshot": false,
+      "coverage": "complete_selected_root",
+      "omissions": []
+    },
+    {
+      "architecture": "x64",
+      "case": "native-disabled",
+      "analysis_case": "native-indicators-disabled",
+      "input_size": 2048,
+      "input_sha256": "c28ee48135225ba82a336dccc932cc63828f49b4527f2a18c069029879c0c2f8",
+      "initial_image_sha256": "2d170a61676fb739ef91163097ecc75b8f8cf38bf7f123914d8788da50f52308",
+      "golden_settled_sha256": "a66ef128a8bb29227bd8ed668e4b708a1f6e7efe4a4214c7af2e5974b98188b3",
+      "expected": {
+        "enabled": false,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "disabled",
+      "omissions": []
+    },
+    {
+      "architecture": "x64",
+      "case": "kernel-disabled",
+      "analysis_case": "kernel-indicators-disabled",
+      "input_size": 2048,
+      "input_sha256": "bc4bdf5b3f8e76b3fb8e76d8747a24c2b2a5c2da040fc861cd15a6a41cff7156",
+      "initial_image_sha256": "6fbb49f3b0382b3fd25ad72bd65137e4351629ae8d93d611bf7d394c1fb6ca83",
+      "golden_settled_sha256": "ff4be3e097a3d75586ac6da5557ba09a435f23a60f1abd9395d360bb64c68fa8",
+      "expected": {
+        "enabled": false,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "disabled",
+      "omissions": []
+    },
+    {
+      "architecture": "x64",
+      "case": "native-read-budget",
+      "analysis_case": "native-indicators-read-budget",
+      "input_size": 2048,
+      "input_sha256": "c28ee48135225ba82a336dccc932cc63828f49b4527f2a18c069029879c0c2f8",
+      "initial_image_sha256": "2d170a61676fb739ef91163097ecc75b8f8cf38bf7f123914d8788da50f52308",
+      "golden_settled_sha256": "a66ef128a8bb29227bd8ed668e4b708a1f6e7efe4a4214c7af2e5974b98188b3",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 1024,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "read_budget"
+      ]
+    },
+    {
+      "architecture": "x64",
+      "case": "kernel-read-budget",
+      "analysis_case": "kernel-indicators-read-budget",
+      "input_size": 2048,
+      "input_sha256": "bc4bdf5b3f8e76b3fb8e76d8747a24c2b2a5c2da040fc861cd15a6a41cff7156",
+      "initial_image_sha256": "6fbb49f3b0382b3fd25ad72bd65137e4351629ae8d93d611bf7d394c1fb6ca83",
+      "golden_settled_sha256": "ff4be3e097a3d75586ac6da5557ba09a435f23a60f1abd9395d360bb64c68fa8",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 1024,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "read_budget"
+      ]
+    },
+    {
+      "architecture": "x64",
+      "case": "native-read-denied",
+      "analysis_case": "native-indicators-read-denied",
+      "input_size": 2048,
+      "input_sha256": "97ce43c9b3ff5c2186fd72684b66498cdf3b7514bf0c46b9b5f20c29774ab80b",
+      "initial_image_sha256": "8fc147050006550902aaaebde1d5bc1f03ca73f8df2bf3b6a97f8fdcf4e816f5",
+      "golden_settled_sha256": "fa520fb267d849bc063882a49dcb104aaf494b1604ed9282d83092221e5bfb70",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "root_not_readable"
+      ]
+    },
+    {
+      "architecture": "x64",
+      "case": "kernel-read-denied",
+      "analysis_case": "kernel-indicators-read-denied",
+      "input_size": 2048,
+      "input_sha256": "a7be2dfe83abf7ccdfc49b484230f0db8b8ac52aa902abda0a5f4ad31a4a8e0b",
+      "initial_image_sha256": "9f28d618895df0b59cbfe4778a3b1dafbb675ea7b2729edf7a467a96968501da",
+      "golden_settled_sha256": "faa009b319c2cefa094c904d0e65d4e4623490bfdfac78dfdb798b20315d43cc",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 0,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 12288,
+      "read_bytes": 0,
+      "selected_bytes": 0,
+      "retained_snapshot": false,
+      "coverage": "omitted",
+      "omissions": [
+        "root_not_readable"
+      ]
+    },
+    {
+      "architecture": "x64",
+      "case": "native-scan-budget",
+      "analysis_case": "native-indicators-scan-budget",
+      "input_size": 2048,
+      "input_sha256": "c28ee48135225ba82a336dccc932cc63828f49b4527f2a18c069029879c0c2f8",
+      "initial_image_sha256": "2d170a61676fb739ef91163097ecc75b8f8cf38bf7f123914d8788da50f52308",
+      "golden_settled_sha256": "a66ef128a8bb29227bd8ed668e4b708a1f6e7efe4a4214c7af2e5974b98188b3",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 8192,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 8192,
+      "read_bytes": 12288,
+      "selected_bytes": 8192,
+      "retained_snapshot": false,
+      "coverage": "selected_root_prefix",
+      "omissions": [
+        "scan_profile_limit"
+      ]
+    },
+    {
+      "architecture": "x64",
+      "case": "kernel-scan-budget",
+      "analysis_case": "kernel-indicators-scan-budget",
+      "input_size": 2048,
+      "input_sha256": "bc4bdf5b3f8e76b3fb8e76d8747a24c2b2a5c2da040fc861cd15a6a41cff7156",
+      "initial_image_sha256": "6fbb49f3b0382b3fd25ad72bd65137e4351629ae8d93d611bf7d394c1fb6ca83",
+      "golden_settled_sha256": "ff4be3e097a3d75586ac6da5557ba09a435f23a60f1abd9395d360bb64c68fa8",
+      "expected": {
+        "enabled": true,
+        "regex": [],
+        "matches": [],
+        "scanned_bytes": 8192,
+        "truncated": false,
+        "limits": []
+      },
+      "read_limit": 12288,
+      "scan_limit": 8192,
+      "read_bytes": 12288,
+      "selected_bytes": 8192,
+      "retained_snapshot": false,
+      "coverage": "selected_root_prefix",
+      "omissions": [
+        "scan_profile_limit"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+[package]
+name = "emumee-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+emumee-core = { path = "../emumee-core" }
+emumee-engine = { path = "../emumee-engine" }
+emumee-platform = { path = "../emumee-platform" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[build-dependencies]
+sha2.workspace = true

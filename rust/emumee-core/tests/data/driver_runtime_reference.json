@@ -1,0 +1,273 @@
+{
+  "schema": 1,
+  "scope": "Independent generated expected data only; no execution evidence",
+  "cases": [
+    {
+      "case": "runtime-tiny",
+      "input_bytes": 1536,
+      "input_sha256": "125c3c6b62654d38faaf3e4577dfe4e972203d3b0611489fef49e4a2e6a5b88b",
+      "image_bytes": 16384,
+      "initial_image_sha256": "7be3af3b7fba8d13392f1ae684aa10e53747a2bf85b0865c8e63c8155f57d55c",
+      "post_image_sha256": "45fcab7af81c25c77cf2516cc9ec9e4092d047eb51a25113f76aa19e65e6f8ed",
+      "selected_read_complete": true,
+      "capture_complete": true,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        },
+        {
+          "rva": 16368,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [
+        {
+          "size": 16384,
+          "sha256": "45fcab7af81c25c77cf2516cc9ec9e4092d047eb51a25113f76aa19e65e6f8ed",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 1536,
+          "sha256": "5f9c5c6684af7d789e34d4f7d585df924b118456d3834fa56790b0ca048feb58",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "completed"
+    },
+    {
+      "case": "runtime64",
+      "input_bytes": 1536,
+      "input_sha256": "633e67bfcf591d8e28879ff80299cd573574332fd3f3654c3a0bde186e9d5c89",
+      "image_bytes": 67108864,
+      "initial_image_sha256": "c195a52d7bb8a8d03b612905e46b0696eaa58c6ef92e6600ceed668e7bb2583a",
+      "post_image_sha256": "b0079ec2acb2145ebbeab7bb4dbb68dda61144b86764c80ec587c0ddcb021bd2",
+      "selected_read_complete": true,
+      "capture_complete": true,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        },
+        {
+          "rva": 67108848,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [
+        {
+          "size": 67108864,
+          "sha256": "b0079ec2acb2145ebbeab7bb4dbb68dda61144b86764c80ec587c0ddcb021bd2",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 1536,
+          "sha256": "cf71c72e4ad897352b1d754745379f100a4bf41c338657c77d5f0f7c0ed07ab9",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "completed"
+    },
+    {
+      "case": "runtime128",
+      "input_bytes": 1536,
+      "input_sha256": "a0c5773f6ab997b79e276b74530cdb8da8a2d391915454a312586d1e4312a806",
+      "image_bytes": 134217728,
+      "initial_image_sha256": "f22aa745a9ff62853cfe2ec6b197dd1ed7f83fd45d8a4967eab612c6b479005e",
+      "post_image_sha256": "2dfc0a2c5b7dc8f0a07177e6756fe7805cf389e69df3887d3dfd54e1ce48ff13",
+      "selected_read_complete": true,
+      "capture_complete": true,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        },
+        {
+          "rva": 134217712,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [
+        {
+          "size": 134217728,
+          "sha256": "2dfc0a2c5b7dc8f0a07177e6756fe7805cf389e69df3887d3dfd54e1ce48ff13",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 1536,
+          "sha256": "98b74006369596bbeedca3da195dc85f0632f2b276e43203c66a72c939001cb8",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "completed"
+    },
+    {
+      "case": "runtime-raw64-image128",
+      "input_bytes": 67108864,
+      "input_sha256": "ccd71e3fb39331d9f868ef32d277ab0dc773f8df0b3441c06eb3621f6456c06c",
+      "image_bytes": 134217728,
+      "initial_image_sha256": "e272b83daa31d2b152a26dca4f4295373f6f65fed4faca52952b34e30d25ff42",
+      "post_image_sha256": "6243845e265313c76f42dfcf827b24f13afe56cc77511be7b05a4436e40a06d7",
+      "selected_read_complete": true,
+      "capture_complete": true,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 82,
+          "expected": 167
+        },
+        {
+          "rva": 134217712,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [
+        {
+          "size": 134217728,
+          "sha256": "6243845e265313c76f42dfcf827b24f13afe56cc77511be7b05a4436e40a06d7",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 67108864,
+          "sha256": "47948e76f3ad6c9b7b4bcf82a38ed9cb54a3c8b69f2c07e38d25f033b91883c0",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "completed"
+    },
+    {
+      "case": "runtime-gap",
+      "input_bytes": 1536,
+      "input_sha256": "157dd8a9066e3c6b35ae8bfa4ba4d05161570f4257510d2d75143386ab89a130",
+      "image_bytes": 16384,
+      "initial_image_sha256": "a5b0cf8a825cff33dd2192f03eabb2f4ec25603f46e3f86c585712e149673500",
+      "post_image_sha256": null,
+      "selected_read_complete": false,
+      "capture_complete": false,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        }
+      ],
+      "payloads": [],
+      "status": "partial"
+    },
+    {
+      "case": "runtime-read-budget",
+      "input_bytes": 1536,
+      "input_sha256": "125c3c6b62654d38faaf3e4577dfe4e972203d3b0611489fef49e4a2e6a5b88b",
+      "image_bytes": 16384,
+      "initial_image_sha256": "7be3af3b7fba8d13392f1ae684aa10e53747a2bf85b0865c8e63c8155f57d55c",
+      "post_image_sha256": null,
+      "selected_read_complete": false,
+      "capture_complete": false,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        },
+        {
+          "rva": 16368,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [],
+      "status": "partial"
+    },
+    {
+      "case": "runtime-scan-budget",
+      "input_bytes": 1536,
+      "input_sha256": "125c3c6b62654d38faaf3e4577dfe4e972203d3b0611489fef49e4a2e6a5b88b",
+      "image_bytes": 16384,
+      "initial_image_sha256": "7be3af3b7fba8d13392f1ae684aa10e53747a2bf85b0865c8e63c8155f57d55c",
+      "post_image_sha256": "45fcab7af81c25c77cf2516cc9ec9e4092d047eb51a25113f76aa19e65e6f8ed",
+      "selected_read_complete": true,
+      "capture_complete": false,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        },
+        {
+          "rva": 16368,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [
+        {
+          "size": 16384,
+          "sha256": "45fcab7af81c25c77cf2516cc9ec9e4092d047eb51a25113f76aa19e65e6f8ed",
+          "kind": "memory_snapshot"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "runtime-work-budget",
+      "input_bytes": 1536,
+      "input_sha256": "125c3c6b62654d38faaf3e4577dfe4e972203d3b0611489fef49e4a2e6a5b88b",
+      "image_bytes": 16384,
+      "initial_image_sha256": "7be3af3b7fba8d13392f1ae684aa10e53747a2bf85b0865c8e63c8155f57d55c",
+      "post_image_sha256": "45fcab7af81c25c77cf2516cc9ec9e4092d047eb51a25113f76aa19e65e6f8ed",
+      "selected_read_complete": true,
+      "capture_complete": false,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        },
+        {
+          "rva": 16368,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [
+        {
+          "size": 16384,
+          "sha256": "45fcab7af81c25c77cf2516cc9ec9e4092d047eb51a25113f76aa19e65e6f8ed",
+          "kind": "memory_snapshot"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "runtime-retention-budget",
+      "input_bytes": 1536,
+      "input_sha256": "125c3c6b62654d38faaf3e4577dfe4e972203d3b0611489fef49e4a2e6a5b88b",
+      "image_bytes": 16384,
+      "initial_image_sha256": "7be3af3b7fba8d13392f1ae684aa10e53747a2bf85b0865c8e63c8155f57d55c",
+      "post_image_sha256": "45fcab7af81c25c77cf2516cc9ec9e4092d047eb51a25113f76aa19e65e6f8ed",
+      "selected_read_complete": true,
+      "capture_complete": false,
+      "markers": [
+        {
+          "rva": 8208,
+          "initial": 0,
+          "expected": 167
+        },
+        {
+          "rva": 16368,
+          "initial": 0,
+          "expected": 179
+        }
+      ],
+      "payloads": [],
+      "status": "partial"
+    }
+  ]
+}

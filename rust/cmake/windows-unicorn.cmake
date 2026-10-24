@@ -1,0 +1,6 @@
+function(emumee_unicorn_import_name)
+    if(TARGET unicorn)
+        set_target_properties(unicorn PROPERTIES ARCHIVE_OUTPUT_NAME "unicorn-import")
+    endif()
+endfunction()
+cmake_language(DEFER CALL emumee_unicorn_import_name)

@@ -1,16 +1,24 @@
 param(
-    [string[]]$Roots = @('dist\Emumee', 'output')
+    [string[]]$Roots = @('dist\Emumee', 'output'),
+    [string[]]$WorkerRoots = @('dist\Emumee'),
+    [string[]]$WorkerNames = @('Emumee.exe','emumee-rs.exe','emumee-worker.exe')
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+function Resolve-ScanRoot([string]$Path) {
+    if ([System.IO.Path]::IsPathFullyQualified($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $repo $Path))
+}
 
 $directoryCount = 0
 $fileCount = 0
 $explicitGrants = New-Object 'System.Collections.Generic.List[string]'
 $privateJournals = New-Object 'System.Collections.Generic.List[string]'
 foreach ($root in $Roots) {
-    $resolved = [System.IO.Path]::GetFullPath((Join-Path $repo $root))
+    $resolved = Resolve-ScanRoot $root
     if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
         throw "Missing scan root: $resolved"
     }
@@ -42,13 +50,17 @@ foreach ($root in $Roots) {
         }
     }
 }
-$bundleRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist\Emumee'))
-$workers = @(Get-CimInstance Win32_Process -Filter "name = 'Emumee.exe'" |
+$bundleRoots = @($WorkerRoots | ForEach-Object {
+    (Resolve-ScanRoot $_).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+})
+$workers = @(Get-CimInstance Win32_Process | Where-Object {$_.Name -in $WorkerNames} |
     Where-Object {
-        $_.ExecutablePath -and
-        [System.IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
-            $bundleRoot + [System.IO.Path]::DirectorySeparatorChar,
-            [System.StringComparison]::OrdinalIgnoreCase)
+        if ($_.ExecutablePath) {
+            $workerPath = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+            @($bundleRoots | Where-Object {
+                $workerPath.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase)
+            }).Count -gt 0
+        } else { $false }
     })
 Write-Output "Scanned $directoryCount directories and $fileCount files; explicit AppContainer SID grants: $($explicitGrants.Count); private broker journals: $($privateJournals.Count); packaged Emumee processes: $($workers.Count)"
 if ($explicitGrants.Count -gt 0) {
@@ -60,3 +72,4 @@ if ($privateJournals.Count -gt 0) {
     $privateJournals | Select-Object -First 20 | ForEach-Object { Write-Output $_ }
     throw 'Private broker journal files remain after test runs.'
 }
+$global:LASTEXITCODE = 0

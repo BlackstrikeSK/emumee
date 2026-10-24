@@ -1,0 +1,557 @@
+{
+  "schema": "timer-legacy-reference-v1",
+  "generation": "AST-extracted selected legacy functions run only against literal bounded bytearray/integer-clock fake dependencies. No emulator/backend imports, native hooks, scheduler, sample or Cargo execution. Read hooks recorded, not emulated.",
+  "source_hashes": {
+    "src/emumee/kernel_dispatcher.py": "594fffacbe251f519a9508549a6e9a9e1bfe4a67c83ab1d8e90fac5d88a3cff2"
+  },
+  "cases": [
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "replace",
+      "results": [
+        0,
+        1
+      ],
+      "error": null,
+      "interrupt_ticks": 20,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": true,
+        "due": 10000020,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08000a40000000000820000008200000949698000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "cancel",
+      "results": [
+        0,
+        1,
+        0
+      ],
+      "error": null,
+      "interrupt_ticks": 30,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": false,
+        "due": 10000010,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08000a000000000008200000082000008a9698000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "notification",
+      "results": [
+        0,
+        0,
+        0
+      ],
+      "error": null,
+      "interrupt_ticks": 30,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": false,
+        "due": 10,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08010a000100000008200000082000000a0000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "synchronization",
+      "results": [
+        0,
+        0,
+        258
+      ],
+      "error": null,
+      "interrupt_ticks": 30,
+      "timer": {
+        "kind": 9,
+        "size": 40,
+        "inserted": false,
+        "due": 10,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "09010a000000000008200000082000000a0000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "wait-before-timeout",
+      "results": [
+        0,
+        0
+      ],
+      "error": null,
+      "interrupt_ticks": 100010,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": false,
+        "due": 100010,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08000a00010000000820000008200000aa8601000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "periodic",
+      "results": [
+        0,
+        1
+      ],
+      "error": null,
+      "interrupt_ticks": 250000,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": true,
+        "due": 300110,
+        "period": 10,
+        "dpc": 0
+      },
+      "timer_header_hex": "08000a400100000008200000082000004e940400000000000000000000000000000000000a000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "invalid-period",
+      "results": [],
+      "error": "Negative kernel timer period",
+      "interrupt_ticks": 0,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": false,
+        "due": 0,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08000a00000000000820000008200000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "dpc-not-due-cancel",
+      "results": [
+        0,
+        1
+      ],
+      "error": null,
+      "interrupt_ticks": 20,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": false,
+        "due": 100010,
+        "period": 0,
+        "dpc": 8448
+      },
+      "timer_header_hex": "08000a00000000000820000008200000aa8601000000000000000000000000000021000000000000",
+      "dpcs": {
+        "8448": {
+          "routine": 4096,
+          "context": 13398
+        }
+      },
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "due-dpc-refusal",
+      "results": [],
+      "error": "Due kernel timer DPC requires kernel callback scheduling",
+      "interrupt_ticks": 10,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": true,
+        "due": 10,
+        "period": 0,
+        "dpc": 8448
+      },
+      "timer_header_hex": "08010a400000000008200000082000000a0000000000000000000000000000000021000000000000",
+      "dpcs": {
+        "8448": {
+          "routine": 4096,
+          "context": 13398
+        }
+      },
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 4,
+      "case": "timer-dpc-missing",
+      "results": [],
+      "error": "Kernel timer refers to an uninitialized DPC",
+      "interrupt_ticks": 0,
+      "timer": {
+        "kind": 8,
+        "size": 40,
+        "inserted": false,
+        "due": 0,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08000a00000000000820000008200000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8231
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "replace",
+      "results": [
+        0,
+        1
+      ],
+      "error": null,
+      "interrupt_ticks": 20,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": true,
+        "due": 10000020,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08001040000000000820000000000000082000000000000094969800000000000000000000000000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "cancel",
+      "results": [
+        0,
+        1,
+        0
+      ],
+      "error": null,
+      "interrupt_ticks": 30,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": false,
+        "due": 10000010,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "0800100000000000082000000000000008200000000000008a969800000000000000000000000000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "notification",
+      "results": [
+        0,
+        0,
+        0
+      ],
+      "error": null,
+      "interrupt_ticks": 30,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": false,
+        "due": 10,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "0801100001000000082000000000000008200000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "synchronization",
+      "results": [
+        0,
+        0,
+        258
+      ],
+      "error": null,
+      "interrupt_ticks": 30,
+      "timer": {
+        "kind": 9,
+        "size": 64,
+        "inserted": false,
+        "due": 10,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "0901100000000000082000000000000008200000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "wait-before-timeout",
+      "results": [
+        0,
+        0
+      ],
+      "error": null,
+      "interrupt_ticks": 100010,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": false,
+        "due": 100010,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "080010000100000008200000000000000820000000000000aa860100000000000000000000000000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "periodic",
+      "results": [
+        0,
+        1
+      ],
+      "error": null,
+      "interrupt_ticks": 250000,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": true,
+        "due": 300110,
+        "period": 10,
+        "dpc": 0
+      },
+      "timer_header_hex": "0800104001000000082000000000000008200000000000004e94040000000000000000000000000000000000000000000000000000000000000000000a000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "invalid-period",
+      "results": [],
+      "error": "Negative kernel timer period",
+      "interrupt_ticks": 0,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": false,
+        "due": 0,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08001000000000000820000000000000082000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "dpc-not-due-cancel",
+      "results": [
+        0,
+        1
+      ],
+      "error": null,
+      "interrupt_ticks": 20,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": false,
+        "due": 100010,
+        "period": 0,
+        "dpc": 8448
+      },
+      "timer_header_hex": "080010000000000008200000000000000820000000000000aa860100000000000000000000000000000000000000000000210000000000000000000000000000",
+      "dpcs": {
+        "8448": {
+          "routine": 4096,
+          "context": 13398
+        }
+      },
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "due-dpc-refusal",
+      "results": [],
+      "error": "Due kernel timer DPC requires kernel callback scheduling",
+      "interrupt_ticks": 10,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": true,
+        "due": 10,
+        "period": 0,
+        "dpc": 8448
+      },
+      "timer_header_hex": "0801104000000000082000000000000008200000000000000a000000000000000000000000000000000000000000000000210000000000000000000000000000",
+      "dpcs": {
+        "8448": {
+          "routine": 4096,
+          "context": 13398
+        }
+      },
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    },
+    {
+      "family": "timer",
+      "width": 8,
+      "case": "timer-dpc-missing",
+      "results": [],
+      "error": "Kernel timer refers to an uninitialized DPC",
+      "interrupt_ticks": 0,
+      "timer": {
+        "kind": 8,
+        "size": 64,
+        "inserted": false,
+        "due": 0,
+        "period": 0,
+        "dpc": 0
+      },
+      "timer_header_hex": "08001000000000000820000000000000082000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "dpcs": {},
+      "read_hooks_registered": [
+        [
+          8192,
+          8255
+        ]
+      ]
+    }
+  ]
+}

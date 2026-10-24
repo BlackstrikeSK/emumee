@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import struct
 
-from unicorn import UC_HOOK_INSN
+from unicorn import UC_HOOK_INSN, UC_QUERY_MODE, UC_MODE_64
 from unicorn.x86_const import (UC_X86_INS_CPUID, UC_X86_REG_EAX,
-                               UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX)
+                               UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX,
+                               UC_X86_REG_RAX, UC_X86_REG_RBX, UC_X86_REG_RCX, UC_X86_REG_RDX)
 from speakeasy.winenv import arch as e_arch
 
 from .avx_fallback import AVXFallback
@@ -28,6 +29,7 @@ class VirtualCPU:
         self.profile = persona["cpu"]
         self.logical = (int(self.profile["cores"]) *
                         int(self.profile["threads_per_core"]))
+        self.processor_id = 0
         self._hook = None
         self.clock = clock
         self._pending_cycles = 0
@@ -57,17 +59,17 @@ class VirtualCPU:
                         self.clock._submillisecond_100ns // 10)
         return microseconds * int(self.profile["base_mhz"]) + self._pending_cycles
 
-    def observe_instruction(self, emu, address: int, size: int) -> None:
+    def observe_instruction(self, emu, address: int, size: int, *, code=None) -> None:
         """Advance guest CPU time and handle direct TSC instructions."""
         self._instructions += 1
         self._pending_cycles += 100
         if self._instructions % 1000 == 0:
             self.flush_cycles()
         if self.avx_fallback is not None:
-            self.avx_fallback.observe_instruction(emu.emu_eng.emu, address, size)
+            self.avx_fallback.observe_instruction(emu.emu_eng.emu, address, size, code=code)
         if size not in (2, 3):
             return
-        op = emu.mem_read(address, size)
+        op = code if code is not None else emu.mem_read(address, size)
         if op not in (b"\x0f\x31", b"\x0f\x01\xf9", b"\x0f\x01\xd0"):
             return
         from speakeasy.winenv import arch as e_arch
@@ -88,7 +90,7 @@ class VirtualCPU:
             emu.reg_write(eax, value & 0xFFFFFFFF)
             emu.reg_write(edx, (value >> 32) & 0xFFFFFFFF)
         if op == b"\x0f\x01\xf9":
-            emu.reg_write(ecx, 0)  # virtual processor 0, IA32_TSC_AUX
+            emu.reg_write(ecx, self.processor_id)  # IA32_TSC_AUX within group 0.
         emu.set_pc(address + size)
 
     def install(self, emulator) -> None:
@@ -120,7 +122,7 @@ class VirtualCPU:
                               "GlobalMemoryStatusEx")
 
     def attach(self, emu) -> None:
-        if emu.get_ptr_size() == 4:
+        if emu.get_ptr_size() == 4 and not getattr(emu, "kernel_mode", False):
             # Speakeasy's stock declarations count a ULONGLONG as one x86
             # stack slot and mark these WinAPI exports cdecl. Correct the
             # current engine instance so real stdcall callers keep ESP intact.
@@ -188,7 +190,7 @@ class VirtualCPU:
             ebx, edx, ecx = struct.unpack("<III", vendor)
             return 0x16, ebx, ecx, edx
         if function == 1:
-            ebx = ((min(self.logical, 255) << 16) | (8 << 8))
+            ebx = ((self.processor_id & 255) << 24) | ((min(self.logical, 255) << 16) | (8 << 8))
             # The fixed feature profile matches the modeled modern Intel CPU.
             # In particular ECX[31] is clear and AVX/XSAVE match leaf 7/D.
             ecx_bits = (0, 1, 3, 5, 9, 12, 13, 17, 19, 20, 21, 22, 23,
@@ -211,10 +213,10 @@ class VirtualCPU:
             return 0, sum(1 << bit for bit in ebx_bits), 0, 0
         if function == 0xB:
             if subleaf == 0:
-                return (threads - 1).bit_length(), threads, 1 << 8, 0
+                return (threads - 1).bit_length(), threads, 1 << 8, self.processor_id
             if subleaf == 1:
-                return (self.logical - 1).bit_length(), self.logical, 2 << 8, 0
-            return 0, 0, 0, 0
+                return (self.logical - 1).bit_length(), self.logical, (2 << 8) | 1, self.processor_id
+            return 0, 0, 0, self.processor_id
         if function == 0xD:
             if subleaf == 0:
                 return 7, 832, 832, 0
@@ -244,10 +246,13 @@ class VirtualCPU:
     def _cpuid(self, engine, _user_data) -> int:
         function = engine.reg_read(UC_X86_REG_EAX)
         subleaf = engine.reg_read(UC_X86_REG_ECX)
-        for register, value in zip((UC_X86_REG_EAX, UC_X86_REG_EBX,
-                                    UC_X86_REG_ECX, UC_X86_REG_EDX),
-                                   self.leaf(function, subleaf)):
-            engine.reg_write(register, value)
+        # Unicorn's API writes to EAX/EBX/... leave upper halves untouched.
+        # CPUID itself clears them in 64-bit mode, so write the full registers.
+        registers = ((UC_X86_REG_RAX, UC_X86_REG_RBX, UC_X86_REG_RCX, UC_X86_REG_RDX)
+                     if engine.query(UC_QUERY_MODE) & UC_MODE_64 else
+                     (UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX))
+        for register, value in zip(registers, self.leaf(function, subleaf)):
+            engine.reg_write(register, value & 0xFFFFFFFF)
         return 1
 
     def _get_system_info(self, emu, api_name, original, params):

@@ -1,6 +1,7 @@
 """Harmless AppContainer boundary smoke check for a built bundle."""
 
 import json
+import argparse
 import hashlib
 import os
 import shutil
@@ -17,7 +18,9 @@ from emumee.persona import DEFAULT_PERSONA
 
 
 root = Path(__file__).resolve().parents[1]
-bundle = root / "dist" / "Emumee"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--bundle", type=Path, default=root / "dist" / "Emumee")
+bundle = parser.parse_args().bundle.resolve()
 exe = bundle / "Emumee.exe"
 with tempfile.TemporaryDirectory(dir=root / "output") as folder:
     run_dir = Path(folder)

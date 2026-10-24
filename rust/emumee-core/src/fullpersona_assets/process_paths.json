@@ -1,0 +1,70 @@
+{
+  "system": [
+    "[System Process]",
+    0
+  ],
+  "smss.exe": [
+    "C:\\Windows\\System32\\smss.exe",
+    0
+  ],
+  "csrss.exe": [
+    "C:\\Windows\\System32\\csrss.exe",
+    0
+  ],
+  "wininit.exe": [
+    "C:\\Windows\\System32\\wininit.exe",
+    0
+  ],
+  "services.exe": [
+    "C:\\Windows\\System32\\services.exe",
+    0
+  ],
+  "lsass.exe": [
+    "C:\\Windows\\System32\\lsass.exe",
+    0
+  ],
+  "svchost.exe": [
+    "C:\\Windows\\System32\\svchost.exe",
+    0
+  ],
+  "winlogon.exe": [
+    "C:\\Windows\\System32\\winlogon.exe",
+    1
+  ],
+  "dwm.exe": [
+    "C:\\Windows\\System32\\dwm.exe",
+    1
+  ],
+  "explorer.exe": [
+    "C:\\Windows\\explorer.exe",
+    1
+  ],
+  "sihost.exe": [
+    "C:\\Windows\\System32\\sihost.exe",
+    1
+  ],
+  "searchhost.exe": [
+    "C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe",
+    1
+  ],
+  "startmenuexperiencehost.exe": [
+    "C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe",
+    1
+  ],
+  "runtimebroker.exe": [
+    "C:\\Windows\\System32\\RuntimeBroker.exe",
+    1
+  ],
+  "msmpeng.exe": [
+    "C:\\Program Files\\Windows Defender\\MsMpEng.exe",
+    0
+  ],
+  "securityhealthsystray.exe": [
+    "C:\\Windows\\System32\\SecurityHealthSystray.exe",
+    1
+  ],
+  "onedrive.exe": [
+    "C:\\Users\\{user}\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe",
+    1
+  ]
+}

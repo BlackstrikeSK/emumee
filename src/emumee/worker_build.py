@@ -27,8 +27,10 @@ def sha256(path: Path) -> str:
 
 def source_files(root: Path) -> dict[str, str]:
     root = root.resolve()
-    selected = [root / n for n in ('Emumee.spec', 'launcher.py', 'pyproject.toml', 'build.ps1', 'tools/patch_bootloader_cfg.py')]
+    selected = [root / n for n in ('Emumee.spec', 'launcher.py', 'pyproject.toml', 'build.ps1', 'tools/patch_bootloader_cfg.py', 'tools/build_driver_trace.py')]
     selected.extend((root / 'src/emumee').rglob('*.py'))
+    selected.extend((root / 'src/emumee').glob('_driver_trace*.pyd'))
+    selected.extend((root / 'src/emumee').glob('*.pyx'))
     selected.extend((root / 'src/emumee/guest_native').glob('*.exe'))
     result = {}
     for path in sorted(selected):
@@ -36,6 +38,22 @@ def source_files(root: Path) -> dict[str, str]:
             raise ValueError('Worker source includes an unsafe file link')
         result[path.relative_to(root).as_posix()] = sha256(path)
     return result
+
+
+def native_trace_assets(directory: Path) -> dict:
+    candidates = list(directory.glob('_driver_trace*.pyd'))
+    if not candidates:
+        return {}
+    if len(candidates) != 1:
+        raise ValueError('Multiple native driver trace binaries; preserve and remove the obsolete ABI build')
+    path = candidates[0]
+    if path.is_symlink() or not path.resolve().is_relative_to(directory.resolve()) or not 0 < path.stat().st_size <= 8 * 1024 * 1024:
+        raise ValueError('Invalid native driver trace binary')
+    source = read_regular_file(directory / '_driver_trace.pyx', 128 * 1024)
+    if source is None:
+        raise ValueError('Native driver trace source binding is missing or unsafe')
+    return {'driver_trace': {'sha256': sha256(path), 'size': path.stat().st_size,
+            'source_sha256': hashlib.sha256(source).hexdigest()}}
 
 
 def source_digest(files: dict[str, str]) -> str:
@@ -60,10 +78,13 @@ def write_receipt(worker: Path, root: Path) -> dict:
     actual = asset_files(worker.parent / '_internal/emumee/guest_native')
     if actual != expected:
         raise ValueError('Packaged guest utilities differ from source assets')
+    native = native_trace_assets(worker.parent / '_internal/emumee')
+    if native != native_trace_assets(root / 'src/emumee'):
+        raise ValueError('Packaged native driver trace differs from source assets')
     receipt = {'schema': 1, 'built_at': dt.datetime.now(dt.timezone.utc).isoformat(),
                'python_version': sys.version, 'worker_sha256': sha256(worker),
                'source_tree_sha256': source_digest(source), 'source_files': source,
-               'guest_native_assets': actual}
+               'guest_native_assets': actual, 'driver_native_assets': native}
     raw = json.dumps(receipt, indent=2).encode('utf-8')
     if len(raw) > MAX_RECEIPT:
         raise ValueError('Worker build receipt exceeds limit')
@@ -81,6 +102,8 @@ def verify_receipt(worker: Path, source_root: Path | None = None) -> dict:
         raise ValueError('worker executable does not match its build receipt; run .\\build.ps1')
     if receipt.get('guest_native_assets') != asset_files(worker.parent / '_internal/emumee/guest_native'):
         raise ValueError('packaged guest utilities differ from build receipt; run .\\build.ps1')
+    if receipt.get('driver_native_assets', {}) != native_trace_assets(worker.parent / '_internal/emumee'):
+        raise ValueError('native driver trace differs from build receipt; run .\\build.ps1')
     if source_root is not None:
         current = source_files(source_root)
         if receipt.get('source_tree_sha256') != source_digest(current) or receipt.get('source_files') != current:

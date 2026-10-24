@@ -1,0 +1,1 @@
+{"schema":"emumee.native_msr_gp.v1","returned":false,"code":3221225622,"flags":0,"parameters":0,"fault_offset":15,"context_minus_record_pc":0,"rax":287454020,"rcx":1263947008,"rdx":1432778632,"eflags":66054,"user_mode_only":true,"cpl0_msr_availability_proven":false,"driver_code_executed":false}

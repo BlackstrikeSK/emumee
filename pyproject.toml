@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "emumee"
 version = "0.1.0"
-description = "User-mode Windows malware analysis by CPU and API emulation"
+description = "Windows PE and driver analysis by CPU and API emulation"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,12 +16,16 @@ dependencies = [
   "dncil>=1.0.2",
   "pycryptodome>=3.24,<4",
   "flask>=3.1,<4",
+  "regex>=2024.11.6",
 ]
 
 [project.urls]
 Homepage = "https://github.com/BlackstrikeSK/emumee"
 Source = "https://github.com/BlackstrikeSK/emumee"
 Issues = "https://github.com/BlackstrikeSK/emumee/issues"
+
+[project.optional-dependencies]
+native-build = ["Cython==3.3.0"]
 
 [project.scripts]
 emumee = "emumee.cli:main"
@@ -30,4 +34,4 @@ emumee = "emumee.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-emumee = ["guest_native/*.c", "guest_native/*.exe"]
+emumee = ["guest_native/*.c", "guest_native/*.exe", "_driver_trace.pyx"]

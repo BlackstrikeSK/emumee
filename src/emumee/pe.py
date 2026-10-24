@@ -59,24 +59,30 @@ def inspect_pe_header(data: bytes, name: str = "sample.exe") -> SampleInfo:
             struct.unpack_from("<H", data, optional_offset)[0] != magic):
         raise InvalidSample("Invalid or truncated PE optional header")
     subsystem = struct.unpack_from("<H", data, optional_offset + 68)[0]
-    if subsystem == 1 or Path(name).suffix.lower() == ".sys":
-        raise InvalidSample("Kernel drivers are outside the user-mode scope")
+    if Path(name).suffix.lower() == ".sys" and subsystem != 1:
+        raise InvalidSample("Driver inputs require the native PE subsystem")
     clr_offset = optional_offset + directory_offset + 14 * 8
     managed = False
     if clr_offset + 8 <= optional_offset + optional_size:
         clr_rva, clr_size = struct.unpack_from("<II", data, clr_offset)
         managed = bool(clr_rva and clr_size)
+    if subsystem == 1 and managed:
+        raise InvalidSample("Managed kernel drivers are unsupported")
     return SampleInfo(name=Path(name).name, sha256=hashlib.sha256(data).hexdigest(),
                       size=len(data), architecture=architecture,
-                      kind="dll" if characteristics & 0x2000 else "exe",
+                      kind="driver" if subsystem == 1 else "dll" if characteristics & 0x2000 else "exe",
                       managed=managed, subsystem=subsystem, imports=())
 
 
 def inspect_pe(data: bytes, name: str = "sample.exe") -> SampleInfo:
+    header = inspect_pe_header(data, name)
     if len(data) < 128 or data[:2] != b"MZ":
         raise InvalidSample("Input is not a PE file")
     try:
-        pe = pefile.PE(data=data, fast_load=False)
+        # Classification needs header fields and import names, not resources,
+        # debug directories, or a full-file byte-frequency scan. Keep richer
+        # parsing in the engine/API paths that actually consume those fields.
+        pe = pefile.PE(data=data, fast_load=True)
     except pefile.PEFormatError as exc:
         raise InvalidSample(f"Invalid PE file: {exc}") from exc
     machine = pe.FILE_HEADER.Machine
@@ -86,11 +92,8 @@ def inspect_pe(data: bytes, name: str = "sample.exe") -> SampleInfo:
         architecture = "x64"
     else:
         raise InvalidSample(f"Unsupported PE machine 0x{machine:04x}")
-    characteristics = pe.FILE_HEADER.Characteristics
-    kind = "dll" if characteristics & 0x2000 else "exe"
     subsystem = int(pe.OPTIONAL_HEADER.Subsystem)
-    if subsystem == 1 or Path(name).suffix.lower() == ".sys":
-        raise InvalidSample("Kernel drivers are outside the user-mode scope")
+    kind = header.kind
     directories = pe.OPTIONAL_HEADER.DATA_DIRECTORY
     clr_dir = directories[14] if len(directories) > 14 else None
     managed = bool(clr_dir and clr_dir.VirtualAddress and clr_dir.Size)
@@ -99,6 +102,8 @@ def inspect_pe(data: bytes, name: str = "sample.exe") -> SampleInfo:
         entry_rva = int(pe.OPTIONAL_HEADER.AddressOfEntryPoint)
         if image_size <= 0 or entry_rva >= image_size:
             raise InvalidSample("Native entry point lies outside the PE image")
+        if kind == "driver" and not entry_rva:
+            raise InvalidSample("Driver has no DriverEntry entry point")
         if len(directories) > 1:
             import_dir = directories[1]
             import_rva, import_size = int(import_dir.VirtualAddress), int(import_dir.Size)
@@ -107,6 +112,10 @@ def inspect_pe(data: bytes, name: str = "sample.exe") -> SampleInfo:
                                      import_size > image_size - import_rva))):
                 raise InvalidSample("Native import directory lies outside the PE image")
     imports: list[str] = []
+    try:
+        pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]])
+    except pefile.PEFormatError as exc:
+        raise InvalidSample(f"Invalid PE import directory: {exc}") from exc
     for entry in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []):
         imports.append(entry.dll.decode("ascii", errors="replace"))
     return SampleInfo(

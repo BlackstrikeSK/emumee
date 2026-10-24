@@ -1,0 +1,1 @@
+{"schema":"emumee.native_exception_context.v1","context_flags":1048671,"mxcsr":8064,"fp_mxcsr":8064,"mxcsr_mask":65535,"fp_control":639,"fp_status":0,"fp_tag":0,"fp_opcode":0,"dr6":0,"dr7":0,"segments":[51,43,43,83,43,43],"sdk_initial_fpcsr":639,"sdk_initial_mxcsr":8064,"user_mode_only":true,"driver_code_executed":false}

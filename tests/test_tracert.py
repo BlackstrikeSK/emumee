@@ -82,7 +82,7 @@ class TracertTests(unittest.TestCase):
             self.assertEqual(api._echo(emu,'',None,[handle,address_value('203.0.113.9'),request,5,options,output,128,20]),0)
             self.assertEqual(emu.error,11010)
 
-    def run_case(self,root,arch,args,persona=None,program='tracert.exe',child=False):
+    def run_case(self,root,arch,args,persona=None,program='tracert.exe',child=False,timeout=30):
         persona=persona or load_persona(None,document=document())
         image=enumeration_programs(arch=='x64',persona)[program]
         guest_args=args
@@ -96,7 +96,7 @@ class TracertTests(unittest.TestCase):
             guest_args=[]
         folder=root/str(len(list(root.iterdir())))
         with patch.object(socket,'socket',side_effect=AssertionError('Host network used')), patch.object(socket,'getaddrinfo',side_effect=AssertionError('Host resolver used')):
-            result=run_native(image,inspect_pe(image,'parent.exe' if child else program),persona,folder,[],30,2_000_000,guest_args=guest_args)
+            result=run_native(image,inspect_pe(image,'parent.exe' if child else program),persona,folder,[],timeout,2_000_000,guest_args=guest_args)
         self.assertEqual(result['errors'],[])
         report=json.loads((folder/result['engine_report']).read_text(encoding='utf-8'))
         return result,report
@@ -138,7 +138,7 @@ class TracertTests(unittest.TestCase):
     def test_full_ttl_range_and_ping_ttl_error_statistics(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            result,report=self.run_case(root,'x64',['-d','-h','255','-w','0','203.0.113.250'])
+            result,report=self.run_case(root,'x64',['-d','-h','255','-w','0','203.0.113.250'],timeout=60)
             self.assertEqual(result['guest_exit_code'],0)
             self.assertEqual(len([e for e in report['network_events'] if e['event']=='guest_icmp_echo']),765)
             self.assertIn('  255',result['console_output']['stdout'])

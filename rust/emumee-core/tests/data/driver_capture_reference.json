@@ -1,0 +1,164 @@
+{
+  "schema": 1,
+  "scope": "Independent harmless generated recipe metadata; no execution evidence",
+  "cases": [
+    {
+      "case": "small-raw",
+      "input_size": 8192,
+      "input_sha256": "d1baacedec63e67b02679eed88f1ceefa6e721c8bba970934570361f7f40d611",
+      "payloads": [
+        {
+          "size": 8192,
+          "sha256": "d1baacedec63e67b02679eed88f1ceefa6e721c8bba970934570361f7f40d611",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "raw32-plus",
+      "input_size": 33558528,
+      "input_sha256": "446f9951c82c4aea2eae72371b4711090fe99cc9e4cc47e49014972a5c6b072e",
+      "payloads": [
+        {
+          "size": 33558528,
+          "sha256": "446f9951c82c4aea2eae72371b4711090fe99cc9e4cc47e49014972a5c6b072e",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "raw64",
+      "input_size": 67108864,
+      "input_sha256": "d79d861c04ef5b0e5adda720153afe7482a2a2cdf8a7b433e1ba1aaf76df4077",
+      "payloads": [
+        {
+          "size": 67108864,
+          "sha256": "d79d861c04ef5b0e5adda720153afe7482a2a2cdf8a7b433e1ba1aaf76df4077",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "raw128",
+      "input_size": 134217728,
+      "input_sha256": "aa0e3543b251eff68a8fb328313881d85276ec65d021ee46e6e7909b2627f51a",
+      "payloads": [
+        {
+          "size": 134217728,
+          "sha256": "aa0e3543b251eff68a8fb328313881d85276ec65d021ee46e6e7909b2627f51a",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "mapped64",
+      "input_size": 67108864,
+      "input_sha256": "1d846bf5c0befbc5605d7628be03b009e585039facc6a4ef73a4abc99c951ae6",
+      "payloads": [
+        {
+          "size": 67108864,
+          "sha256": "1d846bf5c0befbc5605d7628be03b009e585039facc6a4ef73a4abc99c951ae6",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 33554944,
+          "sha256": "c116126ccf75d3dd026f424936711ba80d639203c027587308bf02c35e014f0e",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "mapped128",
+      "input_size": 134217728,
+      "input_sha256": "6a41f5101509ff7e7b73c53dd6831af3b3c0d942e517e099e8657a8b8d827725",
+      "payloads": [
+        {
+          "size": 134217728,
+          "sha256": "6a41f5101509ff7e7b73c53dd6831af3b3c0d942e517e099e8657a8b8d827725",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 67109376,
+          "sha256": "e0ae40a1de34f1dc95c4f3f02d189d1422377d0cb43fa26334ca182d997b79b5",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "mapped256-total",
+      "input_size": 134217728,
+      "input_sha256": "5561029ff5df8b788026c06d8564e260e951f81034e9ca85f98ae8340a0a8777",
+      "payloads": [
+        {
+          "size": 134217728,
+          "sha256": "5561029ff5df8b788026c06d8564e260e951f81034e9ca85f98ae8340a0a8777",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 134217728,
+          "sha256": "66f913cc72252b63da6ae7cb65e3515869e656f146ad7915b9bce8d5850f8c26",
+          "kind": "carved_image"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "dedupe128",
+      "input_size": 134217728,
+      "input_sha256": "aa0e3543b251eff68a8fb328313881d85276ec65d021ee46e6e7909b2627f51a",
+      "payloads": [
+        {
+          "size": 134217728,
+          "sha256": "aa0e3543b251eff68a8fb328313881d85276ec65d021ee46e6e7909b2627f51a",
+          "kind": "memory_snapshot"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "total256-overflow",
+      "input_size": 134217728,
+      "input_sha256": "aa0e3543b251eff68a8fb328313881d85276ec65d021ee46e6e7909b2627f51a",
+      "payloads": [
+        {
+          "size": 134217728,
+          "sha256": "aa0e3543b251eff68a8fb328313881d85276ec65d021ee46e6e7909b2627f51a",
+          "kind": "memory_snapshot"
+        },
+        {
+          "size": 134217728,
+          "sha256": "24f591a55b2859adf6963d9a6e8acfde4bb345ea4cb65c2f66cfe25bfad9b056",
+          "kind": "memory_snapshot"
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "case": "scan-overflow",
+      "input_size": 0,
+      "input_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payloads": [],
+      "status": "partial"
+    },
+    {
+      "case": "single-overflow",
+      "input_size": 0,
+      "input_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payloads": [],
+      "status": "partial"
+    },
+    {
+      "case": "driver-entry64",
+      "input_size": 1536,
+      "input_sha256": "a3bcdd9a2ec6d4bf818b3b341dc2eb88f1cea4981fb111e35896e513a46c55fa",
+      "payloads": [],
+      "status": "completed"
+    }
+  ]
+}

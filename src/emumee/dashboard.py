@@ -254,14 +254,14 @@ def _compare_runs(left: dict, right: dict, left_engine: dict | None = None,
     right_hashes = {item.get("sha256") for item in right.get("artifacts", [])
                     if isinstance(item, dict) and isinstance(item.get("sha256"), str)}
     fields = ("status", "guest_exit_code", "instruction_count",
-              "guest_entry_return", "completion_reason", "instruction_limit_reached",
+              "guest_entry_return", "completion_reason", "instruction_limit_reached", "execution_mode", "driver",
               "timeout_reached", "denied_operations")
     left_manifest, right_manifest = (left.get("run_manifest") or {},
                                      right.get("run_manifest") or {})
     left_limits, right_limits = (left_manifest.get("limits"), right_manifest.get("limits"))
-    input_fields = ("execution_target", "companions", "guest_args", "guest_env",
+    input_fields = ("execution_target", "companions", "guest_args", "guest_env", "memory_strings",
                     "network_mode", "network_fixtures", "worker_bundle_sha256",
-                    "bundle_tree_sha256")
+                    "bundle_tree_sha256", "driver_unload")
     input_changes = {key: {"left": left_manifest.get(key), "right": right_manifest.get(key)}
                      for key in input_fields if left_manifest.get(key) != right_manifest.get(key)}
     left_behavior, left_sequence, left_omitted = _behavior_signals(left, left_engine or {})

@@ -187,6 +187,18 @@ class ArtifactCatalog:
             offset = blob.find(b"MZ", start)
             if offset < 0:
                 break
+            # Packed data often contains thousands of accidental MZ pairs.
+            # Reject impossible PE signatures before copying up to 32 MiB and
+            # constructing a parser for each pair. Accepted candidates and
+            # extraction limits remain exactly the same.
+            candidate_size = min(len(blob) - offset, MAX_ARTIFACT)
+            if candidate_size < 0x40:
+                break
+            pe_offset = struct.unpack_from("<I", blob, offset + 0x3C)[0]
+            if (pe_offset > candidate_size - 24 or
+                    blob[offset + pe_offset:offset + pe_offset + 4] != b"PE\0\0"):
+                start = offset + 2
+                continue
             candidate = blob[offset:offset + MAX_ARTIFACT]
             if _is_pe(candidate):
                 try:

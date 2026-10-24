@@ -2,11 +2,13 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.pyd
 *.egg-info/
 .pytest_cache/
 build/
 dist/
 output/
+/target/
 
 # .NET fixture build products
 bin/
@@ -20,6 +22,7 @@ tests/fixtures/ManagedStagedDeployer/EmbeddedArchive.cs
 *.exe
 *.dll
 *.pe
+*.sys
 *.bin
 /*-check/
 /*-regression/

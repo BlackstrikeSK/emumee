@@ -560,6 +560,11 @@ class LegacyCRTStreamsTests(unittest.TestCase):
                     emu, "msvcrt._vsnwprintf", None,
                     [0x5000, 4, 0x1000, 0x3000]), -1)
                 self.assertEqual(read(0x5000, 8).decode("utf-16le"), "Test")
+                put(0x5100, b"\xcd" * 18)
+                self.assertEqual(crt._vsnwprintf(
+                    emu, "msvcrt._vsnwprintf", None,
+                    [0x5100, 7, 0x1000, 0x3000]), 7)
+                self.assertEqual(read(0x5100, 18), "Test 42".encode("utf-16le") + b"\xcd" * 4)
                 self.assertEqual(crt._stdio_common_vswprintf(
                     emu, "api-ms-win-crt-private-l1-1-0._o___stdio_common_vswprintf",
                     None, [0, 0x6000, 16, 0x1000, 0, 0x3000]), 7)

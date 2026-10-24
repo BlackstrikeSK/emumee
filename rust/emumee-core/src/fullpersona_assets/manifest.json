@@ -1,0 +1,48 @@
+{
+  "status": "pure-generated-reference-only",
+  "sources": {
+    "src\\emumee\\kerberos.py": "2614f9e7004301bc74990700aeed492b2da9e40c2c8162656f51706b45d8159b",
+    "src\\emumee\\audit_policy.py": "c759198222904cd4991a9cfe466a8bca2085ad686e8b26b7599cb660aa36fd31",
+    "src\\emumee\\dns_records.py": "cd2632cfbad05c14c7eac21b900a8c4f5dd70ee9212f87bfb16fe951aaabcba6",
+    "src\\emumee\\icmp.py": "e02b0f55a6190254d89a33c4c13d713c65d07d102c1146800f25f7a4e20db73c",
+    "src\\emumee\\time_service.py": "3d89ebcecb3efa1afc24932c56fe410859082281a8fafa8989faaa5cd3b534ad",
+    "src\\emumee\\persona_content.py": "ea2d597faff867b61687ee21a948aa34259ff92a4a3ec108626f887f66a02a15",
+    "src\\emumee\\persona.py": "4693e7525225b16ef9663ed77844ca2c03f034e83e8fda5b1a504ecadd3c52ae"
+  },
+  "reference_method": "Unmodified trusted source function ASTs, no emulator imports; host clock fallback explicitly denied; static registry prefix extracted before dynamic loops",
+  "cases": 64,
+  "valid": 30,
+  "invalid": 34,
+  "assets": [
+    {
+      "name": "audit_subcategories.json",
+      "sha256": "6967e6f9c6fc03c8eccb84b35883c3dbc738b8e0e4f5cf2041f1752beee92cb9",
+      "bytes": 1668
+    },
+    {
+      "name": "corpus.json",
+      "sha256": "6a4b1e189110d6328293d3abad6478532c5f4548930ddf77bf1eadcfab66a0dc",
+      "bytes": 1632420
+    },
+    {
+      "name": "defaults.json",
+      "sha256": "91aa089f94de8e230823dc3ff6d471c3de3644787b7a1b4908e01f5411959dea",
+      "bytes": 48310
+    },
+    {
+      "name": "directories.json",
+      "sha256": "fba48ec219b8edcb07ad8e2a28b8ce47eeafeea5b7fe2b302d1947aafafa72a5",
+      "bytes": 1309
+    },
+    {
+      "name": "process_paths.json",
+      "sha256": "e9619567e343e64c2b248fd3facb35a463a7f16135cbe2072355145e6f8938b1",
+      "bytes": 1477
+    },
+    {
+      "name": "static_registry.json",
+      "sha256": "e362a1818dec05c7e081bd7385ba1d1c863ee9faa6e4de789d2f077265a990bf",
+      "bytes": 19951
+    }
+  ]
+}

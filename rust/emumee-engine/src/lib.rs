@@ -55,6 +55,8 @@ mod image_writes;
 mod ipi;
 #[cfg(test)]
 mod ipi_tests;
+#[cfg(test)]
+mod kernel_code_integrity_tests;
 mod kernel_context_reads;
 mod kernel_cpu;
 #[cfg(test)]
@@ -136,6 +138,7 @@ pub use api::callbacks::Report as CallbackReport;
 pub use api::crt_format::{KernelFormatObservation, KernelFormattingReport};
 pub use api::dynamic_loader::Report as DynamicLoaderReport;
 pub use api::kernel_callback_continuation::Report as KernelCallbackContinuationReport;
+pub use api::kernel_code_integrity::Report as KernelCodeIntegrityReport;
 pub use api::kernel_environment::Report as KernelEnvironmentReport;
 pub use api::kernel_files::Report as KernelFilesReport;
 pub use api::kernel_modules::Report as KernelModulesReport;
@@ -436,6 +439,8 @@ pub struct Execution {
     pub capture_summary: CaptureSummary,
     pub kernel_state: Option<KernelReport>,
     pub kernel_modules: Option<KernelModulesReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel_code_integrity: Option<KernelCodeIntegrityReport>,
     pub kernel_threads: Option<ThreadReport>,
     pub scope: &'static str,
 }
@@ -1431,6 +1436,7 @@ fn run_generated_with_fixture_configuration(
         image_writes: image_writes::report(&engine),
         instruction_window: instruction_window::report(&engine, completion),
         kernel_modules:trace.apis.kernel_mode.then(||api::kernel_modules::report(&engine)),
+        kernel_code_integrity:api::kernel_code_integrity::report(&engine),
         kernel_objects: trace.apis.kernel_mode.then(|| api::kernel_objects::report(&engine)),
         kernel_thread_objects: trace.apis.kernel_mode.then(|| api::kernel_thread_objects::report(&engine)),
         kernel_ipi:trace.apis.kernel_mode.then(||ipi::report(&engine)),

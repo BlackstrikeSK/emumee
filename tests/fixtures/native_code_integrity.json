@@ -1,0 +1,80 @@
+{
+  "schema": "emumee.native_code_integrity_query.v1",
+  "class": 103,
+  "structure_length": 8,
+  "observed_options": 57345,
+  "observed_options_hex": "0xe001",
+  "cases": [
+    {
+      "declared_length": 8,
+      "buffer_length": 8,
+      "status": 0,
+      "return_length": 8,
+      "buffer_hex": "0800000001e00000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 0,
+      "buffer_length": 8,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "00000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 1,
+      "buffer_length": 8,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "01000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 7,
+      "buffer_length": 8,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "07000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 9,
+      "buffer_length": 8,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "09000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 8,
+      "buffer_length": 0,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "08000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 8,
+      "buffer_length": 4,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "08000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 8,
+      "buffer_length": 7,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "08000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 8,
+      "buffer_length": 9,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "08000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    },
+    {
+      "declared_length": 8,
+      "buffer_length": 16,
+      "status": 3221225476,
+      "return_length": 8,
+      "buffer_hex": "08000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500"
+    }
+  ],
+  "scope": "Read-only USER-MODE NtQuerySystemInformation103 on the host. Observed live configuration is not a proof of arbitrary CPL0 invalid-pointer behavior. No driver code executed or kernel state changed."
+}

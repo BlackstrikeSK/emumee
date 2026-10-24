@@ -51,7 +51,7 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Report {
         events_omitted: s.omitted,
         last_inventory: s.last_inventory.clone(),
         native_effect_failure: s.native_effect_failure,
-        scope: "Actual mapped ModuleCatalog with explicit owned/configured/synthetic guest paths and immutable accepted headers; native classes11/77 and half-open PC lookup only. Query events distinguish copied buffers from length retries; returned metadata is not proof of guest consumption, module resolution, actual Windows binaries or trust. No host enumeration, debugger/CI/time/process classes or general loader-list ABI.",
+        scope: "Actual mapped ModuleCatalog with explicit owned/configured/synthetic guest paths and immutable accepted headers; this inventory report covers native classes11/77 and half-open PC lookup only. Non-module information classes use independent handlers and reports. Query events distinguish copied buffers from length retries; returned metadata is not proof of guest consumption, module resolution, actual Windows binaries or trust. No host enumeration or general loader-list ABI.",
     }
 }
 fn overlap(a: u64, n: u64, b: u64, m: u64) -> bool {
@@ -128,6 +128,9 @@ pub(super) fn call(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> Res
         return Ok(base);
     }
     let class = args[0] as u32;
+    if class == emumee_core::kernel_code_integrity::CLASS {
+        return super::kernel_code_integrity::query(engine, args);
+    }
     let capacity = args[2] as u32;
     let planned = inventory::module_buffer(
         engine.get_data().architecture,

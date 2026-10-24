@@ -19,6 +19,7 @@ pub mod heap;
 pub mod indicator_fixture;
 pub mod ipi;
 pub mod kernel_callbacks;
+pub mod kernel_code_integrity;
 pub mod kernel_environment;
 pub mod kernel_layout;
 pub mod kernel_modules;
@@ -54,8 +55,8 @@ pub mod rundown;
 pub mod scheduler;
 pub mod virtual_memory;
 pub mod winhttp;
-pub mod x64_unwind;
 pub mod x64_exception;
+pub mod x64_unwind;
 
 pub mod capture_profile;
 pub mod driver_capture_fixture;

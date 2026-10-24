@@ -8,6 +8,31 @@ fn context() -> ResolveContext {
         }),
     }
 }
+#[test]
+fn explicit_code_integrity_options_are_optional_bounded_and_bind_the_persona() {
+    let baseline = resolve(json!({})).unwrap();
+    assert!(
+        baseline.effective_json()["boot_config"]
+            .get("code_integrity_options")
+            .is_none()
+    );
+    let selected = resolve(json!({"boot_config":{"code_integrity_options":0xe001}})).unwrap();
+    assert_eq!(
+        selected.effective_json()["boot_config"]["code_integrity_options"],
+        0xe001
+    );
+    assert_ne!(selected.sha256(), baseline.sha256());
+    assert!(resolve(json!({"boot_config":{"code_integrity_options":null}})).is_ok());
+    for value in [
+        json!(-1),
+        json!(4294967296u64),
+        json!(true),
+        json!(1.5),
+        json!("1"),
+    ] {
+        assert!(resolve(json!({"boot_config":{"code_integrity_options":value}})).is_err());
+    }
+}
 fn resolve(value: Value) -> Result<ValidatedPersona> {
     decode(&serde_json::to_vec(&value).unwrap(), &context())
 }
@@ -15,7 +40,10 @@ fn resolve(value: Value) -> Result<ValidatedPersona> {
 fn explicit_cpuid_observations_are_bounded_and_reach_cpu_projection() {
     let leaf = json!({"function":1,"subleaf":0,"eax":526018,"ebx":1050624,"ecx":4294636431u32,"edx":3219913727u32});
     let persona = resolve(json!({"cpu":{"cpuid_overrides":[leaf.clone()]}})).unwrap();
-    assert_eq!(persona.prepare().cpu.leaf(1, 0, 0), [526018, 1050624, 4294636431, 3219913727]);
+    assert_eq!(
+        persona.prepare().cpu.leaf(1, 0, 0),
+        [526018, 1050624, 4294636431, 3219913727]
+    );
     assert!(resolve(json!({"cpu":{"cpuid_overrides":[leaf.clone(),leaf]}})).is_err());
     assert!(resolve(json!({"cpu":{"cpuid_overrides":[{"function":1,"subleaf":0,"eax":-1,"ebx":0,"ecx":0,"edx":0}]}})).is_err());
 }
@@ -25,16 +53,36 @@ fn explicit_virtual_directories_seed_only_directories_and_bind_the_seed() {
     let guest_path = r"C:\Program Files\Fixture Vendor\Logs";
     let added = resolve(json!({"virtual_directories":[guest_path]})).unwrap();
     assert!(!default_document().contains("virtual_directories"));
-    assert!(baseline.effective_json().get("virtual_directories").is_none());
+    assert!(
+        baseline
+            .effective_json()
+            .get("virtual_directories")
+            .is_none()
+    );
     assert_ne!(baseline.sha256(), added.sha256());
-    assert_ne!(baseline.seed_manifest().sha256(), added.seed_manifest().sha256());
-    assert!(added.seed_manifest().directories().iter().any(|path| {
-        path.eq_ignore_ascii_case(guest_path)
-    }));
+    assert_ne!(
+        baseline.seed_manifest().sha256(),
+        added.seed_manifest().sha256()
+    );
+    assert!(
+        added
+            .seed_manifest()
+            .directories()
+            .iter()
+            .any(|path| { path.eq_ignore_ascii_case(guest_path) })
+    );
     let prepared = added.prepare();
-    assert_eq!(prepared.filesystem.metadata(guest_path).unwrap().attributes & 0x10, 0x10);
+    assert_eq!(
+        prepared.filesystem.metadata(guest_path).unwrap().attributes & 0x10,
+        0x10
+    );
     assert_eq!(prepared.filesystem.contents(guest_path).unwrap(), None);
-    assert!(prepared.filesystem.metadata(r"C:\Program Files\Fixture Vendor\Logs\absent.log").is_err());
+    assert!(
+        prepared
+            .filesystem
+            .metadata(r"C:\Program Files\Fixture Vendor\Logs\absent.log")
+            .is_err()
+    );
     assert_eq!(
         baseline.seed_manifest().files().len(),
         added.seed_manifest().files().len()
@@ -47,11 +95,25 @@ fn explicit_virtual_directories_seed_only_directories_and_bind_the_seed() {
 fn absent_virtual_directories_preserve_legacy_authority_and_empty_list_is_noop_for_seed() {
     let baseline = resolve(json!({})).unwrap();
     let empty = resolve(json!({"virtual_directories":[]})).unwrap();
-    assert!(baseline.effective_json().get("virtual_directories").is_none());
+    assert!(
+        baseline
+            .effective_json()
+            .get("virtual_directories")
+            .is_none()
+    );
     assert_ne!(baseline.sha256(), empty.sha256());
-    assert_eq!(baseline.seed_manifest().sha256(), empty.seed_manifest().sha256());
-    assert_eq!(baseline.seed_manifest().canonical_bytes(), empty.seed_manifest().canonical_bytes());
-    assert_eq!(baseline.seed_manifest().directories(), empty.seed_manifest().directories());
+    assert_eq!(
+        baseline.seed_manifest().sha256(),
+        empty.seed_manifest().sha256()
+    );
+    assert_eq!(
+        baseline.seed_manifest().canonical_bytes(),
+        empty.seed_manifest().canonical_bytes()
+    );
+    assert_eq!(
+        baseline.seed_manifest().directories(),
+        empty.seed_manifest().directories()
+    );
 }
 #[test]
 fn virtual_directories_reject_aliases_invalid_shapes_and_file_collisions() {
@@ -65,7 +127,10 @@ fn virtual_directories_reject_aliases_invalid_shapes_and_file_collisions() {
         json!({"virtual_directories":[r"C:\Alias"],"virtual_files":[{"path":r"C:\Alias","text":"x"}]}),
         json!({"virtual_directories":[r"C:\Alias\Child"],"virtual_files":[{"path":r"C:\Alias","text":"x"}]}),
     ] {
-        assert!(resolve(bad.clone()).is_err(), "accepted invalid directory seed: {bad}");
+        assert!(
+            resolve(bad.clone()).is_err(),
+            "accepted invalid directory seed: {bad}"
+        );
     }
     let many = vec![r"C:\Logs"; 513];
     assert!(resolve(json!({"virtual_directories":many})).is_err());

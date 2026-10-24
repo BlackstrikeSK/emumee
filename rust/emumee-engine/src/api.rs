@@ -22,6 +22,7 @@ mod internet;
 #[cfg(test)]
 mod internet_tests;
 mod kernel;
+pub(crate) mod kernel_code_integrity;
 pub(crate) mod kernel_modules;
 pub(crate) mod kernel_spin;
 pub(crate) mod kernel_sync;
@@ -259,6 +260,7 @@ pub(super) struct ApiState {
     pub kernel: kernel::KernelState,
     pub kernel_mode: bool,
     pub kernel_modules: kernel_modules::State,
+    pub kernel_code_integrity: kernel_code_integrity::State,
     bindings: Vec<Arc<Binding>>,
     pub base: u64,
     pub end: u64,
@@ -341,6 +343,7 @@ impl ApiState {
             kernel: kernel::KernelState::default(),
             kernel_mode: false,
             kernel_modules: kernel_modules::State::default(),
+            kernel_code_integrity: kernel_code_integrity::State::default(),
             bindings: Vec::new(),
             base: BASE,
             end: BASE,

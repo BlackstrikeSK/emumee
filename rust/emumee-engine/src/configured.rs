@@ -40,7 +40,8 @@ pub struct ConfigurationReceipt {
 #[derive(Clone, Debug)]
 pub(crate) struct Machine {
     windows_build: u32,
-    boot_debug:bool,
+    boot_debug: bool,
+    code_integrity_options: Option<u32>,
     physical_memory_mb: u64,
     seeded_file_hashes: BTreeMap<String, String>,
     receipt: Option<ConfigurationReceipt>,
@@ -49,7 +50,8 @@ impl Machine {
     pub(crate) fn fixture() -> Self {
         Self {
             windows_build: 22631,
-            boot_debug:false,
+            boot_debug: false,
+            code_integrity_options: None,
             physical_memory_mb: 16384,
             seeded_file_hashes: BTreeMap::new(),
             receipt: None,
@@ -58,7 +60,12 @@ impl Machine {
     pub(crate) fn windows_build(&self) -> u32 {
         self.windows_build
     }
-    pub(crate) fn boot_debug(&self)->bool {self.boot_debug}
+    pub(crate) fn boot_debug(&self) -> bool {
+        self.boot_debug
+    }
+    pub(crate) fn code_integrity_options(&self) -> Option<u32> {
+        self.code_integrity_options
+    }
     pub(crate) fn physical_pages(&self) -> u32 {
         (self.physical_memory_mb * 256) as u32
     }
@@ -181,7 +188,8 @@ impl Prepared {
             state,
             machine: Machine {
                 windows_build: value.windows_build,
-                boot_debug:false,
+                boot_debug: false,
+                code_integrity_options: None,
                 physical_memory_mb: value.physical_memory_mb as u64,
                 seeded_file_hashes,
                 receipt: Some(receipt),
@@ -190,7 +198,13 @@ impl Prepared {
     }
 
     pub(crate) fn new(validated: ValidatedPersona, request: Request) -> Result<Self> {
-        let boot_debug=validated.effective_json()["boot_config"]["debug"].as_bool().context("Validated boot debug policy absent")?;
+        let boot_debug = validated.effective_json()["boot_config"]["debug"]
+            .as_bool()
+            .context("Validated boot debug policy absent")?;
+        let code_integrity_options = validated.effective_json()["boot_config"]
+            .get("code_integrity_options")
+            .and_then(serde_json::Value::as_u64)
+            .map(|v| v as u32);
         let projection = &validated.projection().data;
         ensure!(
             request.initial_processor == 0,
@@ -323,9 +337,15 @@ impl Prepared {
             receipt.user_process_owner = Some(USER_OWNER);
             receipt.installed_components.push("user_process_invocation");
         }
+        if code_integrity_options.is_some() {
+            receipt
+                .installed_components
+                .push("boot_config.code_integrity_options");
+        }
         let machine = Machine {
             windows_build: receipt.windows_build,
             boot_debug,
+            code_integrity_options,
             physical_memory_mb: receipt.physical_memory_mb,
             seeded_file_hashes,
             receipt: Some(receipt),

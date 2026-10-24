@@ -199,7 +199,7 @@ pub(super) fn validate_security(p: &Value, _clock: &ClockProjection) -> Result<(
             "debug",
             "safe_boot",
         ],
-        &[],
+        &["code_integrity_options"],
     )?;
     guid(&boot["loader_guid"], "boot_config.loader_guid")?;
     plain(&boot["description"], "boot_config.description", 1, 80)?;
@@ -210,6 +210,14 @@ pub(super) fn validate_security(p: &Value, _clock: &ClockProjection) -> Result<(
         999,
     )?;
     boolean(&boot["debug"], "boot_config.debug")?;
+    if let Some(value) = boot.get("code_integrity_options").filter(|v| !v.is_null()) {
+        unsigned(
+            value,
+            "boot_config.code_integrity_options",
+            0,
+            u64::from(u32::MAX),
+        )?;
+    }
     if !boot["hypervisor_launch_type"].is_null() {
         choices(
             &boot["hypervisor_launch_type"],

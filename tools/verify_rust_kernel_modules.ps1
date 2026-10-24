@@ -9,7 +9,7 @@ $receipt=Get-Content -LiteralPath (Join-Path $bundlePath 'rust-worker-build.json
 $cases=@(
  @{name='standard';calls=5},@{name='extended';calls=5},@{name='relocated-extended';calls=5},@{name='alias-standard';calls=5},@{name='alias-extended';calls=5},@{name='optional-length';calls=5},@{name='short';calls=4},@{name='pc-only';calls=3},
  @{name='read-only-output';calls=1;error='range'},@{name='read-only-length';calls=1;error='range'},@{name='unmapped-output';calls=1;error='range'},@{name='unmapped-length';calls=1;error='range'},@{name='null-output';calls=1;error='range'},
- @{name='overlap';calls=1;error='outputs overlap'},@{name='unknown-time';calls=1;error='outside the modeled 11/77 module profile'},@{name='unknown-debugger';calls=1;error='outside the modeled 11/77 module profile'},@{name='unknown-ci';calls=1;error='outside the modeled 11/77 module profile'},@{name='unknown-process';calls=1;error='outside the modeled 11/77 module profile'},
+ @{name='overlap';calls=1;error='outputs overlap'},@{name='unknown-time';calls=1;error='outside the modeled 11/77 module profile'},@{name='unknown-debugger';calls=1;error='outside the modeled 11/77 module profile'},@{name='unknown-ci';calls=1;error='Code integrity options are not explicitly configured'},@{name='unknown-process';calls=1;error='outside the modeled 11/77 module profile'},
  @{name='high-irql';calls=2;error='requires supported PASSIVE_LEVEL'},@{name='missing-provenance';calls=2;error='lacks explicit guest path/header provenance'}
 )
 $records=@()

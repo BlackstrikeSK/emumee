@@ -310,7 +310,9 @@ pub fn decode(bytes: &[u8], context: &ResolveContext) -> Result<ValidatedPersona
             let update = object(value, key)?;
             for (field, value) in update {
                 require(
-                    old.contains_key(field) || (key == "cpu" && field == "cpuid_overrides"),
+                    old.contains_key(field)
+                        || (key == "cpu" && field == "cpuid_overrides")
+                        || (key == "boot_config" && field == "code_integrity_options"),
                     &format!("{key}.{field}"),
                     "unknown persona field",
                 )?;

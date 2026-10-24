@@ -47,7 +47,8 @@ impl ModuleFixture {
             | Self::UnmappedLength
             | Self::NullOutput => "range",
             Self::Overlap => "outputs overlap",
-            Self::UnknownTime | Self::UnknownDebugger | Self::UnknownCi | Self::UnknownProcess => {
+            Self::UnknownCi => "Code integrity options are not explicitly configured",
+            Self::UnknownTime | Self::UnknownDebugger | Self::UnknownProcess => {
                 "outside the modeled 11/77 module profile"
             }
             Self::HighIrql => "requires supported PASSIVE_LEVEL",
@@ -265,6 +266,11 @@ pub fn kernel_modules_probe(architecture: Architecture, kind: ModuleFixture) -> 
         invocation(&mut c, wide, base, 3, &[1, slot]);
     }
     if kind.error().is_some() {
+        // Retain the legacy selector as the unconfigured-CI negative control.
+        // A valid class103 length avoids turning this into a length retry.
+        if matches!(kind, ModuleFixture::UnknownCi) {
+            write_dword(&mut c, wide, output, 8);
+        }
         let destination = match kind {
             ModuleFixture::ReadOnlyOutput => base + 0x1000,
             ModuleFixture::UnmappedOutput => 0x7fff0000,
@@ -282,7 +288,16 @@ pub fn kernel_modules_probe(architecture: Architecture, kind: ModuleFixture) -> 
             wide,
             base,
             query_index,
-            &[class, destination, required as u64, returned],
+            &[
+                class,
+                destination,
+                if matches!(kind, ModuleFixture::UnknownCi) {
+                    8
+                } else {
+                    required as u64
+                },
+                returned,
+            ],
         );
         c.push(0xcc);
     } else {

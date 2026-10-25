@@ -324,15 +324,30 @@ It reports
 bounded header, load-segment, entry, and interpreter metadata without executing
 the file. The experimental `emumee-rs linux-elf SOURCE_ELF FRESH_OUTPUT_DIR
 [--max-instructions N] [--timeout-us N]` command runs only static x86-64
-`ET_EXEC` guests in the packaged Windows offline worker. The current Linux
+`ET_EXEC` guests in a packaged offline worker. On Windows the worker uses
+AppContainer. On x86-64 Linux it requires fresh user, mount, network, and IPC
+namespaces, a confined run root, dropped capabilities, no-new-privileges,
+resource limits, and a seccomp filter. If any control is unavailable the
+worker rejects the run. The current Linux
 guest model has a fixed stack and auxiliary vector, closed stdin, captured
 stdout/stderr, deterministic `getpid`, and `exit`/`exit_group`; other
 syscalls stop with an explicit unsupported result. The worker limits input to
 32 MiB, guest load maps to 128 MiB, and the default run to 100,000
 instructions and five seconds. Dynamic ELF, TLS, 32-bit execution, and a
-native Linux-host worker remain unsupported. See
+Linux hosts without those namespace and seccomp controls remain unsupported.
+The Linux-host boundary has been exercised on WSL Ubuntu; other distributions
+are not yet qualified. See
 [issue #1](https://github.com/BlackstrikeSK/emumee/issues/1) for the staged
 implementation and verification requirements.
+
+On Linux, build and package a matching controller, worker, and Unicorn library
+in a fresh directory. Run the CLI with that directory as its only library
+search path:
+
+```bash
+LIBCLANG_PATH=/usr/lib/llvm-18/lib bash tools/package_rust_linux.sh /absolute/fresh/bundle --release
+LD_LIBRARY_PATH=/absolute/fresh/bundle /absolute/fresh/bundle/emumee-rs linux-elf sample.elf /absolute/fresh/run
+```
 
 Windows builds require Rust 1.85 or newer, MSVC Build Tools, the Windows SDK, CMake, Ninja, and libclang. Set `LIBCLANG_PATH` when libclang is not discoverable. The build helper also recognizes locally provisioned dependencies under `output/rust-toolchain/`.
 

@@ -39,6 +39,7 @@ fn main() {
         "Cargo.lock".to_owned(),
         "tools/build_rust.ps1".to_owned(),
         "tools/package_rust.ps1".to_owned(),
+        "tools/package_rust_linux.sh".to_owned(),
     ];
     walk(&root, &root.join("rust"), &mut files);
     files.sort();

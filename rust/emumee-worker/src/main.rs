@@ -22,7 +22,7 @@ mod driver_input_worker;
 mod general_boundary_worker;
 #[cfg(windows)]
 mod general_plan_worker;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod linux_worker;
 #[cfg(windows)]
 mod msi_static;
@@ -166,7 +166,11 @@ fn entry() -> Result<()> {
         {
             return linux_worker::execute(&root, &expected);
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            return linux_worker::execute(&root, &expected);
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = (root, expected);
             anyhow::bail!("Linux guest worker requires a verified host boundary");

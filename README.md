@@ -318,6 +318,14 @@ Same-process `DuplicateHandle` now supports owned guest file and file-mapping ha
 
 The Rust workspace provides bounded CPU, Windows API, artifact, and isolated worker components. It remains under active development; unsupported operations are explicit errors, and a successful build does not establish general Windows compatibility.
 
+The Rust `emumee-rs inspect PATH [--details]` command also accepts little-endian
+ELF32/i386 and ELF64/x86-64 executable and dynamic-object files (including PIE).
+It reports
+bounded header, load-segment, entry, and interpreter metadata without executing
+the file. Linux guest loading, syscalls, worker isolation, and dynamic linking
+are not implemented. See [the Linux ELF plan](.codex/plans/linux-elf-support.md)
+for the staged implementation and verification requirements.
+
 Windows builds require Rust 1.85 or newer, MSVC Build Tools, the Windows SDK, CMake, Ninja, and libclang. Set `LIBCLANG_PATH` when libclang is not discoverable. The build helper also recognizes locally provisioned dependencies under `output/rust-toolchain/`.
 
 ```powershell

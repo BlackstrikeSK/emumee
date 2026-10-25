@@ -62,6 +62,7 @@ pub mod capture_profile;
 pub mod driver_capture_fixture;
 pub mod driver_capture_reports;
 pub mod driver_input;
+pub mod elf;
 
 pub mod driver_runtime;
 pub mod driver_runtime_fixture;

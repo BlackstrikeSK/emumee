@@ -323,8 +323,13 @@ ELF32/i386 and ELF64/x86-64 executable and dynamic-object files (including PIE).
 It reports
 bounded header, load-segment, entry, and interpreter metadata without executing
 the file. The experimental `emumee-rs linux-elf SOURCE_ELF FRESH_OUTPUT_DIR
-[--max-instructions N] [--timeout-us N]` command runs only static x86-64
-`ET_EXEC` guests in a packaged offline worker. On Windows the worker uses
+[--library SONAME=PATH] [--max-instructions N] [--timeout-us N]` command runs
+bounded static x86-64, static i386, x86-64 PIE, i386 dynamic PIE, and staged x86-64
+shared-object profiles in a packaged offline worker. Repeat `--library` for
+each direct `DT_NEEDED` dependency; names and bytes are staged and hashed, and
+guest names never resolve against host library paths. The shared profile
+supports bounded `RELA`, `JUMP_SLOT`, `GLOB_DAT`, and initial-exec TLS
+`TPOFF64` relocations. On Windows the worker uses
 AppContainer. On x86-64 Linux it requires fresh user, mount, network, and IPC
 namespaces, a confined run root, dropped capabilities, no-new-privileges,
 resource limits, and a seccomp filter. If any control is unavailable the
@@ -332,9 +337,11 @@ worker rejects the run. The current Linux
 guest model has a fixed stack and auxiliary vector, closed stdin, captured
 stdout/stderr, deterministic `getpid`, and `exit`/`exit_group`; other
 syscalls stop with an explicit unsupported result. The worker limits input to
-32 MiB, guest load maps to 128 MiB, and the default run to 100,000
-instructions and five seconds. Dynamic ELF, TLS, 32-bit execution, and a
-Linux hosts without those namespace and seccomp controls remain unsupported.
+32 MiB, shared libraries to four files of 8 MiB each, guest load maps to
+128 MiB, and the default run to 100,000 instructions and five seconds.
+Transitive dependencies, glibc startup, i386 TLS, dynamic TLS allocation, and broad
+Linux syscall compatibility remain unsupported. Linux hosts without the
+required namespace and seccomp controls reject execution.
 The Linux-host boundary has been exercised on WSL Ubuntu; other distributions
 are not yet qualified. See
 [issue #1](https://github.com/BlackstrikeSK/emumee/issues/1) for the staged

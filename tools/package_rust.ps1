@@ -4,7 +4,7 @@ $workspace=Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $workspace
 $target=[System.IO.Path]::GetFullPath((Join-Path $workspace $Destination))
 if (Test-Path -LiteralPath $target) {throw 'Preserve the existing frozen Rust bundle; choose a new destination.'}
-$selected=@('Cargo.toml','Cargo.lock','tools/build_rust.ps1','tools/package_rust.ps1')
+$selected=@('Cargo.toml','Cargo.lock','tools/build_rust.ps1','tools/package_rust.ps1','tools/package_rust_linux.sh')
 $selected+=Get-ChildItem -LiteralPath rust -Recurse -File | Where-Object {$_.Extension -in @('.rs','.toml','.cmake','.json')} | ForEach-Object {[System.IO.Path]::GetRelativePath($workspace,$_.FullName).Replace('\','/')}
 $sources=[ordered]@{}
 $selected=[string[]]@($selected | Select-Object -Unique)
@@ -33,7 +33,7 @@ $receipt=[ordered]@{
     controller_sha256=(Get-FileHash -LiteralPath (Join-Path $target 'emumee-rs.exe') -Algorithm SHA256).Hash.ToLowerInvariant();
     worker_sha256=(Get-FileHash -LiteralPath (Join-Path $target 'emumee-worker.exe') -Algorithm SHA256).Hash.ToLowerInvariant();
     unicorn_sha256=(Get-FileHash -LiteralPath (Join-Path $target 'unicorn.dll') -Algorithm SHA256).Hash.ToLowerInvariant();
-    source_tree_sha256=$sourceDigest;source_files=$sources;scope='Rust migration development bundle with contained submitted-driver diagnostics and a limited static x86-64 Linux guest role. This receipt alone certifies neither general Windows or Linux compatibility nor artifact recovery.'
+    source_tree_sha256=$sourceDigest;source_files=$sources;scope='Rust migration development bundle with contained submitted-driver diagnostics and bounded Linux ELF guest profiles. This receipt alone certifies neither general Windows or Linux compatibility nor artifact recovery.'
 }
 $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $target 'rust-worker-build.json') -Encoding utf8NoBOM
 Write-Output "Frozen Rust development bundle: $target"

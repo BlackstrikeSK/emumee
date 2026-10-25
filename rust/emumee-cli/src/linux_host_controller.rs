@@ -2,8 +2,9 @@
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine as _;
 use emumee_core::{
-    elf::StaticLoadPlan,
-    linux_request::{LinuxRequest, MAX_INPUT},
+    elf::{ElfImage, Kind, Pie32LoadPlan, PieLoadPlan, SharedLoadPlan, Static32LoadPlan, StaticLoadPlan},
+    pe::Architecture,
+    linux_request::{LinuxLibrary, LinuxRequest, MAX_INPUT, MAX_LIBRARY_INPUT, valid_library_name},
 };
 use emumee_platform::linux::read_regular;
 use sha2::{Digest, Sha256};
@@ -86,7 +87,7 @@ fn check_output(root: &Path) -> Result<()> {
             .context("Output size overflow")?;
         count += 1;
         ensure!(
-            count <= 16 && total <= 48 * 1024 * 1024,
+            count <= 16 && total <= 64 * 1024 * 1024,
             "Linux worker output limit exceeded"
         );
     }
@@ -154,6 +155,7 @@ pub fn run(
     output: &Path,
     max_instructions: u64,
     timeout_us: u64,
+    libraries: &[(String, PathBuf)],
 ) -> Result<serde_json::Value> {
     ensure!(
         cfg!(target_arch = "x86_64"),
@@ -161,14 +163,46 @@ pub fn run(
     );
     let bundle = verified_bundle()?;
     let input = bounded_file(source, MAX_INPUT)?;
-    StaticLoadPlan::parse(&input).context("Linux guest admission rejected input")?;
+    let mut staged = Vec::with_capacity(libraries.len());
+    for (name, path) in libraries {
+        ensure!(valid_library_name(name), "Invalid staged library name");
+        staged.push((name.clone(), bounded_file(path, MAX_LIBRARY_INPUT)?));
+    }
+    let references: Vec<(&str, &[u8])> = staged.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice())).collect();
+    let format = ElfImage::parse(&input, "guest")?;
+    let profile = match (format.sample.architecture, format.sample.kind, staged.is_empty()) {
+        (Architecture::X64, Kind::Executable, true) => {
+            StaticLoadPlan::parse(&input).context("Linux guest admission rejected input")?;
+            "static_x64_v1"
+        }
+        (Architecture::X64, Kind::Dynamic, true) => {
+            PieLoadPlan::parse(&input).context("Linux PIE admission rejected input")?;
+            "pie_x64_v1"
+        }
+        (Architecture::X86, Kind::Executable, true) => {
+            Static32LoadPlan::parse(&input).context("Linux i386 admission rejected input")?;
+            "static_x86_v1"
+        }
+        (Architecture::X86, Kind::Dynamic, true) => {
+            Pie32LoadPlan::parse(&input).context("Linux i386 dynamic admission rejected input")?;
+            "pie_x86_v1"
+        }
+        (Architecture::X64, Kind::Dynamic, false) => {
+            SharedLoadPlan::parse(&input, &references).context("Linux shared-object admission rejected input")?;
+            "shared_x64_v1"
+        }
+        _ => bail!("Linux guest architecture and ELF type unsupported"),
+    };
     let request = LinuxRequest {
-        schema: 1,
-        profile: "static_x64_v1".into(),
+        schema: if profile == "shared_x64_v1" { 2 } else { 1 },
+        profile: profile.into(),
         input_sha256: digest(&input),
         input_size: input.len() as u64,
         max_instructions,
         timeout_us,
+        libraries: staged.iter().map(|(name, bytes)| LinuxLibrary {
+            name: name.clone(), sha256: digest(bytes), size: bytes.len() as u64,
+        }).collect(),
     };
     request.validate().map_err(anyhow::Error::msg)?;
     let root = std::path::absolute(output)?;
@@ -176,6 +210,9 @@ pub fn run(
         .with_context(|| format!("Output directory must be new: {}", root.display()))?;
     let root = fs::canonicalize(root)?;
     save_new(&root.join("input.elf"), &input)?;
+    for (index, (_, bytes)) in staged.iter().enumerate() {
+        save_new(&root.join(format!("lib-{index:04}.elf")), bytes)?;
+    }
     let raw = serde_json::to_vec_pretty(&request)?;
     let request_hash = digest(&raw);
     save_new(&root.join("linux-request.json"), &raw)?;
@@ -183,18 +220,20 @@ pub fn run(
     let report = bounded_file(&root.join("linux-result.json"), 4 * 1024 * 1024)?;
     let result: serde_json::Value = serde_json::from_slice(&report)?;
     ensure!(
-        result["schema"] == 1
+        result["schema"] == request.schema
             && result["request_sha256"] == request_hash
             && result["input_sha256"] == request.input_sha256
+            && result["profile"] == request.profile
+            && result["libraries"] == serde_json::to_value(&request.libraries)?
             && result["execution"]["schema"] == 1
             && result["execution"]["format"] == "elf"
-            && result["execution"]["architecture"] == "x64"
+            && result["execution"]["architecture"] == if matches!(profile, "static_x86_v1" | "pie_x86_v1") { "x86" } else { "x64" }
             && result["execution"]["input_sha256"] == request.input_sha256
             && result["execution"]["instructions"]
                 .as_u64()
                 .is_some_and(|n| n <= max_instructions)
             && result["scope"]
-                == "Static x86-64 Linux guest under the native Linux confined worker",
+                == "Linux guest under the native Linux confined worker",
         "Linux result differs from admitted request"
     );
     let confinement = &result["containment"];
@@ -223,6 +262,7 @@ pub fn run(
             reason,
             "exit"
                 | "unsupported_syscall"
+            | "unsupported_interrupt"
                 | "output_limit"
                 | "guest_memory_fault"
                 | "hook_failure"

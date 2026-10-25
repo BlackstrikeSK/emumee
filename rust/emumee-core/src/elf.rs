@@ -10,7 +10,9 @@ const PT_LOAD: u32 = 1;
 const PT_INTERP: u32 = 3;
 const PF_X: u32 = 1;
 mod load;
-pub use load::{LoadSegment, StaticLoadPlan};
+pub use load::{LoadSegment, Pie32LoadPlan, PieLoadPlan, RelativeRelocation, Static32LoadPlan, StaticLoadPlan};
+mod shared;
+pub use shared::{SharedLoadPlan, TlsBlock};
 
 #[derive(Debug, Error)]
 #[error("Invalid ELF: {0}")]

@@ -29,6 +29,7 @@ pub mod kernel_spin;
 pub mod kernel_sync;
 pub mod kernel_thread_objects;
 pub mod kernel_time;
+pub mod linux_request;
 pub mod managed;
 pub mod managed_convert;
 pub mod managed_indicator_fixture;

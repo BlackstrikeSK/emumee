@@ -11,3 +11,4 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 unicorn-engine.workspace = true
+base64 = "=0.22.1"

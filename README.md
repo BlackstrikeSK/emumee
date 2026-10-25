@@ -322,9 +322,17 @@ The Rust `emumee-rs inspect PATH [--details]` command also accepts little-endian
 ELF32/i386 and ELF64/x86-64 executable and dynamic-object files (including PIE).
 It reports
 bounded header, load-segment, entry, and interpreter metadata without executing
-the file. Linux guest loading, syscalls, worker isolation, and dynamic linking
-are not implemented. See [the Linux ELF plan](.codex/plans/linux-elf-support.md)
-for the staged implementation and verification requirements.
+the file. The experimental `emumee-rs linux-elf SOURCE_ELF FRESH_OUTPUT_DIR
+[--max-instructions N] [--timeout-us N]` command runs only static x86-64
+`ET_EXEC` guests in the packaged Windows offline worker. The current Linux
+guest model has a fixed stack and auxiliary vector, closed stdin, captured
+stdout/stderr, deterministic `getpid`, and `exit`/`exit_group`; other
+syscalls stop with an explicit unsupported result. The worker limits input to
+32 MiB, guest load maps to 128 MiB, and the default run to 100,000
+instructions and five seconds. Dynamic ELF, TLS, 32-bit execution, and a
+native Linux-host worker remain unsupported. See
+[issue #1](https://github.com/BlackstrikeSK/emumee/issues/1) for the staged
+implementation and verification requirements.
 
 Windows builds require Rust 1.85 or newer, MSVC Build Tools, the Windows SDK, CMake, Ninja, and libclang. Set `LIBCLANG_PATH` when libclang is not discoverable. The build helper also recognizes locally provisioned dependencies under `output/rust-toolchain/`.
 

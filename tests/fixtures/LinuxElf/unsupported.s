@@ -1,0 +1,8 @@
+.global _start
+.section .text
+_start:
+    mov $41, %rax
+    syscall
+    mov $60, %rax
+    xor %rdi, %rdi
+    syscall

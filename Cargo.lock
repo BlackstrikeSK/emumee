@@ -181,6 +181,7 @@ name = "emumee-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "emumee-core",
  "serde",
  "serde_json",

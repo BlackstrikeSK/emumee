@@ -65,6 +65,18 @@ fn elf32() -> Vec<u8> {
     data
 }
 
+fn static_elf64() -> Vec<u8> {
+    let mut data = elf64();
+    put16(&mut data, 56, 1);
+    put64(&mut data, 72, 0);
+    put64(&mut data, 80, 0x400000);
+    let size = data.len() as u64;
+    put64(&mut data, 96, size);
+    put64(&mut data, 104, size);
+    put64(&mut data, 112, 0x1000);
+    data
+}
+
 #[test]
 fn inspects_elf64_segments_and_interpreter_without_sections() {
     let image = ElfImage::parse(&elf64(), "sample").unwrap();
@@ -83,6 +95,38 @@ fn inspects_elf32_dynamic_object_without_sections() {
     assert_eq!(image.sample.kind, Kind::Dynamic);
     assert!(image.sample.entry_in_executable_segment);
     assert_eq!(image.sample.interpreter, None);
+}
+
+#[test]
+fn admits_only_bounded_static_x64_load_geometry() {
+    let data = static_elf64();
+    let plan = StaticLoadPlan::parse(&data).unwrap();
+    assert_eq!(plan.entry, 0x400100);
+    assert_eq!(plan.program_header_address, 0x400040);
+    assert_eq!(plan.segments[0].page_start, 0x400000);
+    assert_eq!(plan.segments[0].page_size, 4096);
+    assert!(StaticLoadPlan::parse(&elf64()).is_err());
+    assert!(StaticLoadPlan::parse(&elf32()).is_err());
+
+    let mut bad = data.clone();
+    put32(&mut bad, 68, 7);
+    assert!(StaticLoadPlan::parse(&bad).is_err(), "writable executable");
+    let mut bad = data.clone();
+    put16(&mut bad, 56, 2);
+    put32(&mut bad, 120, PT_LOAD);
+    put32(&mut bad, 124, 4);
+    put64(&mut bad, 128, 0x100);
+    put64(&mut bad, 136, 0x400100);
+    put64(&mut bad, 152, 4);
+    put64(&mut bad, 160, 8);
+    put64(&mut bad, 168, 0x1000);
+    assert!(StaticLoadPlan::parse(&bad).is_err(), "overlapping map");
+    let mut bad = elf64();
+    put16(&mut bad, 56, 1);
+    assert!(
+        StaticLoadPlan::parse(&bad).is_err(),
+        "unmapped program headers"
+    );
 }
 
 #[test]

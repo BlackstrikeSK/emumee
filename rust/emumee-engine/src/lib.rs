@@ -66,6 +66,7 @@ mod kernel_environment_tests;
 #[cfg(test)]
 mod kernel_files_tests;
 mod kernel_loader;
+pub mod linux;
 #[cfg(test)]
 mod kernel_modules_tests;
 #[cfg(test)]

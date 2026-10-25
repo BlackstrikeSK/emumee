@@ -23,6 +23,8 @@ mod general_boundary_worker;
 #[cfg(windows)]
 mod general_plan_worker;
 #[cfg(windows)]
+mod linux_worker;
+#[cfg(windows)]
 mod msi_static;
 
 fn save_new(path: &Path, data: &[u8]) -> Result<()> {
@@ -155,6 +157,20 @@ fn entry() -> Result<()> {
             serde_json::json!({"source_tree_sha256":env!("EMUMEE_BUILD_SOURCE_SHA256"),"role":"offline_worker","unicorn_version":"2.1.5"})
         );
         return Ok(());
+    }
+    if first == "--linux-static" {
+        let root = PathBuf::from(args.next().context("Linux role requires a run root")?);
+        let expected = args.next().context("Linux role requires a request hash")?;
+        ensure!(args.next().is_none(), "Unexpected Linux role arguments");
+        #[cfg(windows)]
+        {
+            return linux_worker::execute(&root, &expected);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (root, expected);
+            anyhow::bail!("Linux guest worker requires a verified host boundary");
+        }
     }
     if first == "--general-plan-verify" {
         let root = PathBuf::from(

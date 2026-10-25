@@ -9,6 +9,8 @@ const MAX_INTERPRETER: u64 = 4096;
 const PT_LOAD: u32 = 1;
 const PT_INTERP: u32 = 3;
 const PF_X: u32 = 1;
+mod load;
+pub use load::{LoadSegment, StaticLoadPlan};
 
 #[derive(Debug, Error)]
 #[error("Invalid ELF: {0}")]
@@ -77,6 +79,8 @@ pub struct ElfImage {
     pub sample: SampleInfo,
     pub os_abi: u8,
     pub abi_version: u8,
+    pub program_header_offset: u64,
+    pub program_header_entry_size: u16,
     pub program_headers: Vec<ProgramHeader>,
 }
 
@@ -217,6 +221,8 @@ impl ElfImage {
             },
             os_abi: ident[7],
             abi_version: ident[8],
+            program_header_offset: program_offset,
+            program_header_entry_size: program_header_size as u16,
             program_headers,
         })
     }

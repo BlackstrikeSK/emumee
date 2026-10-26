@@ -1,5 +1,10 @@
 # Coverage, containment, and test plan
 
+This document records the legacy Python runtime's historical evidence. The
+active build and launcher use Rust; its current supported commands and limits
+are in [README.md](README.md). The former Python `run`, dashboard, and
+PowerShell claims below do not apply to the active Rust bundle.
+
 ## PowerShell execution and command capture
 
 The experimental `powershell` CLI accepts supplied scripts inside Docker

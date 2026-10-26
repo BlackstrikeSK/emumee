@@ -1184,12 +1184,18 @@ fn run_generated_with_fixture_configuration(
         if api_gate && engine.get_data().apis.kernel_callback_continuation.active() {
             api::kernel_callback_continuation::before_api(engine, pc);
         }
-        if api::native_loader::before_instruction(engine, pc)
+        let architectural_boundary = api::native_loader::before_instruction(engine, pc)
             || ipi::before_instruction(engine, pc)
-            || threads::dpc::before_instruction(engine, pc, size)
-            || threads::before_instruction(engine, pc)
-        {
-            if engine.get_data().cpu.debug_control.active() {
+            || threads::dpc::before_instruction(engine, pc, size);
+        let scheduler_boundary = !architectural_boundary && threads::before_instruction(engine, pc);
+        if architectural_boundary || scheduler_boundary {
+            // A quantum checkpoint can select this same ordinary thread again.
+            // The scheduler validates its actual selected owner before restoring
+            // a context; merely reaching a checkpoint is not a guest transfer.
+            if engine.get_data().cpu.debug_control.active()
+                && (architectural_boundary
+                    || !matches!(engine.get_data().thread_action, Some(threads::Action::Yield)))
+            {
                 engine.get_data_mut().cpu.fault = Some(
                     "DEBUGCTL active scheduler/loader transition requires architectural tracing support".into(),
                 );

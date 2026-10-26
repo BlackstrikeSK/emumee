@@ -889,6 +889,12 @@ fn transition(engine: &mut Unicorn<Trace>, action: Action) -> Result<Dispatch> {
                 next => break next,
             }
         };
+        if engine.get_data().cpu.debug_control.active() {
+            ensure!(
+                matches!(action, Action::Yield) && next == Dispatch::Run(id),
+                "DEBUGCTL active scheduler ownership transition requires architectural tracing support"
+            );
+        }
         if let Dispatch::Run(next_id) = next {
             threads.current_slot = next_id;
             uc(engine.context_restore(
@@ -1128,6 +1134,13 @@ pub(crate) fn execute_horizon(
                     returned: false,
                     value: None,
                     error: None,
+                });
+            }
+            if engine.get_data().cpu.debug_control.active() && dpc::queued(engine) {
+                return Ok(Outcome {
+                    returned: false,
+                    value: None,
+                    error: Some("DEBUGCTL active DPC transition requires architectural tracing support".into()),
                 });
             }
             match dpc::offer(engine, continuation) {

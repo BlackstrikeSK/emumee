@@ -312,7 +312,8 @@ pub fn decode(bytes: &[u8], context: &ResolveContext) -> Result<ValidatedPersona
                 require(
                     old.contains_key(field)
                         || (key == "cpu" && field == "cpuid_overrides")
-                        || (key == "boot_config" && field == "code_integrity_options"),
+                        || (key == "boot_config"
+                            && matches!(field.as_str(), "code_integrity_options" | "object_directories")),
                     &format!("{key}.{field}"),
                     "unknown persona field",
                 )?;

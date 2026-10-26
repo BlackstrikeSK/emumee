@@ -233,6 +233,7 @@ pub(super) fn initialize_with_reference(
                 Model::SystemRoutine
                     | Model::DynamicLoader(_)
                     | Model::KernelModules(_)
+                    | Model::OpenSection
                     | Model::ModuleHandleA
                     | Model::ModuleHandleW
                     | Model::Procedure
@@ -327,6 +328,7 @@ pub(super) fn initialize_with_reference(
                 .chain(crate::threads::timers::ROUTINES)
                 .chain(kernel_modules::ROUTINES)
                 .chain(kernel_files::ROUTINES)
+                .chain(kernel_sections::ROUTINES)
             {
                 if !selected.contains(name) {
                     selected.push(*name);

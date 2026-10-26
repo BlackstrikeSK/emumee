@@ -1,0 +1,12 @@
+{
+  "schema": "emumee.native_section_lookup_contract.v1",
+  "source": "Read-only x64 user-mode NtOpenSection calls, Windows host. Generated unique names; no driver executed, no section created or mapped.",
+  "attributes": 576,
+  "access": 983071,
+  "cases": [
+    {"name": "\\Device\\MissingGeneratedSection", "status": 3221225524, "output_is_null": true},
+    {"name": "\\MissingGeneratedDirectory\\leaf", "status": 3221225530, "output_is_null": true},
+    {"name": "\\Device", "status": 3221225508, "output_is_null": true}
+  ],
+  "scope": "Names generalized from unique generated fixture names. Negative lookup statuses only; these observations do not establish kernel-mode pointer-fault, access-check, or historical boot behavior."
+}

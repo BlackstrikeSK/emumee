@@ -23,6 +23,7 @@ mod internet;
 mod internet_tests;
 mod kernel;
 pub(crate) mod kernel_code_integrity;
+pub(crate) mod kernel_sections;
 pub(crate) mod kernel_modules;
 pub(crate) mod kernel_spin;
 pub(crate) mod kernel_sync;
@@ -66,6 +67,7 @@ pub(super) const BASE: u64 = 0x68000000;
 const MAX_TRANSFER: u64 = 16 * 1024 * 1024;
 #[derive(Clone, Copy)]
 enum Model {
+    OpenSection,
     DynamicLoader(dynamic_loader::Call),
     Objects(kernel_objects::Call),
     Environment(kernel_environment::Call),
@@ -261,6 +263,7 @@ pub(super) struct ApiState {
     pub kernel_mode: bool,
     pub kernel_modules: kernel_modules::State,
     pub kernel_code_integrity: kernel_code_integrity::State,
+    pub kernel_sections: kernel_sections::State,
     bindings: Vec<Arc<Binding>>,
     pub base: u64,
     pub end: u64,
@@ -344,6 +347,7 @@ impl ApiState {
             kernel_mode: false,
             kernel_modules: kernel_modules::State::default(),
             kernel_code_integrity: kernel_code_integrity::State::default(),
+            kernel_sections: kernel_sections::State::default(),
             bindings: Vec::new(),
             base: BASE,
             end: BASE,
@@ -511,6 +515,13 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
             binding.model = Model::KernelModules(call);
             binding.count = count;
             binding.returns = returns;
+            return binding;
+        }
+        if matches!(name, "ZwOpenSection" | "NtOpenSection") {
+            binding.model = Model::OpenSection;
+            binding.count = 3;
+            binding.convention = C::Stdcall;
+            binding.returns = T::U32;
             return binding;
         }
         if let Some((call, count)) = kernel_files::definition(name) {
@@ -1220,6 +1231,7 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::DpcQueue(insert) => crate::threads::dpc::call(engine, insert, args)?,
         Model::Ipi => crate::ipi::call(engine, args)?,
         Model::KernelModules(call) => kernel_modules::call(engine, call, args)?,
+        Model::OpenSection => kernel_sections::open(engine, args)?,
         Model::NormalSync(call) => kernel_sync::call(engine, call, args)?,
         Model::Spin(call) => kernel_spin::call(engine, call, args)?,
         Model::Timer(call) => crate::threads::timers::call(engine, call, args)?,

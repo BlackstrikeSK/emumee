@@ -42,6 +42,7 @@ pub(crate) struct Machine {
     windows_build: u32,
     boot_debug: bool,
     code_integrity_options: Option<u32>,
+    object_namespace: Option<emumee_core::kernel_namespace::Namespace>,
     physical_memory_mb: u64,
     seeded_file_hashes: BTreeMap<String, String>,
     receipt: Option<ConfigurationReceipt>,
@@ -52,6 +53,7 @@ impl Machine {
             windows_build: 22631,
             boot_debug: false,
             code_integrity_options: None,
+            object_namespace: None,
             physical_memory_mb: 16384,
             seeded_file_hashes: BTreeMap::new(),
             receipt: None,
@@ -65,6 +67,9 @@ impl Machine {
     }
     pub(crate) fn code_integrity_options(&self) -> Option<u32> {
         self.code_integrity_options
+    }
+    pub(crate) fn object_namespace(&self) -> Option<&emumee_core::kernel_namespace::Namespace> {
+        self.object_namespace.as_ref()
     }
     pub(crate) fn physical_pages(&self) -> u32 {
         (self.physical_memory_mb * 256) as u32
@@ -190,6 +195,7 @@ impl Prepared {
                 windows_build: value.windows_build,
                 boot_debug: false,
                 code_integrity_options: None,
+                object_namespace: None,
                 physical_memory_mb: value.physical_memory_mb as u64,
                 seeded_file_hashes,
                 receipt: Some(receipt),
@@ -201,6 +207,15 @@ impl Prepared {
         let boot_debug = validated.effective_json()["boot_config"]["debug"]
             .as_bool()
             .context("Validated boot debug policy absent")?;
+        let object_namespace = validated.effective_json()["boot_config"]
+            .get("object_directories")
+            .filter(|v| !v.is_null())
+            .map(|value| -> Result<_> {
+                Ok(emumee_core::kernel_namespace::Namespace::new(
+                    serde_json::from_value(value.clone())?,
+                )?)
+            })
+            .transpose()?;
         let code_integrity_options = validated.effective_json()["boot_config"]
             .get("code_integrity_options")
             .and_then(serde_json::Value::as_u64)
@@ -342,10 +357,16 @@ impl Prepared {
                 .installed_components
                 .push("boot_config.code_integrity_options");
         }
+        if object_namespace.is_some() {
+            receipt
+                .installed_components
+                .push("boot_config.object_directories");
+        }
         let machine = Machine {
             windows_build: receipt.windows_build,
             boot_debug,
             code_integrity_options,
+            object_namespace,
             physical_memory_mb: receipt.physical_memory_mb,
             seeded_file_hashes,
             receipt: Some(receipt),

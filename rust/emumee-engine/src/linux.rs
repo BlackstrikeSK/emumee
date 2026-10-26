@@ -431,6 +431,8 @@ pub fn run_shared(
     )
 }
 
+// Keep validated image/library inputs and execution bounds explicit at this boundary.
+#[allow(clippy::too_many_arguments)]
 fn run_plan(
     input: &[u8],
     plan: &StaticLoadPlan,

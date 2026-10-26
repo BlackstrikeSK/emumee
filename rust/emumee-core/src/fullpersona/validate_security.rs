@@ -199,7 +199,7 @@ pub(super) fn validate_security(p: &Value, _clock: &ClockProjection) -> Result<(
             "debug",
             "safe_boot",
         ],
-        &["code_integrity_options"],
+        &["code_integrity_options", "object_directories"],
     )?;
     guid(&boot["loader_guid"], "boot_config.loader_guid")?;
     plain(&boot["description"], "boot_config.description", 1, 80)?;
@@ -210,6 +210,13 @@ pub(super) fn validate_security(p: &Value, _clock: &ClockProjection) -> Result<(
         999,
     )?;
     boolean(&boot["debug"], "boot_config.debug")?;
+    if let Some(value) = boot.get("object_directories").filter(|v| !v.is_null()) {
+        let directories: Vec<crate::kernel_namespace::Directory> =
+            serde_json::from_value(value.clone())
+                .map_err(|e| error("boot_config.object_directories", e.to_string()))?;
+        crate::kernel_namespace::Namespace::new(directories)
+            .map_err(|e| error("boot_config.object_directories", e.to_string()))?;
+    }
     if let Some(value) = boot.get("code_integrity_options").filter(|v| !v.is_null()) {
         unsigned(
             value,

@@ -23,6 +23,7 @@ pub mod kernel_code_integrity;
 pub mod kernel_environment;
 pub mod kernel_layout;
 pub mod kernel_modules;
+pub mod kernel_namespace;
 pub mod kernel_objects;
 pub mod kernel_rtl;
 pub mod kernel_spin;

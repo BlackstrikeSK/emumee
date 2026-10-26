@@ -253,7 +253,7 @@ fn parse_dynamic(image: &ElfImage, data: &[u8], bias: u64) -> Result<DynamicInfo
             name(data, str_file, str_size, name_offset)?
         };
         let address =
-            if section != 0 && matches!(binding, 1 | 2) && matches!(symbol_type, 0 | 1 | 2) {
+            if section != 0 && matches!(binding, 1 | 2) && matches!(symbol_type, 0..=2) {
                 let address = bias
                     .checked_add(value)
                     .ok_or(ElfError("dynamic symbol address overflow"))?;

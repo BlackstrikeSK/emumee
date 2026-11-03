@@ -103,6 +103,28 @@ pub(crate) struct Request {
     pub timeout_us: u64,
 }
 impl Prepared {
+    pub(crate) fn require_owned_paging(&self) -> Result<()> {
+        ensure!(
+            self.architecture == Architecture::X64
+                && self.kernel
+                && self.machine.windows_build() == 26200,
+            "Owned paging requires configured x64 kernel build26200"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn bind_submitted_user(&mut self) -> Result<()> {
+        ensure!(!self.kernel, "Submitted user requires user persona");
+        let receipt = self
+            .machine
+            .receipt
+            .as_mut()
+            .context("Persona receipt absent")?;
+        receipt.generated_only = false;
+        receipt.installed_components.push("submitted_user_identity");
+        receipt.scope = "Validated persona installed before submitted native user PE startup. Pending fields delimit API coverage. Guest paths never resolve on the host.";
+        Ok(())
+    }
     /// Bind a validated kernel persona to the independently validated
     /// submitted service identity before any native state is published.
     pub(crate) fn bind_submitted_service(mut self, service: &str) -> Result<Self> {

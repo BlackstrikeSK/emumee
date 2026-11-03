@@ -76,6 +76,15 @@ struct SavedApi {
     critical: u16,
     last_error: u32,
 }
+pub(crate) fn saved_critical_depth(engine: &Unicorn<Trace>, slot: u64) -> Result<u16> {
+    engine
+        .get_data()
+        .threads
+        .as_ref()
+        .and_then(|threads| threads.saved.get(&slot))
+        .map(|saved| saved.critical)
+        .context("New thread has no authoritative saved critical-region state")
+}
 struct WaitContinuation {
     address: u64,
     pc: u64,
@@ -291,6 +300,7 @@ pub(crate) fn before_instruction(engine: &mut Unicorn<Trace>, pc: u64) -> bool {
     false
 }
 fn range(engine: &Unicorn<Trace>, address: u64, size: u64, permissions: P) -> Result<()> {
+    crate::api::mdl::pfn::require_api_access(engine, address, size)?;
     if permissions.contains(P::WRITE) {
         crate::api::kernel_spin::require_write(engine, address, size)?;
         timers::require_write(engine, address, size)?;
@@ -889,6 +899,12 @@ fn transition(engine: &mut Unicorn<Trace>, action: Action) -> Result<Dispatch> {
                 next => break next,
             }
         };
+        if engine.get_data().cpu.debug_control.active() {
+            ensure!(
+                matches!(action, Action::Yield) && next == Dispatch::Run(id),
+                "DEBUGCTL active scheduler ownership transition requires architectural tracing support"
+            );
+        }
         if let Dispatch::Run(next_id) = next {
             threads.current_slot = next_id;
             uc(engine.context_restore(
@@ -931,7 +947,7 @@ pub(crate) struct ExecutionHorizon {
     budget: u64,
 }
 impl ExecutionHorizon {
-    fn expired(&self, instructions: u64) -> bool {
+    pub(crate) fn expired(&self, instructions: u64) -> bool {
         instructions >= self.budget || self.start.elapsed().as_micros() >= self.timeout_us as u128
     }
     pub(crate) fn new(timeout_us: u64, budget: u64) -> Self {
@@ -997,6 +1013,9 @@ pub(crate) fn execute_horizon(
                 error: None,
             });
         }
+        if engine.get_data().process_exit_code.is_some() {
+            return Ok(Outcome { returned: false, value: None, error: None });
+        }
         if crate::native_exceptions::queued(engine) {
             match crate::native_exceptions::transition(engine, horizon) {
                 Ok(Some(outcome)) => return Ok(outcome),
@@ -1045,6 +1064,13 @@ pub(crate) fn execute_horizon(
             }
         }
         let pc = uc(engine.pc_read())?;
+        if crate::api::crt_startup::queued(engine) {
+            match crate::api::crt_startup::transition(engine, horizon) {
+                Ok(Some(outcome)) => return Ok(outcome),
+                Ok(None) => continue,
+                Err(error) => return Ok(Outcome { returned: false, value: None, error: Some(format!("{error:#}")) }),
+            }
+        }
         if crate::api::dynamic_loader::queued(engine) {
             match crate::api::dynamic_loader::transition(engine, horizon) {
                 Ok(Some(outcome)) => return Ok(outcome),
@@ -1128,6 +1154,13 @@ pub(crate) fn execute_horizon(
                     returned: false,
                     value: None,
                     error: None,
+                });
+            }
+            if engine.get_data().cpu.debug_control.active() && dpc::queued(engine) {
+                return Ok(Outcome {
+                    returned: false,
+                    value: None,
+                    error: Some("DEBUGCTL active DPC transition requires architectural tracing support".into()),
                 });
             }
             match dpc::offer(engine, continuation) {

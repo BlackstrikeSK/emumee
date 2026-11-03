@@ -390,6 +390,7 @@ pub(crate) fn observe(engine: &mut Unicorn<Trace>, pc: u64, size: u32) -> Result
                 native_reads::arm_control(engine, pc, size);
                 return Ok(());
             }
+            crate::api::mdl::paging::control_write(engine, pc, size)?;
             if !crate::ipi::member_running(engine) {
                 return Ok(());
             }

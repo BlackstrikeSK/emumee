@@ -2,7 +2,7 @@
 
 Runs the same generated image in two frozen packaged offline workers. The
 baseline and candidate must have identical guest effects; only capture may
-add a live pool artifact. This script never reads or executes external driver images.
+add a live pool artifact. This script never reads or executes vgk.sys.
 """
 
 import argparse

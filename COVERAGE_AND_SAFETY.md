@@ -1,9 +1,998 @@
+> Historical Python and bounded fixture evidence follows. The active Rust
+> entrypoints have separate scope and same-build qualification requirements;
+> these observations are not a stable Rust release certification.
+
 # Coverage, containment, and test plan
 
-This document records the legacy Python runtime's historical evidence. The
-active build and launcher use Rust; its current supported commands and limits
-are in [README.md](README.md). The former Python `run`, dashboard, and
-PowerShell claims below do not apply to the active Rust bundle.
+## Experimental driver targets (2026-10-15)
+
+Native-subsystem x86/x64 PEs are classified as `driver` and run in a separate
+Speakeasy kernel emulator inside the existing no-network AppContainer worker.
+`run sample.sys` runs DriverEntry; `--driver-unload` optionally calls a registered
+DriverUnload only after a successful entry NTSTATUS. `batch --include-driver`
+includes SYS inputs. Header classification stays bounded in the parent; detailed
+parsing and guest CPU execution stay in the worker. There is no host service
+installation or kernel loading. Non-native SYS files, managed native-subsystem
+PEs, missing entry points, process-only options, and companion code loading are
+rejected.
+
+Reports distinguish the entry NTSTATUS and `initialization_succeeded` from an
+emulated process exit. An observed failure NTSTATUS can be a `completed` analysis
+with failed initialization. Created devices, dispatch routine addresses, registry
+path, and optional unload completion are recorded in the summary, trace, and
+dashboard. A return is accepted only when the CPU reaches a return sentinel
+without a recorded fault. Entry and unload share an instruction and wall-clock
+budget. Unsupported APIs, faults, skipped queued threads/callbacks, and budget
+stops stay visibly partial or timeout results. Pool-memory artifacts, guest file
+writes, and embedded PEs use bounded extraction and verified manifests.
+
+The harmless generated fixtures cover x86/x64 entry arguments, device creation,
+tagged pool allocation with exact marker bytes, dispatch registration without
+execution, success/failure NTSTATUS, explicit unload, unknown imports, faults,
+and loops in entry and unload. Source tests also cover importless drivers,
+wall-clock stops, worker routing/options, dashboard rendering, and comparison.
+`tools/verify_driver_cases.py` repeats sixteen lifecycle cases using the packaged
+AppContainer path, checking exact submitted bytes and hashes, artifacts, report
+integrity, lack of network attempts, and broker closure.
+
+On 2026-10-15 all sixteen packaged lifecycle cases passed in
+`output/driver-package-check/verification.json`. Two additional x86/x64
+`ZwCreateFile` probes passed in `output/driver-boundary-check/verification.json`:
+the guest file-open event named an absolute path outside its run directory,
+while that host path remained absent. The package also passed
+`tools/sandbox_smoke.py`, including the production worker's no-network
+AppContainer restrictions. These probes exercise the tested paths only.
+The ten focused driver test methods pass, and the same build bounded all fifteen
+existing malformed-PE package cases (rejected, failed, partial, or completed
+according to each fixture's expected behavior).
+After the packaged checks, an ACL/journal/process scan of the bundle and those
+new output trees found zero explicit AppContainer SID grants, zero private
+broker journals, and zero packaged Emumee processes across 263 directories and
+2,126 files.
+The full source suite passed 757 tests with 13 skips in 1,358.5 seconds. The
+separately verified final ten driver-focused methods also passed (including the
+additional guest-only file-creation case). The worker build receipt matches the
+final implementation source.
+
+This is initialization and unload coverage only. IRPs/IOCTLs, dispatch execution,
+hardware, interrupts, PnP/WDF/filter lifecycles, kernel scheduling, and general
+Windows driver compatibility are unverified or unsupported. Native user-mode
+applications with the same PE subsystem are not distinguished automatically.
+Kernel API persona fidelity is narrower than the user-mode models. No real
+driver corpus or compatibility percentage is claimed.
+
+## Driver loader and kernel context upgrades (2026-10-16)
+
+The driver path batches adjacent image-page protection requests with identical
+rights, preserving request order and overlap semantics. The supplied 105-MiB
+driver required 26,618 protection requests, reduced to 22 native calls. Import
+sentinels use one mapped-image copy; PE classification parses only needed import
+metadata, and artifact carving checks bounded PE signatures before copying large
+candidates. These changes address loader/extraction costs without skipping guest
+instructions or loosening image page permissions.
+
+Relocatable x86/x64 drivers use modeled kernel addresses with bounded HIGHLOW or
+DIR64 fixups. Fixed images retain their preferred addresses, explicitly reported
+in `image_placement`. The x64 kernel uses Unicorn's virtual TLB mode so canonical
+addresses are not truncated to physical addresses. Kernel code uses the Windows
+code/data selectors and a current System thread. The x64 PCR self-pointer and
+modeled system modules live in the kernel address range. PCR/PRCB offsets and the
+17-entry idle queued-spin-lock layout follow the installed 26100 WDK; this does
+not implement multiprocessor scheduling or otherwise unsupported lock APIs.
+`RtlPcToFileHeader` searches strict image bounds and validates guest output
+permissions before returning/writing a module base or NULL.
+
+Driver traces include a bounded instruction tail, control transfers, selected
+CPU-context observations, and an x64 unwind-table diagnostic on errors. Branch
+register snapshots are sampled at new edges and every 4,096 transfers; every
+transfer still appears in the bounded tail. That
+diagnostic does not dispatch language handlers or restore a full CONTEXT. It
+leaves the original error visible. Image-write evidence hashes pages before the
+first CPU or modeled-API write and compares final bytes. Changed pages are retained in chunks
+with module RVAs and original-page hash evidence; executed-after-write counts
+require an actual final byte change. Such chunks alone do not establish a
+complete unpacked PE or recovered original entry point.
+
+The focused source checks include real CPU checks for canonical
+shared-data reads, kernel selectors/PCR pointers, queued-lock module discovery,
+relocated absolute pointers and imports, output permissions, x64 unwind metadata,
+and modified code execution/artifact bytes. Kernel pool addresses are in the
+kernel range. Tested `NonPagedPoolNx` allocations have writable, non-executable
+dedicated pages; execute attempts fault. Executable-pool controls still run their
+written bytes. An instruction-page cache is invalidated on CPU and modeled-API
+writes, and the shared traced budget controls entry and unload. Live runs write
+bounded `driver-progress.json` checkpoints. An analyst can write
+`{"stop":true}` to the adjacent `driver-control.json` to stop at a checkpoint,
+retain artifacts, and complete normal worker cleanup. This is reported as a
+cancelled, partial trace, without a fabricated DriverEntry return value.
+The package verifier now includes
+twelve context/API/pool cases in addition to its sixteen lifecycle and two host-file
+boundary probes. Run it against a freshly built worker to establish package
+coverage for the current source; historical test counts above describe their
+specific earlier builds.
+
+Relocation updates runtime addresses and relocation targets while preserving the
+preferred ImageBase in the mapped PE header. A harmless DLL forced away from its
+preferred base under the native Windows loader verified this behavior; generated
+driver fixtures verify the same header bytes and relocated pointer values under
+emulation. A bounded header-read log records what guest instructions observed.
+
+The kernel now models counted `RtlDuplicateUnicodeString` allocation and flags,
+persona-offset `ExSystemTimeToLocalTime`, `RtlTimeToTimeFields`, and secure wide
+`swprintf_s` formatting. Guest ranges are checked against native read/write
+permissions. Native ntdll probes provide reference results for Unicode flags and
+empty strings. The shared wide formatter consumes both x86 argument slots for
+64-bit integer conversions. Source report validation accepts unsigned 64-bit
+instruction counts, correcting rejection of valid traces over 100 million
+instructions.
+
+The broad source run passed 780 tests with 13 skips in 1,758 seconds before the
+final pool-permission and API-write evidence refinements. The final implementation
+passed all 50 focused methods and all 30 packaged driver cases in
+`output/driver-upgrade-14-package`. The matching-source package also passed the
+AppContainer smoke and fifteen malformed-PE cases in
+`output/malformed-pe-package/453fe7d2d797481fb83a7d0a84b74be9`.
+The completed validation trees had zero explicit AppContainer grants or private
+broker journals across 348 directories and 2,999 files. The audit's process check
+remains pending while the real stress run is active.
+
+The subsequent source revision passed 109 focused/regression methods, including
+the shared CRT and report validation checks. Its rebuilt worker passed six
+runtime cases in `output/driver-upgrade-17-runtime-package` and the analyst-stop
+case in `output/driver-upgrade-17-control`. The full source suite for this
+revision passed 789 tests with 13 skips in 1,343.5 seconds, recorded in
+`output/driver-upgrade-17-full-suite.log`. All 31 packaged lifecycle, file-boundary,
+context/pool and analyst-control cases also passed in
+`output/driver-upgrade-17-all-package-final`.
+
+The supplied driver's matching-source run reached 304,460,875 instructions. It
+completed Unicode duplication and both secure formatting calls, then stopped on
+the missing `IoCreateFileEx` model while creating a guest Logs directory. Its
+authenticated summary is partial, with ten artifact observations, six changed
+image pages and zero changed pages executed. This is not evidence of a recovered
+standalone unpacked driver. Report, artifact hashes and broker closure were
+verified in `output/vgk-upgrade-17-retry/20261016T005442Z-b12a03e3`. A scan of the
+new validation and stress-run trees found zero residual grants, private journals
+or workers across 295 directories and 2,788 files.
+
+The next revision adds bounded synchronous `IoCreateFileEx` guest files and
+directories, shared bytes with independent handle positions, status blocks,
+sharing checks, and read/write/flush/close behavior. Unsupported EAs, device
+contexts, asynchronous I/O and non-exact input mappings remain visible. Guest
+names never become host paths. Twenty x86/x64 CPU subcases cover exact bytes,
+configured input reads, closed-handle failure, directory collisions/type checks,
+sharing, missing parents, cursor/EOF/explicit offsets and read-only output pages.
+The initial 33-method regression and fourteen loader/report checks passed, and
+all seven final file-model methods passed. Harmless native ntdll file probes
+provide reference return statuses and successful I/O byte counts in
+`output/kernel-file-native-oracle/reference.json`.
+The rebuilt worker passed all six kernel-file
+probes in `output/driver-upgrade-18-files-package`, including explicit absence of
+each requested host path, and all six runtime probes in
+`output/driver-upgrade-18-runtime-package`, and all 31 lifecycle/context/boundary
+and control cases in `output/driver-upgrade-18-all-package`. The full source suite
+passed 796 tests with 13 skips in 1,367.8 seconds, recorded in
+`output/driver-upgrade-18-full-suite.log`. The real driver reached 307,952,316
+instructions, created its guest log directory and log file, wrote and flushed
+40 exact bytes, then stopped at `KeRegisterBugCheckReasonCallback`. The verified
+partial run is `output/vgk-upgrade-18/20261016T014715Z-31d6e075`; its thirteen
+artifact observations include twelve distinct payloads, with seven changed image
+pages and none executed after modification. A cleanup scan found zero residual
+grants, private journals or workers across 385 directories and 3,457 files.
+
+Bug-check reason callback registration now maintains guest records, duplicate
+rejection, registration lists and deregistration. Its report explicitly records
+that callbacks have not executed. Crash callback dispatch and Windows' internal
+record checksums remain unsupported. The callback revision passed 41 focused
+methods, seventeen loader/report checks, and all 47 packaged cases across
+`output/driver-upgrade-19-all-package`, `output/driver-upgrade-19-runtime-package`
+and `output/driver-upgrade-19-files-package`. Unsupported-API summary errors now
+retain the API name as well as its address.
+
+The subsequent revision adds current-thread, uncontended guarded mutexes,
+exclusive push locks, rundown references and critical-region state. Blocked
+acquisitions and rundown waits stop visibly; these synchronization models are
+not yet integrated with the cooperative scheduler described below. Guarded mutexes follow the installed WDK's Windows 8+ FAST_MUTEX
+layout. x86 fastcall arguments are tested. IRQL API changes update the CPU/PCR
+view, and explicit x64 MOV CR8 handling corrects an observed Unicorn mismatch
+between its register API and executed control-register moves.
+
+Kernel system-time and performance-counter calls share the guest clock, including
+HAL imports and x86 EDX:EAX returns. Processor queries and the imported
+KeNumberProcessors variable use the persona. Recognized data imports are bound
+after kernel setup: the engine originally mapped the primary image before these
+handlers existed, leaving data reads pointed at zero-filled placeholders.
+Unresolved import-storage reads now stop with a named error. The added queued
+lock data page receives native RW/NX protection. Fifty-one focused regression
+methods and the dedicated queued-lock NX probe passed. All 63 packaged cases
+passed on the rebuilt revision in `output/driver-upgrade-20-all-package`,
+`output/driver-upgrade-20-runtime-package` and
+`output/driver-upgrade-20-files-package`. The aggregate evidence is
+`output/driver-upgrade-20-verification.json`. The full source suite passed 811
+tests with 13 skips in `output/driver-upgrade-20-full-suite.log`. The real-driver
+run reached 308,380,782 instructions, registered its VGKT bugcheck callback and
+queried the active processor count before requesting pool type 0x600. The model
+incorrectly rejected that NX/zero-initialized allocation, sending the guest into
+an error logging path that then stopped on missing `_vsnwprintf`. Eight image
+pages changed and none were executed after a write. Report and artifact integrity
+checks passed; cleanup scanned 525 directories and 4,833 files with zero residual
+grants, private broker journals or packaged workers.
+`tools/inspect_driver_run.py` verifies finished offline
+driver reports and summarizes the actual stopping point and image-change evidence.
+An import-resolution audit against this revision found handlers for 72 of the
+sample's 129 imports and 57 unresolved imports, recorded in
+`output/vgk-driver-import-resolution-20.json`. Handler presence does not establish
+semantic fidelity, and an unresolved import is not necessarily reached. CNG,
+several object-type globals, and additional scheduling APIs remain among the
+unresolved imports.
+
+The next revision recognizes the WDK POOL_ZERO_ALLOCATION (0x400) and advisory
+POOL_COLD_ALLOCATION (0x100) modifiers, preserving native NX protection and zero
+bytes in fresh mappings. It also binds kernel `_vsnwprintf` to the guarded CRT
+formatter. A native CRT oracle confirmed the corrected exact-fit return value
+without a terminator; secure formatting still rejects a full buffer. Seventy
+focused source tests and all 73 packaged cases passed for build 21, recorded in
+`output/driver-upgrade-21-verification.json`. The extra packaged cases cover
+zero-filled/NX pools and legacy wide formatting, including exact-fit and
+truncated outputs. A separate identical bundle copy allowed package probes to
+run alongside the real driver without changing its active worker. The full
+source suite passed 813 tests with 13 skips in 1,850.777 seconds. The real driver
+successfully made four 0x600 allocations and reached event initialization before
+stopping at missing KeInitializeTimerEx after 308,369,500 instructions. Its 18
+artifact observations represent 17 unique payloads. Eight image pages changed;
+none were executed after being written. The integrity-verified evidence is in
+`output/driver-upgrade-21-inspection.json`.
+
+Build 22 adds cache-aware rundown references, event/timer state, finite waits on
+the guest clock, and nonpaged MDL descriptors. Current-process user mappings of
+modeled NX pool buffers share native backing bytes, so CPU and API writes remain
+coherent in both directions. Aliases remain NX; MdlMappingNoWrite mappings reject
+CPU writes; unmapping removes both native access and stale scan metadata. Guest
+PFNs are synthetic identities, never host physical addresses. Imported timer
+initialization now has the behavior needed by the next observed stopping point.
+Queued kernel threads and due timer DPCs still require scheduling and stop
+explicitly; pending DPCs cannot turn a returned DriverEntry into complete
+emulation. Seventy-nine focused regression methods and the expanded eleven-method
+object suite passed. WDK header compilation verified x86/x64 MDL, event, timer
+and DPC layouts. All 105 packaged cases passed; the full source suite passed
+824 tests with 13 skips in 2,045.378 seconds. The unchanged real driver reached
+314,099,273 instructions, initialized the timer and cache-aware rundown state,
+built an MDL for its roughly 4-MB buffer, and created a System thread. DriverEntry
+then blocked on the thread's startup event because build 22 did not execute queued
+threads. Its 46 artifact observations represent 44 unique payloads. Nine image
+pages changed and none executed after modification. Report integrity checks
+passed. Cleanup scanned 1,006 directories and 9,008 files with zero residual
+AppContainer grants or private broker journals; no packaged workers remained.
+The evidence is in `output/driver-upgrade-22-verification.json` and
+`output/driver-upgrade-22-inspection.json`.
+
+Build 23 runs guest-created System threads cooperatively on CPU 0. It preserves
+native CPU context, distinct RW/NX stacks, PCR thread identity, IRQL and critical
+region state; guest waits suspend execution until a modeled event or timer
+satisfies them. Both architectures cover single/multiple-object waits, finite
+timeouts, delays, explicit thread termination, handle-close lifetime, and shared
+instruction budgets. Recorded base priorities do not determine dispatch order.
+The requested lifecycle may finish when its naturally created threads become
+quiescent; this is not general Windows, SMP, APC, or DPC scheduling. The same
+revision blocks modeled API writes through read-only MDL aliases, closing a
+gap exposed by RtlMoveMemory despite CPU writes already being denied. Eighty-five
+focused source tests passed, followed by three supplemental methods covering
+two-worker dependency chains, dynamic priority lookup and unload coordination
+on both architectures. All 145 packaged cases passed. The 828-test full-source
+run had thirteen skips and one failure: the unrelated 255-hop pathping case hit
+its 30-second wall-clock limit. That case passed unchanged on a separate rerun
+in 19.465 seconds; the full run's failure is retained in
+`output/driver-upgrade-23-verification.json`. Cleanup of the completed package
+roots scanned 1,095 directories and 10,443 files with zero residual grants,
+private journals or processes from that package bundle. The separate real-driver
+run executed the logger thread for 59 instructions at recorded priority 15,
+signaled its startup event, and resumed DriverEntry. It reached 317,596,692
+instructions before stopping at missing KeIpiGenericCall. The 48 artifact
+observations represent 45 unique payloads; nine image pages changed and none
+executed after modification. Input, report and artifact integrity checks passed.
+The subsequent real-run cleanup scanned 78 directories and 514 files with zero
+residual grants, private journals or processes from that bundle. This trace used
+worker SHA-256
+`b7ec2ab51d82c32fd4bd191598eeba053be2c7dc67352eb46ad056b772bb74fe`.
+
+Build 24 guards RtlMoveMemory, RtlCopyMemory, RtlFillMemory, RtlZeroMemory,
+memcpy, memmove and memset with native guest-page permissions and a 128-MiB
+operation bound. A harmless probe showed that the stock Python copy helper
+could modify RX image bytes and then report that page as executed after a
+write. The guarded helper stops before mutation. Both architectures cover
+overlapping moves, invalid reads, cross-page write denials, zero-length
+operations, nonzero initial buffers for zeroing, and x86 C calling conventions.
+REP MOVSB byte iterations no longer fill the branch tail with self-edges;
+native execution, memory tracing, per-iteration budget charges and virtual
+cycles remain active. The long-copy prototype retained identical instruction
+counts, bytes and cycles. Its exported memory fields were null, so no
+memory-access-statistics comparison is claimed. All 84 focused source
+tests passed in 156.335 seconds, including the new memory/REP probes. All 227
+packaged cases passed on worker SHA-256
+`d120f170fa316b72380c66f8291974451c631c47c1fcdbb4e55e2f2ca0aaedeb`.
+One initial context-matrix case timed out during broker startup before a guest
+worker started. The unchanged worker passed the fresh context matrix and all
+remaining cases. The failed report remains at
+`output/driver-upgrade-24-all-package/context/x86-zero-nx-pool/20261016T071320Z-59da744b`.
+Cleanup scanned 1,772 directories and 17,013 files with zero residual grants,
+private journals or processes from that bundle.
+
+Build 25 adds guest-requested [KeIpiGenericCall](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-keipigenericcall)
+broadcasts. Native callbacks run cooperatively on separate processor/PCR/stack
+contexts at IPI_LEVEL, with consistent CPUID, RDTSCP, TSC_AUX and processor-number
+views. A shared barrier requires progress from every callback; the caller resumes
+after all returns and receives its own processor's actual result. Remote CPUs use
+parked modeled System contexts. Bounds are one group (32 processors on x86 or 64
+on x64) and 64 broadcasts. Nested broadcasts, invalid callback addresses,
+termination from a callback, changed return IRQL, faults and exhausted budgets
+remain partial. This does not implement general interrupt delivery, APC/DPC
+dispatch, hardware devices, or complete Windows processor state. In particular,
+the measured default CR0/CR4 values and opaque ETHREAD/EPROCESS data still have
+known fidelity gaps; no CR0 reads appeared before build 23's stopping point.
+All 94 focused source tests passed in 111.922 seconds. The 839-test full source
+run had thirteen skips and one failure: the existing max-255-hop pathping probe
+exceeded its 30-second wall budget under concurrent load. With its test budget
+raised to 60 seconds, it passed in 41.237 seconds; its two-million-instruction
+cap and behavioral assertions are unchanged. All 254 packaged cases passed on
+worker SHA-256
+`c3365070ed63c13134798f26728bc88f7a9d4a6f087f81ad5f88084464102b49`.
+The file group required a retry after Windows failed the bundle ACL grant before
+any guest execution. The same unchanged worker passed all six retry cases.
+The IPI harness also now uses a CLI-valid 64-processor persona for the x86
+oversized-group rejection; x64 cannot request more than 64 through this CLI.
+Cleanup of the package-test roots and original bundle scanned 1,957 directories
+and 18,846 files with zero explicit AppContainer grants, private journals, or
+processes in that bundle. The real-driver run uses a separate immutable bundle;
+this cleanup count does not cover it. Evidence is recorded
+in `output/driver-upgrade-25-verification.json`.
+
+The real build-25 replay reached 317,869,285 instructions. All twelve requested
+IPI callbacks executed 19,541 instructions each, returned zero, and completed
+the broadcast. Execution then stopped on a write to `0x1000004e` at driver RVA
+`0x102c`. The trace shows a preceding `SYSCALL` at RVA `0x10a0` falling through
+unchanged. Harmless probes independently reproduced that engine behavior with
+EFER.SCE clear, and reproduced stale upper x64 register bits after the CPUID
+hook. The driver also now reads the default CR0 value `0x11`, which lacks paging
+and write protection. These are measured CPU fidelity gaps, not evidence of a
+successfully unpacked driver. All 48 artifact observations (45 unique byte
+sequences), report/input digests and offline broker closure verified; nine
+image pages changed and none executed after a write. The separate real-run
+cleanup scanned 78 directories and 514 files with no explicit AppContainer
+grants, private journals or worker processes left.
+
+The next address-contract change moves modeled objects and the entry stack into
+kernel ranges and binds code imports/dynamic lookups to their provider exports.
+Native reads of provider code are allowed; stack/object pages remain NX. Kernel
+unmapped accesses and unknown fetches stop without user SEH or fake recovery
+pages. Fault reports retain their original address, access type and missing
+import name after Unicorn's secondary exception. Unwind diagnostics recognize
+entry, System-thread and IPI stacks. Build 26 was rejected when stricter source
+checks exposed lost unresolved-import names; its 37 packaged cases are only
+limited evidence, and its full suite was cancelled. Build 27 contains the
+reporting correction; all 81 focused driver/kernel source tests passed in
+168.882 seconds, the 842-test full source suite passed in 3,061.101 seconds with
+thirteen skips, and all 268 packaged cases passed on worker SHA-256
+`c1ed2833384163215f9b67079f7b3ea9e9e23e740cd69d0d8b165b809e1d44cc`,
+bound to source digest
+`651c5ca7e99159f60a637df44fe0d40bb84ba94edf1532ea0b10aae2e50fb3a3`.
+Cleanup scanned 2,030 directories and 19,298 files in the package roots, original
+bundle and unused real-driver copy, with no explicit AppContainer grants,
+private journals or worker processes left. Build 27 was not replayed on the
+supplied driver because build 25 had exposed the CPU gaps described above.
+These pointer contracts do not supply real private ETHREAD/EPROCESS layouts or
+complete kernel exception dispatch.
+
+Build 28 corrects CPUID's x64 register clearing and initializes CR0 to
+`0x80050033`, CR4.PAE and EFER.NXE. The native virtual TLB permits these values
+without pretending to supply physical page tables. Guest MOV CR0 and SMSW stay
+consistent, including changes made by guest code. Guest-map permission checks
+remain enforced independently of CR0.WP changes. The x64 kernel CPU also sets
+EFER.SCE and STAR/FMASK, and supports SYSCALL transfer to a guest-provided LSTAR
+entry with saved return PC/flags and unchanged RSP. Prefixed forms and IRET
+frames are covered by native probes. The placeholder Windows service dispatcher,
+SYSRET/SYSENTER/SYSEXIT, invalid entry state and architectural exceptions remain
+explicit partial stops; they do not fall through as no-ops. Bounded system-entry
+state is included in the engine report. Its first sixteen CPU/IPI tests passed
+in 12.933 seconds and all 92 focused source tests passed in 296.099 seconds on worker
+`6676b390aa92fd9f234b2ce20145d90b35442c9936c59b5686d83648b04b7614`,
+source digest `476f393d9c9838e376bc2bac2ef72fe9cf3f0437e8e100a10812161124655edc`.
+All 37 CPU/address packaged cases passed. This intermediate build was then
+superseded before real replay: a new native probe confirmed that fresh normal
+kernel entry started with IF clear on both architectures. Its full suite was
+cancelled and remaining package groups intentionally stopped before IPI cases.
+The 405-directory/3,360-file audit found no residual grants, journals or workers.
+
+Build 29 starts fresh normal lifecycle/System-thread contexts with IF enabled
+and IPI entries with IF disabled; resumption restores native saved guest flags.
+Guest probes verify fresh child and resumed caller flags as well as every IPI
+callback's flag state. All seventeen first CPU/IPI/thread checks passed in
+37.609 seconds. Broader source and packaged validation completed on worker
+`030285a3e0e575f8fdd399cf063505f7ec366d3181289f7f40ff1265a7abaafb`,
+source digest `705822ba8d134f2248b4d6d1598bbd7ee983cb2d2f7dd441f05b6707222154ea`.
+The 93 focused driver/kernel/CPU tests passed in 320.981 seconds, the 849-test
+full source suite passed in 3,471.240 seconds with thirteen skips, and all 293
+packaged cases passed. Cleanup of the original test bundle and package roots
+scanned 2,135 directories and 20,622 files with zero explicit AppContainer
+grants, private broker journals or processes from that bundle. The separate
+real replay finished after 566,739,869 instructions. It completed the long image
+scan and all twelve IPI callbacks, passed the previous CPU-related failure
+without attempting SYSCALL, then stopped at unsupported
+`ZwQuerySystemInformation` class `0x4D` (extended kernel-module information).
+DriverEntry did not return. Nine changed image pages and zero changed image
+pages executed after writing were observed; no unpacked executable is confirmed.
+The verified run is recorded in `output/driver-upgrade-29-inspection.json`.
+Its separate cleanup scanned 78 directories and 514 files with zero residual
+grants, journals or processes.
+Completed validation is recorded in `output/driver-upgrade-29-verification.json`.
+The identical verified worker now occupies `dist/Emumee`; the prior default is
+preserved in `output/driver-default-before-29`. All 25 CPU and two containment
+boundary cases passed from the new default path. Its separate audit scanned
+333 directories and 2,669 files across the new/prior defaults and those test
+roots, with no residual grants, journals or processes. That default-path audit
+excludes the separately audited real-driver copy.
+
+A reporting audit found that the upstream kernel path collects memory access
+counters but does not populate the exported memory-layout snapshot. Thus an
+empty dynamic-code list is not proof that no allocated code executed. A
+harmless x86/x64 fixture writes and executes a two-instruction pool function;
+the frozen build-29 report omits that execution, while a metadata-only prototype
+exposes both writes and both executed instructions with identical instruction
+count, return, virtual TSC and artifact hashes. The prototype has not been
+integrated into the frozen worker. The inspector now makes this limitation
+explicit; see `output/driver-memory-reporting-comparison.json`.
+
+The next source candidate models kernel module-information classes 11 and 77
+from actual modeled mappings, including architecture-specific layouts, the
+extended list's terminating zero USHORT, preferred base, timestamp and checksum.
+It validates writable outputs, reports required lengths and preserves other
+existing information-class models. Its bounded final-layout reporting also
+exports native access counters and allocated-code execution, with explicit
+omission counts and one module inventory per report. API implementation memory
+operations are excluded from these native counters. This is metadata, not a
+memory dump or proof of unpacking. Native fixtures cover both architectures,
+relocation, output faults, allocated execution and NX faults. Build 30 has worker
+digest `7f385b25b85f94238bdf2abf223f29d4ff6c807dc0f31f41544d04d43d5bdbb7`
+and source digest `04e2879678059098f6320be36b63db4dd3056decd0b2e47ca35d7dcda200a5af`.
+All 98 focused source tests passed in 213.547 seconds, plus the separately run
+existing unwind test in 1.094 seconds. All 325 packaged cases passed. The full
+855-test run completed in 2,942.136 seconds with thirteen skips and one failure:
+the existing 255-hop traceroute probe exceeded its 30-second wall-clock budget
+under concurrent load. That unchanged test passed separately in 17.403 seconds.
+The initial full run is not recorded as a clean pass, and the default remains
+build 29. The scoped package cleanup scanned 2,391 directories and 22,849 files,
+finding no explicit AppContainer grants, private journals or bundle processes.
+The separate real-driver replay completed 569,518,855 instructions. Three
+extended module enumerations succeeded before it reached cleanup and stopped
+on an unresolved `PsThreadType` data import. Its next native instructions call
+`ObReferenceObjectByPointer`, signal the logger and wait for thread termination.
+The new reports contain fourteen execution contexts, 120 memory records and
+nine loaded modules without truncation; no allocated-code execution was
+observed, and no changed image page executed after writing. No unpacked driver
+is confirmed. Its separate 78-directory/514-file audit also found zero residual
+grants, journals or processes. See `output/driver-upgrade-30-verification.json`
+and `output/driver-upgrade-30-inspection.json` for these qualified results.
+
+The next source candidate supplies opaque Thread/Process type identities,
+KernelMode object pointer/handle references and real reference-count changes.
+Guest-created System-thread dispatcher headers become signaled only at actual
+termination or return; joins use the existing native thread scheduler, and the
+signal persists for later waits while the object is retained. Freed references,
+unmodeled UserMode security checks and opaque type internals stop explicitly.
+Native probes also exposed missing protected-read diagnostics and an inherited
+fake-page fallback before invalid writes; both paths now retain the actual
+fault address and preserve the original guest mappings. Candidate validation
+is in progress. The maximum 255-hop traceroute test now gets a 60-second wall
+budget, as the earlier maximum-hop pathping test does; its two-million-native-
+instruction budget and all output/765-echo assertions are unchanged.
+
+Build 31 has worker digest
+`0bcb64f09e8e336aafb6d773038da6a8ce0421d801017754799d9d3c4542986e`
+and source digest `e941d0c0384fb188fde349e3dd39c671de82c68b96758597ef01da4e5bbbcd0d`.
+The preflight's three reference methods plus the maximum-TTL test passed in
+22.546 seconds. All 102 focused source tests passed in 238.161 seconds, and all
+30 new packaged reference/join cases passed. The full source suite ran 858 tests
+in 3055.612 seconds with 13 skips and no failures. All 325 remaining packaged
+cases also passed, bringing the total to 355. The scoped audit of the original
+bundle and eleven packaged test roots found zero explicit AppContainer grants,
+private broker journals or worker processes across 2632 directories and 24920
+files. Build 31 was promoted to the default bundle, retaining the previous
+default at `output/driver-default-before-31`. All 32 default-path reference/join
+and host-file boundary sanity cases passed, followed by a clean scoped audit
+of the default, previous archive and sanity roots. The dedicated isolated
+real-driver replay completed after 569,719,293 instructions with a genuine
+DriverEntry return of `0xC000007A`. Its logger thread terminated with status
+zero, the reference/join cleanup completed, and the report contains no emulator
+errors. Initialization still failed: no devices or dispatch routines were
+registered. The 140-region memory report has no omissions or allocated-code
+execution; eight pages remained changed and none executed after writing.
+The separate replay audit scanned 77 directories and 480 files with zero
+residual grants, private journals or worker processes. No unpacked driver is
+confirmed. See `output/driver-upgrade-31-inspection.json` and
+`output/driver-upgrade-31-verification.json`.
+
+The next diagnostic candidate records native reads of modeled kernel provider
+images: the first read at up to 256 distinct provider/PC pairs and the latest
+256 reads, with registers and bounded readable pointer/stack prefixes. Total
+read counts, omitted records and snapshot errors are explicit. These are passive
+observations, not claims that an API resolved. Harmless x86/x64 single-read and
+600-read controls preserve instruction counts, native memory counters, virtual
+time, return values and artifact hashes with diagnostics enabled or disabled.
+The real build31 trace read the modeled kernel image 3,541 times, but its API
+trace cannot identify which native lookup led to the returned status. Additional
+lookup evidence is needed before changing provider behavior. Diagnostic build32
+passed 104 focused source tests in 131.180 seconds and all four new packaged
+controls. Its scoped 104-directory/679-file audit found no residual grants,
+journals or worker processes. Worker digest
+`8c5f9dbad58fdfc40db4649262f0dd0f87be8f6094dd20b8f04d69e3e8f6ee69`
+is bound to source digest
+`0a2105561190057e242d001b88070be278792ae84f347720f1604ead0a8d5595`.
+The isolated diagnostic replay completed with the same instruction count and
+genuine failure status as build31. It captured 3,547 provider-image reads at
+82 distinct PCs, with 3,219 omitted read records and zero capture errors.
+All export/header reads occurred before 4.2 million instructions; only four
+lock-storage reads occurred later during cleanup. The three successful module
+list queries near the failure were not followed by provider-header reads.
+The 77-directory/480-file replay cleanup audit was clean. The next diagnostic
+candidate observes native reads of the successfully returned module-list buffers
+to identify the missing lookup context. It adds up to 1,024 bytes of readable
+stack and bounded prefixes at all register pointers, preserves native results,
+and explicitly reports overlapping or excess watch regions. Build33 passed all
+105 focused source tests in 147.173 seconds and eight packaged diagnostic
+controls. Its scoped 136-directory/959-file audit was clean. Its worker digest
+is `0dcfffadc7aba659edc4ce4913b79a8486a65e7bb950795e7e751cc346a06a5d`,
+bound to source digest
+`6b2d1df66131291e2873525bf02a946b3e741a1a7364b30f9945ee1676ba2d8e`.
+The module-buffer diagnostic replay completed with the same genuine failure
+and instruction count. It captured all 76 native query-buffer reads without
+omissions, capture errors or watch errors. Register snapshots show a search for
+`ci.dll` followed by `cng.sys`; both names are absent from the returned modeled
+inventory. See `output/vgk-33-missing-providers.json` and
+`output/driver-upgrade-33-inspection.json`.
+
+The next candidate supplies synthetic read-only/NX images for those two modules,
+with a fixed named-export metadata catalog inspected statically during
+development. It includes no Microsoft function bytes and performs no host
+module discovery at runtime. CI named ordinals start at four; its three unnamed
+ordinals remain unmodeled. Every catalog function is non-executable: native
+calls and writes stop at protection boundaries, and no code-integrity verdict
+or cryptographic result is supplied. Native x86/x64 probes cover module-list
+discovery, PE export traversal, readable metadata, blocked calls, and blocked
+writes without executing a following marker. Frozen build34 passed 108 focused
+tests in 230.300 seconds and all 52 related packaged controls (12 metadata,
+eight read-diagnostic and 32 module-query/reporting cases). Its scoped audit
+of 490 directories and 4027 files found zero residual grants, journals or
+worker processes. Its worker digest is
+`9959c115b5083700e94f3206a2c885374f6d1ffc28761babfaa70284bd8dd8f0`,
+bound to source digest
+`f59b6fb9748fab48003f24443dee371ec2eb204daf70ce97207e9de96831f4dd`.
+That replay stopped after 568,218,567 instructions at a native read of the
+unmodeled `ntoskrnl.MmHighestUserAddress` data export. DriverEntry did not
+return, and no CI/CNG function executed. All 100 module-query-buffer reads
+were captured without omissions or diagnostic errors. Nine image pages
+changed, with no observed execution after writing. The completed replay's
+77-directory/514-file containment audit was clean. No unpacked driver is
+confirmed. See `output/driver-upgrade-34-inspection.json`.
+
+The next candidate models the pointer-sized highest-user-address global in
+read-only/NX kernel storage. Its value describes the guest's address-space
+profile and is never read from the host. Imported and dynamically resolved
+data addresses agree. Native fixtures check x86/x64 reads, data-write faults,
+and execution faults without executing a following marker. Frozen build35
+passed all 112 focused/related source checks (84 kernel checks in 134.536
+seconds and 28 driver/image/CPU/unwind checks in 21.426 seconds), and all
+60 targeted packaged cases (eight address-limit, 12 metadata, eight diagnostic,
+32 module-query/reporting). The scoped 556-directory/4588-file audit found
+zero residual grants, journals or worker processes. Worker digest
+`c54158f4401ddba223a0ff7e9575cf903050e9b5ce4e5c8af5c9ba673742fbc1`
+is bound to source digest
+`c092977efffadf9c1cd2f2aefe698318b033a6fbd20ef32b5b366a8d77817ceb`.
+The isolated real replay stopped at 568,218,640 instructions. Native code
+passed the modeled address-limit read (R9 holds `0x00007ffffffeffff`) and then
+called unmodeled `ntoskrnl.strcmp`. DriverEntry did not return. Nine image
+pages changed, with zero observed execution after writing. The completed
+77-directory/514-file replay audit was clean. This does not implement CI/CNG
+routines or establish unpacking. See `output/driver-upgrade-35-inspection.json`.
+
+The next candidate adds unsigned-byte `strcmp` with cdecl handling on x86
+and the native x64 calling convention. It checks the readability of each
+consumed byte and stops at the first difference or matching NUL; equal
+pointers still require valid readable strings. Inputs needing more than
+65,536 bytes of comparison stop explicitly without reporting equality.
+Native fixtures cover ordering, high-bit bytes, case, prefixes, embedded NULs,
+NUL at a mapping boundary, invalid pointers and the comparison cap. Frozen
+build36 passed 116 focused/related source checks (88 kernel checks in 119.279
+seconds and 28 driver/image/CPU/unwind checks in 12.275 seconds) and 68 targeted
+packaged cases (eight string, eight address-limit, 12 provider metadata,
+eight read-diagnostic, 32 module-query/reporting). The scoped audit of 621
+directories and 5141 files found no residual grants, journals or worker
+processes. Worker digest
+`392d79bc8e88d92193e4e6f59a8777c3ebc77ada9a4a4196113612824a4bd8ea`
+is bound to source digest
+`46d7daea63fc25573e4d2cfd076b09e13aaee9aaba8a58c2a10af1f7cba5a043`.
+That replay completed after 570,050,733 instructions, with eight actual
+`strcmp` calls and no emulator error. DriverEntry genuinely returned
+`0xc000007a`. All eight captured lookup snapshots name
+`KdDebuggerNotPresent`, which is absent from the modeled export catalog.
+Nine image pages changed; no execution after writing was observed. The
+completed 77-directory/514-file replay audit was clean. See
+`output/vgk-36-missing-debugger-data.json` and
+`output/driver-upgrade-36-inspection.json`. Unpacking remains unconfirmed.
+The ordinary return relation follows Microsoft's
+[strcmp documentation](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/strcmp-wcscmp-mbscmp).
+
+The next candidate supplies `KdDebuggerEnabled` and `KdDebuggerNotPresent`
+as BOOLEAN data in a read-only/NX kernel-provider section. The guest has no
+modeled kernel debugger transport or attachment, so the values are zero and
+one, respectively; they are not discovered from the host. The PE export-name
+index is sorted together with its ordinal indexes, preserving function RVAs
+and name/ordinal associations. Imports, dynamic lookup and native PE binary
+lookup refer to the same data addresses. Native x86/x64 fixtures cover both
+data values, missing-name search, and write/execute protection faults. Frozen
+build37 passed 120 focused/related source checks (92 kernel checks in 160.202
+seconds and 28 driver/image/CPU/unwind checks in 14.575 seconds) and 76 targeted
+packaged cases (eight debugger-data, eight string, eight address-limit,
+12 provider metadata, eight diagnostic and 32 module-query/reporting). The
+scoped 686-directory/5694-file audit found no residual grants, journals or
+worker processes. Worker digest
+`f08b6d010ea8a78ed78d81cf0906b33078679106c349855754ebdad79a10e40b`
+is bound to source digest
+`551950c70c5da8c9509f6e9f79c4d4ccbf7d131e445e4560521a8486d0d53efe`.
+That replay completed after 570,056,638 instructions with a genuine
+`DriverEntry` return of `0xC000007A`. Both debugger-field lookups now resolve;
+seven native lookup snapshots identify the next missing export as
+`KdEnteredDebugger`. Ten image pages were written, nine changed, and none
+executed after writing. Initialization and unpacking remain unconfirmed.
+See `output/driver-upgrade-37-verification.json` and
+`output/vgk-37-missing-entered-debugger.json`.
+Debugger attachment, refresh and mutation are not
+implemented. Variable semantics follow Microsoft's
+[KD_DEBUGGER_NOT_PRESENT documentation](https://learn.microsoft.com/en-us/previous-versions/ff548125(v=vs.85)).
+The name-index and parallel ordinal-index layout follows Microsoft's
+[PE export format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#export-name-pointer-table).
+
+Candidate build38 adds the missing `KdEnteredDebugger` BOOLEAN with value zero
+for the guest's inactive debugger. Native x86/x64 fixtures compare imports,
+dynamic lookup and binary export search. It also caches instruction metadata,
+defers branch-tail formatting until reporting, and removes repeated work from
+ordinary instruction accounting while preserving the special CPU paths.
+Three alternating generated scalar-scan pairs retained identical instruction
+counts, virtual time, memory counters, control/context tails and artifact hashes.
+The median fell from 7.814 to 5.178 seconds for 1,286,009 instructions (1.51x).
+This measures a harmless fixture; real-driver speedup must be measured separately
+in the packaged isolated worker. Source validation passed 93 kernel and 33
+driver/image/CPU/unwind/cache tests. Its 79 packaged controls passed, including
+a native scan with observations identical to the source model. The scoped
+713-directory/5960-file audit found no residual grants, journals or worker
+processes. Its real replay finished after 570,059,491 instructions, resolving
+all three debugger globals before a native search demanded the absent
+`PsInitialSystemProcess` data export. `DriverEntry` returned `0xC000007A`.
+Nine image pages changed and none executed after writing; no unpacked driver
+was confirmed. The roughly 57-minute run overlapped build/test/profiling jobs
+and does not establish a real-driver speedup. See
+`output/driver-upgrade-38-inspection.json` and
+`output/vgk-38-missing-initial-system-process.json`.
+Evidence: `output/driver-hooks-ab-38/verification.json`.
+
+Build39 adds an equivalent common execution-accounting path, retaining the
+upstream cold paths. It passed 126 source checks and 236 packaged driver CPU,
+thread, IPI, lifecycle, memory, debugger and scan controls. Its scoped
+1818-directory/17112-file audit was clean. No real replay was started with this
+candidate while build38 remained active. See
+`output/driver-upgrade-39-verification.json`.
+
+Build40 includes an experimental compiled direct instruction callback. It
+buffers bounded trace tails, keeps the native instruction budget, and flushes
+pending virtual CPU cycles before timer/clock observers. Special CPU,
+scheduled and cold paths retain Python handling. Source and binary digests
+are checked separately, including an embedded source digest; stale compiled
+code fails during kernel emulator construction. Native buffers do not replace
+guest instructions or alter driver branch results. Source validation passed
+131 checks (93 kernel and 38 driver/image/CPU/unwind/cache/receipt checks).
+The isolated scan matches the Python model's 1,286,009 instructions, clock,
+memory counters, context/control tails and artifact hashes. Binary tampering,
+source tampering and a valid portable manifest with stale compiled source
+were rejected before guest image execution. All 239 packaged controls passed;
+the scoped 2042-directory/18403-file audit was clean. Exact build40 source is
+preserved under `output/frozen-source-40`. The verified default is still build31.
+
+Three alternating scan pairs measured build40's compiled backend at 8.422
+seconds median versus 14.913 seconds for receipt-bound build37 tracing
+components, a 1.77x throughput gain under the same benchmark workload. This
+measures a generated fixture and does not establish a real-driver speedup or
+successful unpacking. See `output/driver-hooks-ab-40/verification.json` and
+`output/driver-upgrade-40-binding-package/verification.json`.
+
+Candidate41 supplies the documented `PEPROCESS PsInitialSystemProcess` global
+as a read-only/NX pointer in the generated kernel image. It points to the
+existing modeled System process; it does not allocate a replacement process.
+Native x86/x64 import, dynamic and binary export lookups agree, the body pointer
+agrees with `IoGetCurrentProcess` in DriverEntry, and object references balance.
+The shared data-export builder retains sorted name/ordinal pairs and debugger
+data behavior. Private EPROCESS layout and global-pointer replacement remain
+outside this supported view. See Microsoft's
+[kernel global variables documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/mm64bitphysicaladdress).
+Source validation passed 135 checks and all 51 targeted packaged controls.
+The scoped 557-directory/4407-file audit was clean. The compiled backend, clock, scheduler and
+memory-helper source/binaries match verified build40. Live progress now records
+native-backend counters without changing guest time. The frozen isolated real
+replay under `output/vgk-upgrade-41` completed 570,070,553 instructions in
+1663.471 seconds (27 minutes 43 seconds), then returned `0xC000007A`.
+The System process lookup and three previously queried type exports resolve;
+the next absent native query is `IoFileObjectType`. There were no stopping
+errors or native callback errors. Report integrity and worker bindings passed;
+the final 78-directory/482-file containment audit was clean. The prior build38
+run took 3415.316 seconds alongside heavy validation jobs, so this wall-clock
+improvement is not a controlled speedup measurement. No unpacked driver is
+confirmed. See `output/driver-upgrade-41-inspection.json` and
+`output/vgk-41-native-lookups.json`.
+
+Candidate42 adds the missing file type global and gives all four queried
+Thread/Process/Driver/File type exports one read-only/NX pointer location shared
+by imports, dynamic lookup and the native PE export table. Their distinct
+opaque identities have no readable or executable private fields. KernelMode
+reference counts and type mismatch checks remain enforced. This does not add
+device stacks, private OBJECT_TYPE layouts or file bodies for unsupported
+handles. See the WDK's
+[object reference contract](https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle).
+The expanded 14-method preflight, all 142 broader source checks and 131 targeted
+packaged controls passed. The final audit scanned 1200 directories and 9929
+files with zero explicit AppContainer grants, private journals or remaining
+worker processes. The frozen isolated replay under `output/vgk-upgrade-42`
+completed 570,073,346 instructions in 1619.734 seconds (26 minutes 59 seconds).
+`IoFileObjectType` resolves; the next absent native query is
+`MmSectionObjectType`. DriverEntry returned `0xC000007A` with no stopping or
+native callback errors. Report/worker bindings passed, and the final
+78-directory/482-file audit was clean. The compiled backend is unchanged from
+build41. No unpacked driver is confirmed.
+The generated scan's 1,286,009 instructions and observed results agree with
+Python tracing. These checks establish the modeled exports and tracing
+agreement; driver initialization and unpacking remain pending.
+
+Candidate43 adds the observed section type and the object-type globals listed
+by the WDK's ObReferenceObjectByHandle contract (Event, Semaphore, Token and
+four transaction-related types). All twelve type identities remain opaque;
+their globals have consistent native/import/dynamic addresses and read-only/NX
+storage. No section memory manager, transaction manager or private OBJECT_TYPE
+layout is implied by an exported type identity. ReactOS independently declares
+the observed [section type global](https://github.com/reactos/reactos/blob/master/ntoskrnl/mm/section.c)
+as a POBJECT_TYPE. The 14-method catalog preflight, all 142 broader source
+checks and all 227 split packaged controls passed. The generated scan's
+1,286,009 instructions and observations agree with Python tracing. The
+1969-directory/16554-file audit was clean. The frozen isolated replay under
+`output/vgk-upgrade-43` completed 570,114,326 instructions in 1638.328 seconds
+(27 minutes 18 seconds). Section type resolution succeeds; the next absent
+native query is `MmUserProbeAddress`, followed by a genuine `0xC000007A` return.
+Report/worker bindings passed and the final 78-directory/482-file audit was
+clean. There were no stopping/native callback errors and no confirmed unpacked
+driver. The compiled tracing backend remains unchanged.
+
+Candidate44 supplies the pointer-sized `MmUserProbeAddress` boundary and moves
+both it and `MmHighestUserAddress` into read-only/NX native kernel export data.
+Imports, dynamic lookup and native binary lookup share the same storage.
+Probe is the first byte beyond Highest in each modeled address-space profile;
+the existing x86/modern x64/legacy x64 values are preserved. The eight-method
+boundary preflight and all 146 broader source checks passed. Legacy build 7601
+is an internal source-fixture profile; the CLI intentionally accepts Windows 11
+profiles only. A package harness that initially tried 7601 was rejected before
+guest execution, then continued with 22000/22631 without repeating the completed
+type cases. All 139 packaged controls passed; generated scan observations
+match Python tracing. The 1267-directory/10525-file audit was clean, and a
+frozen isolated replay under `output/vgk-upgrade-44` completed 570,117,229
+instructions in 1620.45 seconds (27 minutes). Both address boundaries resolve;
+the next missing native export is `HalPrivateDispatchTable`, followed by a
+genuine `0xC000007A` return. Report bindings and the final containment audit
+passed. No unpacked driver was confirmed.
+Read-only inspection of the
+installed 26100 kernel's disk initializers independently matches the modern
+Highest/Probe values; that is not a live snapshot or proof of guest 22631 private
+layout. See `output/local-kernel-boundary-initializers.json`.
+
+Candidate45 adds metadata for the private `HalPrivateDispatchTable` symbol.
+Its version, fields and callbacks remain unmodeled. The reserved data page has
+no read, write or execute permission; native accesses stop with the symbol and
+offset recorded. API memory helpers explicitly reject accesses to that page
+because host-side Unicorn memory APIs bypass guest page permissions. This
+exposes the next required behavior without guessing a private HAL layout.
+All 154 source checks and 157 packaged controls passed. Generated scan
+observations match Python tracing. The 1411-directory/11766-file containment
+audit was clean. The frozen isolated replay under `output/vgk-upgrade-45`
+completed 570,120,041 instructions in 1634.364 seconds (27 minutes 14 seconds).
+The private HAL symbol resolves without a field access. The next absent native
+export is `ExCreateCallback`, followed by a genuine `0xC000007A` return. Report
+integrity and the final 78-directory/482-file containment audit passed. There
+were no stopping or native callback errors and no confirmed unpacked driver.
+
+Candidate46 adds named executive callback objects in the Callback directory.
+It supports documented system object names, create/open identity, case-sensitive
+and insensitive leaf lookup, permanent namespace references, single/multiple
+registration rules and removal. Object-manager references keep registrations
+alive after caller dereference; object bodies and registration tokens remain
+opaque protected kernel addresses. Both native and API-mediated accesses are
+checked. No system event is synthesized. Empty driver-defined notifications
+complete; notification of registered routines stops explicitly because guest
+callback dispatch is not yet implemented. System-defined notifications,
+unsupported security/root attributes and invalid IRQL stop visibly.
+All 166 source methods (15 preflight, 113 remaining kernel and 38 related) and
+243 packaged controls passed. The generated scan retains exact Python/native
+observations. The 2101-directory/17702-file containment audit was clean. A
+frozen isolated replay under `output/vgk-upgrade-46` completed 570,163,890
+instructions in 2248.802 seconds (37 minutes 29 seconds). It overlapped
+candidate47 build/source/packaged validation and a reverted affinity experiment;
+this timing is not a controlled comparison with the earlier quiet 27-minute
+runs. Callback exports and `ExQueueWorkItem` resolve; the next missing native
+export is `IoAllocateWorkItem`, followed by a genuine `0xC000007A` return.
+Report bindings and the final 78-directory/482-file audit passed. No unpacked
+driver was confirmed.
+
+Candidate47 extends native export-name metadata for x64 build22631 using the
+authenticated Microsoft kernel 10.0.22621.2506 shared with the 23H2 family
+([Microsoft KB5027397](https://support.microsoft.com/en-gb/servicing/os/windows-11/2023/05/kb5027397-feature-update-to-windows-11-version-23h2-by-using-an-enablement-package)).
+The reference was downloaded from Microsoft's symbol server and Windows
+Authenticode reported a valid Microsoft Windows signature. Only 3,180 code
+names and 77 data names/classifications are included; no Microsoft code bytes
+or private field values are distributed in the worker. Existing modeled APIs
+retain their handlers. Unimplemented exports have distinct protected pages,
+so native calls, function-byte reads and private-data accesses stop with the
+symbol and offset. API memory helpers enforce the same guard. Addresses and
+ordinals remain synthetic. Native denials record a fault-point span; API
+denials record the requested span. The profile is disabled for x86 and other
+builds.
+
+All 178 source methods and 263 packaged controls passed. The generated scan
+retains exact Python/native observations. The 2404-directory/19893-file scoped
+audit was clean. Verified replay47 completed 604,722,892 instructions in
+1795.809 seconds and returned `0xC000007A`, with no native callback or stopping
+errors. Its 2,603 strcmp calls and first CI/CNG native lookups advanced beyond
+the earlier NTOS failures; the last strcmp matched ObFindHandleForObject.
+No protected catalog symbol was accessed. Bounded first-per-PC snapshots and
+the global tail do not establish which later lookup or initialization check
+failed. Successful initialization and unpacking remain unproven.
+
+Candidate48 retains the latest snapshot for each tracked provider/PC, capped
+at the same 256 keys as the first snapshots, and captures a bounded tail of
+kernel wide-format output before callers transform or free the buffers.
+Generated fixtures compare diagnostics enabled/disabled, including guest
+memory, instruction counts and virtual clocks. The native tracer also caches
+decoded instruction flags in per-offset slots, guarded by the canonical
+decoded dictionary identity so invalidation and eviction invalidate the
+slots. Misses and cross-page instructions retain the original reader. Three
+alternating generated scan pairs (6,430,009 instructions each) retained exact
+observations, with medians 14.179 seconds before and 11.205 after (1.265x).
+This measures a generated scalar workload. The verified real replay48 took
+1551.871 seconds for the same 604,722,892 instructions and entry failure as
+replay47: 243.938 seconds less, or 1.157x. Host scheduling was not controlled.
+CPU, scheduling, memory and package binding validation must be refreshed for
+the changed native binary; prior unchanged-backend results are not inherited.
+Candidate48 passed 181 source methods and 511 packaged controls, including the
+refreshed native foundation, passive diagnostics and binding negatives. Two
+disjoint containment audits covered 4,421 directories and 38,799 files with
+zero residual grants, journals or packaged workers. Its frozen isolated replay
+at `output/vgk-upgrade-48/20261017T051408Z-f9af47da` returned `0xC000007A`,
+with no native callback or stopping errors. All 237 strcmp lookup groups
+matched. The subsequent wildcard scan of generated NTOS code found no match.
+Static inspection of the authenticated reference finds one matching pattern;
+its call target is the unexported MmAllocateIndependentPages, identified by
+the matching Microsoft PDB. Initialization and unpacking remain unproven.
+
+Candidate49 adds an optional explicitly supplied kernel PE as static code
+inspection data. The parent and worker bind its SHA-256; only file-backed
+code sections are readable, all are non-executable, and other reference data
+is inaccessible. Generated API stubs and modeled metadata retain separate
+storage. Calls into reference code stop explicitly; no private allocator
+behavior or private structure values are supplied. The authenticated
+22621.2506 reference is identified by a pinned hash, while other supplied PEs
+are reported as unverified data. Reference scan reads retain exact counts
+and last-read metadata; full contexts are captured periodically in those
+code ranges. Candidate49 passed 244 source methods and 195 packaged controls,
+including authenticated reference reads, denied reference calls and seven
+input rejections before guest execution. Its scoped audit covered 1,704
+directories and 15,148 files with zero residual grants, journals or workers.
+The isolated replay at `output/vgk-upgrade-49/20261017T062954Z-4dd1da2e`
+finished after 697,902,358 instructions in 3,505.512 seconds with a partial
+stop while inspecting the synthetic `PsSetContextThread` catalog address.
+Final report, worker, input and reference hashes were verified; a scoped audit
+covered 78 directories and 516 files with no residual grants, journals or
+workers. Initialization and unpacking remain unconfirmed. The native backend
+is unchanged from validated candidate48.
+
+Candidate50 changes the native cached-access lookup. When the first execution
+record does not cover the current instruction, it now checks the remaining
+existing records before using the Python fallback, matching the upstream
+lookup order and access-record identity. Three alternating generated fixture
+pairs, each 1,286,011 instructions across two executable sections, retained
+guest bytes, instruction counts, clocks, trace tails and cache misses. Median
+engine runtime was 9.328 seconds before and 4.939 after (1.889x). Cache-hit
+counts truthfully decrease because redundant lookups are eliminated. This
+is a generated workload result, measured alongside the functional49 replay;
+real-driver speedup is not established. The new x86/x64 source tests include
+an exact64-instruction stop. Candidate50 passed 245 source methods and 534
+packaged controls. Its scoped audit covered 4,605 directories and 40,698 files
+with no residual grants, journals or workers. The frozen worker and source
+snapshot are preserved. Real49's timing was affected by concurrent validation
+and temporary task-process core placement and priority settings.
+
+Candidate51 addresses the demonstrated export-inspection stop. With an
+explicit reference, unimplemented code exports that have file-backed code in
+that PE use its original RVAs for inspection. Implemented APIs keep their
+generated stubs; data exports keep modeled storage or protected placeholders.
+Reference code remains read-only/NX and calls still stop with the export name.
+No private API behavior or runtime kernel state is invented. Thirty-three
+focused source methods passed, including generated import/dynamic/EAT pointer
+agreement, native/Python parity, data guards, call/write refusals and a bounded
+export-table check. All 68 packaged controls passed, including actual
+`PsSetContextThread` reference-byte reads through import, dynamic and EAT
+lookup and denied calls/writes, plus retained default-catalog traps, native
+diagnostics, scan parity and worker-binding negative controls. The real51
+replay finished after 747,687,404 instructions in 2,624.015 seconds. It passed
+the earlier export-inspection stop and stopped reading reference RVA0xc13098.
+The matching Microsoft PDB identifies that address exactly as `MmUnloadedDrivers`.
+Final report/input/reference/worker hashes and containment were verified;
+the real-run audit covered 78 directories and 516 files with no residual
+grants, journals or workers. A bounded generated prototype benchmark overlapped
+its final stage, so this is not a controlled whole-run performance comparison.
+Initialization and unpacking remain unconfirmed.
+
+Candidate52 permits native tracing when the scheduler has no pending, queued,
+runnable or active IPI work. Other-runs instruction counts are refreshed at
+cold boundaries so budgets/progress remain global across contexts; busy
+scheduling retains the original hook. Thirty generated controls preserved
+Python/native/prototype guest observations, budgets, clocks, per-run API
+events and scheduling. Three alternating generated benchmark pairs each ran
+400,261 instructions: median engine runtime 4.387 to1.161 seconds (3.779x).
+This is a generated workload measurement alongside the functional51 replay.
+
+The pinned reference's `MiRememberUnloadedDriver` code shows lazy allocation
+of the unload-history buffer. Candidate52 models a fresh guest with no actual
+image-unload operations: its `MmUnloadedDrivers` pointer is NULL and
+`MmLastUnloadedDriver` index is0. The storage is read-only/NX and byte guards
+deny neighboring private fields, padding and crossing reads, including API
+memory helpers. Calling DriverUnload alone does not unload an image or add
+history. ZwUnloadDriver/MmUnloadSystemImage remain unimplemented; no host
+history, invented prior unloads, private array records or reference instructions
+are supplied. Forty-eight focused source methods and all 152 packaged controls
+passed. Its scoped audit covered 1,803 directories and 16,062 files with no
+residual grants, journals or workers. The frozen52 offline replay at
+`output/vgk-upgrade-52/20261017T085258Z-723bc0f8` finished after 781,604,244
+instructions in 2,106.490 seconds. Its final report records the exact formerly
+blocked `MmUnloadedDrivers` read, then a refused call to `DbgPrompt` at reference
+RVA0x5a5520. Final hashes, reference NX and containment were verified; its
+78-directory/516-file real-run audit found no residual grants, journals or
+workers. Different guest behavior and earlier research overlap prevent a
+controlled whole-run performance claim. Initialization and unpacking remain
+unconfirmed.
+
+Candidate53 models the documented `DbgPrompt` no-input result in the existing
+guest with no debugger transport: zero received characters and an unchanged
+response buffer. It validates bounded guest pointers, requires the prompt NUL
+within 512 bytes, accepts response capacities up to 512 bytes, and records at
+most 64 prompts while retaining the full call count. It supplies no debugger
+answers or host console access. Import, dynamic and EAT lookup use the modeled
+API stub; the original reference bytes stay read-only/NX. Thirty-five focused
+source methods and all 86 packaged controls passed. The scoped audit covered
+1,116 directories and 9,909 files with no residual grants, private broker
+journals or workers in the validation roots. The frozen53 replay is running
+at `output/vgk-upgrade-53/20261017T160420Z-244b242b` in the packaged offline
+AppContainer worker. Actual initialization and unpacking remain unconfirmed. Interrupted
+fixture reports remain incomplete; their journals were preserved separately
+with hashes, stale grants revoked, and only unfinished cases resumed. Existing
+completed reports were integrity-checked and retained without re-emulation.
+The API's return-value contract is documented by
+[Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-dbgprompt).
+The variable's meaning follows Microsoft's
+[kernel debugger documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/user-space-and-system-space);
+the supported Windows 11 x64 profile uses the documented
+[128-TB user address-space limit](https://learn.microsoft.com/en-us/windows/win32/memory/memory-limits-for-windows-releases).
+The verified default remains build31;
+the full source suite and broader package matrix were not repeated for this
+unpromoted candidates. Their targeted gates do not replace the default's full
+verification.
+
+The real supplied driver exposed a false user-mode path from a low-address PCR,
+then a missing lock-array pointer, then the signature-only `RtlPcToFileHeader`
+stub. Those observations are concrete compatibility gaps, not proof that every
+later stop is an intentional anti-emulation check. The sample remains an
+experimental stress case; neither successful execution of one driver nor a
+fixture matrix establishes complete Windows kernel compatibility.
 
 ## PowerShell execution and command capture
 

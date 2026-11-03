@@ -26,6 +26,8 @@ mod general_plan_worker;
 mod linux_worker;
 #[cfg(windows)]
 mod msi_static;
+#[cfg(windows)]
+mod user_worker;
 
 fn save_new(path: &Path, data: &[u8]) -> Result<()> {
     let mut file = OpenOptions::new().create_new(true).write(true).open(path)?;
@@ -276,6 +278,22 @@ fn entry() -> Result<()> {
         {
             let _ = (root, expected, extra);
             anyhow::bail!("General RPC roles require Windows");
+        }
+    }
+    if first == "--submitted-user" {
+        let root = PathBuf::from(args.next().context("Submitted user requires run root")?);
+        let expected = args
+            .next()
+            .context("Submitted user requires request hash")?;
+        ensure!(args.next().is_none(), "Unexpected submitted user arguments");
+        #[cfg(windows)]
+        {
+            return user_worker::execute(&root, &expected);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (root, expected);
+            anyhow::bail!("Submitted user worker requires Windows");
         }
     }
     if first == "--submitted-driver" {

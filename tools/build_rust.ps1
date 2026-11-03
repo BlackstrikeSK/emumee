@@ -1,4 +1,4 @@
-param([switch]$Release,[switch]$Test,[switch]$Lint,[switch]$Validation,[string]$Package,[string]$TestFilter)
+param([switch]$Release,[switch]$Test,[switch]$Lint,[switch]$Validation,[string]$Package,[string]$TestFilter,[ValidateRange(1,64)][int]$Jobs=2)
 $ErrorActionPreference='Stop'
 if ($Test -and $Lint) {throw 'Choose either -Test or -Lint.'}
 if ($TestFilter -and -not $Test) {throw 'TestFilter requires -Test.'}
@@ -24,7 +24,8 @@ if (-not $env:BINDGEN_EXTRA_CLANG_ARGS) {
 }
 $arguments=@($(if ($Test) {'test'} elseif($Lint) {'clippy'} else {'build'}),'--locked')
 if ($Package) {$arguments+=@('--package',$Package)} else {$arguments+='--workspace'}
-if ($Validation) {$arguments+=@('--profile','validation','--jobs','2')} elseif ($Release) {$arguments+='--release'}
+if ($Validation) {$arguments+=@('--profile','validation')} elseif ($Release) {$arguments+='--release'}
+$arguments+=@('--jobs',"$Jobs")
 if ($TestFilter) {$arguments+=$TestFilter}
 if ($Test) {$arguments+='--no-run'}
 if ($Lint) {$arguments+=@('--all-targets','--','-D','warnings')}

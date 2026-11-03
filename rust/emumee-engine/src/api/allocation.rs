@@ -10,6 +10,7 @@ pub(super) fn apply(engine: &mut Unicorn<Trace>, plan: Plan) -> Result<u64> {
             | Change::Zero { base, size }
             | Change::Unmap { base, size } => (base, size),
         };
+        super::mdl::pfn::require_change(engine, base, size)?;
         kernel_spin::require_mapping_change(engine, base, size)?;
         crate::threads::timers::require_mapping_change(engine, base, size)?;
     }
@@ -81,11 +82,14 @@ fn supported_protection(value: u32) -> Result<()> {
     Ok(())
 }
 pub(super) fn allocate(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    super::mdl::pfn::require_change(engine, args[0], args[1].max(1))?;
     crate::threads::timers::require_mapping_change(engine, args[0], args[1])?;
     kernel_spin::require_mapping_change(engine, args[0], args[1])?;
     if args[0] != 0 {
         persona::require_allocation_change(engine, args[0], args[1])?;
         crt_stdio::require_allocation_change(engine, args[0], args[1])?;
+        super::crt_startup::require_allocation_change(engine, args[0], args[1])?;
+        super::user_runtime::require_change(engine, args[0], args[1])?;
     }
     let flags = args[2] as u32;
     ensure!(
@@ -100,10 +104,13 @@ pub(super) fn allocate(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64>
     finish(engine, plan)
 }
 pub(super) fn free(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    super::mdl::pfn::require_change(engine, args[0], args[1].max(1))?;
     crate::threads::timers::require_mapping_change(engine, args[0], args[1])?;
     kernel_spin::require_mapping_change(engine, args[0], args[1])?;
     persona::require_allocation_change(engine, args[0], args[1])?;
     crt_stdio::require_allocation_change(engine, args[0], args[1])?;
+    super::crt_startup::require_allocation_change(engine, args[0], args[1])?;
+    super::user_runtime::require_change(engine, args[0], args[1])?;
     ensure!(
         !engine.get_data().apis.heaps.owns_mapping(args[0]),
         "VirtualFree cannot release a heap-owned reservation; use HeapFree"
@@ -120,10 +127,13 @@ pub(super) fn free(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
     finish(engine, plan)
 }
 pub(super) fn protect(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    super::mdl::pfn::require_change(engine, args[0], args[1].max(1))?;
     crate::threads::timers::require_mapping_change(engine, args[0], args[1])?;
     kernel_spin::require_mapping_change(engine, args[0], args[1])?;
     persona::require_allocation_change(engine, args[0], args[1])?;
     crt_stdio::require_allocation_change(engine, args[0], args[1])?;
+    super::crt_startup::require_allocation_change(engine, args[0], args[1])?;
+    super::user_runtime::require_change(engine, args[0], args[1])?;
     supported_protection(args[2] as u32)?;
     if !engine.get_data().apis.memory.allows(args[3], 4, P::WRITE) {
         engine.get_data_mut().apis.last_error = 998;

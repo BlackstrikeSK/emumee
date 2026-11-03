@@ -1,5 +1,5 @@
 //! Compiler-owned coverage for the saved Python53 kernel tail shape.
-//! No test loads external driver images or changes a mutex decision.
+//! No test loads vgk.sys or changes a mutex decision.
 use super::*;
 use emumee_core::fixtures::{TailDiagnostic as T, kernel_tail_probe, native_files_document};
 

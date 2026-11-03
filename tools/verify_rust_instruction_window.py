@@ -1,6 +1,6 @@
 """Packaged offline controls for opt-in submitted-driver instruction windows.
 
-All inputs are harmless generated x64 PEs. This verifier never uses external driver images.
+All inputs are harmless generated x64 PEs. This verifier never uses vgk.sys.
 Use a fresh root for execution; --resume only rechecks saved runs.
 """
 import argparse

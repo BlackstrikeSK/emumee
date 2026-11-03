@@ -11,6 +11,7 @@ pub enum ThreadObjectFixture {
     ObjectAttributes,
     ObjectAttributesNamed,
     ChildReturn,
+    StackBounds,
     Priority,
     PriorityInvalid,
     PriorityForeign,
@@ -152,6 +153,18 @@ fn returned(code: &mut Vec<u8>, wide: bool, child: bool) {
         code.push(0xc3);
     }
 }
+/// Assert actual GS identity fields and the live stack pointer, independently
+/// of the engine report. This fixture targets the pinned AMD64 field profile.
+fn check_stack(code: &mut Vec<u8>, limit: u64, base: u64) {
+    code.extend([0x65, 0x48, 0x8b, 0x04, 0x25, 0x88, 1, 0, 0]);
+    code.extend([0x49, 0x89, 0xc2]); // r10 = actual thread
+    code.extend([0x48, 0x8b, 0x40, 0x30]);
+    expect_pointer(code, true, limit);
+    code.extend([0x48, 0x39, 0xc4, 0x73, 1, 0xcc]); // rsp >= limit
+    code.extend([0x49, 0x8b, 0x42, 0x38]);
+    expect_pointer(code, true, base);
+    code.extend([0x48, 0x39, 0xc4, 0x72, 1, 0xcc]); // rsp < base
+}
 pub fn kernel_thread_objects_probe(
     architecture: Architecture,
     kind: ThreadObjectFixture,
@@ -232,6 +245,14 @@ pub fn kernel_thread_objects_probe(
         }
     }
     let mut root = Vec::new();
+    if matches!(kind, ThreadObjectFixture::StackBounds) {
+        assert!(wide);
+        check_stack(
+            &mut root,
+            layout.entry_stack,
+            layout.entry_stack + crate::kernel_layout::ENTRY_STACK_SIZE,
+        );
+    }
     prologue(&mut root, wide);
     if kind.root_only() {
         call(&mut root, wide, base, 11, &[]);
@@ -555,6 +576,14 @@ pub fn kernel_thread_objects_probe(
     assert!(root.len() <= 0xc00);
     data[0x200..0x200 + root.len()].copy_from_slice(&root);
     let mut child = Vec::new();
+    if matches!(kind, ThreadObjectFixture::StackBounds) {
+        let limit = layout.thread_stack(2).unwrap();
+        check_stack(
+            &mut child,
+            limit,
+            limit + crate::kernel_layout::THREAD_STACK_SIZE,
+        );
+    }
     prologue(&mut child, wide);
     child_call(&mut child, wide, base, 11, &[]);
     if matches!(kind, ThreadObjectFixture::Priority) {
@@ -606,7 +635,10 @@ pub fn kernel_thread_objects_probe(
         &[V(base + 0x2d00), V(0), V(0), V(0), V(0)],
     );
     expect(&mut child, 0);
-    if matches!(kind, ThreadObjectFixture::ChildReturn) {
+    if matches!(
+        kind,
+        ThreadObjectFixture::ChildReturn | ThreadObjectFixture::StackBounds
+    ) {
         child.extend([0x31, 0xc0]);
         returned(&mut child, wide, true);
     } else {

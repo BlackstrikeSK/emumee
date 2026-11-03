@@ -9,6 +9,7 @@ build/
 dist/
 output/
 /target/
+/.codex/
 
 # .NET fixture build products
 bin/

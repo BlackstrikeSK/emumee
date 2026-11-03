@@ -53,6 +53,27 @@ pub(crate) fn current_pcr(engine: &Unicorn<Trace>) -> Result<u64> {
         .map(|context| context.pcr)
         .ok_or_else(|| anyhow!("Kernel processor context is not initialized"))
 }
+/// The current backend owns a virtual-TLB address space, with no process-attach
+/// or hardware page-table producer. Refuse a different guest paging context.
+pub(crate) fn require_owned_four_level_paging(engine: &Unicorn<Trace>) -> Result<()> {
+    let context = engine
+        .get_data()
+        .kernel_cpu
+        .as_ref()
+        .ok_or_else(|| anyhow!("Owned paging requires initialized kernel CPU"))?;
+    let current = registers(engine)?;
+    ensure!(
+        engine.get_data().architecture == Architecture::X64
+            && context.initial.cr0 & (1 << 31) != 0
+            && current.cr0 & (1 << 31) == context.initial.cr0 & (1 << 31)
+            && context.initial.cr4 & ((1 << 5) | (1 << 12)) == 1 << 5
+            && current.cr4 & ((1 << 5) | (1 << 12)) == context.initial.cr4 & ((1 << 5) | (1 << 12))
+            && current.cr3 == context.initial.cr3
+            && current.efer & 0x500 == context.initial.efer & 0x500,
+        "Guest paging context differs from owned virtual four-level profile"
+    );
+    Ok(())
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct MsrValue {
     pub index: u32,
@@ -202,7 +223,7 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
     let prcb = pcr + if wide { 0x180 } else { 0x120 };
     if wide {
         // The x64 trap entries load the kernel handler MXCSR from GS:180.
-        cpu::write(engine,prcb,&0x1f80u32.to_le_bytes())?;
+        cpu::write(engine, prcb, &0x1f80u32.to_le_bytes())?;
         let lock_storage = engine
             .get_data()
             .kernel_lock_storage
@@ -245,6 +266,10 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
         write_msr(engine, 0xc0000084, 0x4700)?;
     }
     uc(engine.reg_write(RegisterX86::EFLAGS, 0x202))?;
+    if engine.get_data().apis.mdls.owned_paging_requested {
+        crate::api::mdl::pfn::initialize(engine)?;
+        crate::api::mdl::paging::initialize(engine)?;
+    }
     let initial = registers(engine)?;
     engine.get_data_mut().kernel_cpu = Some(KernelCpu {
         initial,
@@ -266,6 +291,7 @@ pub(crate) fn sync(engine: &mut Unicorn<Trace>, thread: u64) -> Result<()> {
         return Ok(());
     };
     let pcr = context.pcr;
+    crate::api::mdl::paging::require_context(engine)?;
     let wide = engine.get_data().architecture == Architecture::X64;
     let irql = engine.get_data().apis.kernel.save().0;
     pointer(engine, pcr + if wide { 0x188 } else { 0x124 }, thread)?;
@@ -273,6 +299,7 @@ pub(crate) fn sync(engine: &mut Unicorn<Trace>, thread: u64) -> Result<()> {
     if wide {
         uc(engine.reg_write(RegisterX86::CR8, irql as u64))?;
     }
+    crate::api::kernel_thread_objects::sync_critical(engine, thread)?;
     Ok(())
 }
 pub(crate) fn report(engine: &Unicorn<Trace>) -> Result<Option<KernelCpuReport>> {
@@ -311,7 +338,11 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Result<Option<KernelCpuReport>>
             .iter()
             .map(|(&index, &value)| MsrValue { index, value })
             .collect(),
-        scope: "Virtual-TLB CPL0 segments, KPCR/PRCB pointers, mirrored API IRQL and descriptor backing. Opaque thread identities; full ETHREAD/process/TSS/IDT delivery, physical paging and system-entry parity remain pending.",
+        scope: if crate::api::mdl::paging::enabled(engine) {
+            "Virtual-TLB CPL0 segments, KPCR/PRCB pointers, mirrored API IRQL and descriptor backing; CR3 bound to the owned synthetic root/table/data authority with guarded structural views. Opaque thread identities; general process attachment, native physical-query ABI, full ETHREAD/TSS/IDT delivery and system-entry parity remain pending."
+        } else {
+            "Virtual-TLB CPL0 segments, KPCR/PRCB pointers, mirrored API IRQL and descriptor backing. Opaque thread identities; full ETHREAD/process/TSS/IDT delivery, physical paging and system-entry parity remain pending."
+        },
     }))
 }
 /// The pinned backend includes these processor registers in its CPU-context

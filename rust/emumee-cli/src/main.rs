@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, bail};
-use emumee_core::driver_input::InstructionWindow;
+use emumee_core::driver_input::{
+    InstructionWindow, PagingProfile, ParkedThreadProfile, PfnProfile,
+};
 use emumee_core::elf::ElfImage;
 use emumee_core::pe::{Architecture, MAX_INPUT, PeImage};
 use emumee_core::protocol::{BoundaryProbe, FixtureKind};
@@ -42,6 +44,8 @@ mod powershell_report;
 mod powershell_source;
 mod report_index;
 mod report_reader;
+#[cfg(windows)]
+mod user_controller;
 mod worker;
 
 fn bounded_input(path: &PathBuf) -> Result<Vec<u8>> {
@@ -83,6 +87,9 @@ struct SubmittedOptions {
     offline_fixtures: Option<PathBuf>,
     persona: Option<PathBuf>,
     instruction_window: Option<InstructionWindow>,
+    paging_profile: Option<PagingProfile>,
+    parked_thread_profile: Option<ParkedThreadProfile>,
+    pfn_profile: Option<PfnProfile>,
 }
 
 fn parse_instruction_window(value: &str) -> Result<InstructionWindow> {
@@ -116,6 +123,9 @@ fn submitted_options(args: impl Iterator<Item = String>) -> Result<SubmittedOpti
     let mut offline_fixtures = None;
     let mut persona = None;
     let mut instruction_window = None;
+    let mut paging_profile = None;
+    let mut parked_thread_profile = None;
+    let mut pfn_profile = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -148,6 +158,32 @@ fn submitted_options(args: impl Iterator<Item = String>) -> Result<SubmittedOpti
                 anyhow::ensure!(persona.is_none(), "--persona given twice");
                 persona = Some(PathBuf::from(value));
             }
+            "--paging-profile" => {
+                anyhow::ensure!(paging_profile.is_none(), "--paging-profile given twice");
+                paging_profile = Some(match value.as_str() {
+                    "owned_four_level_26200_v1" => PagingProfile::OwnedFourLevel26200V1,
+                    _ => bail!("Unsupported submitted-driver paging profile: {value}"),
+                });
+            }
+            "--parked-thread-profile" => {
+                anyhow::ensure!(
+                    parked_thread_profile.is_none(),
+                    "--parked-thread-profile given twice"
+                );
+                parked_thread_profile = Some(match value.as_str() {
+                    "quiescent_allocated_system_26200_v1" => {
+                        ParkedThreadProfile::QuiescentAllocatedSystem26200V1
+                    }
+                    _ => bail!("Unsupported submitted-driver parked thread profile: {value}"),
+                });
+            }
+            "--pfn-profile" => {
+                anyhow::ensure!(pfn_profile.is_none(), "--pfn-profile given twice");
+                pfn_profile = Some(match value.as_str() {
+                    "owned_table_backlinks_26200_v1" => PfnProfile::OwnedTableBacklinks26200V1,
+                    _ => bail!("Unsupported submitted-driver PFN profile: {value}"),
+                });
+            }
             "--instruction-window" => {
                 anyhow::ensure!(
                     instruction_window.is_none(),
@@ -158,6 +194,20 @@ fn submitted_options(args: impl Iterator<Item = String>) -> Result<SubmittedOpti
             _ => bail!("Unknown submitted-driver option: {flag}"),
         }
     }
+    anyhow::ensure!(
+        parked_thread_profile.is_none()
+            || (paging_profile == Some(PagingProfile::OwnedFourLevel26200V1)
+                && kernel_code_reference.is_some()
+                && persona.is_some()),
+        "Quiescent parked threads require --paging-profile owned_four_level_26200_v1, --kernel-code-reference and --persona"
+    );
+    anyhow::ensure!(
+        pfn_profile.is_none()
+            || (paging_profile == Some(PagingProfile::OwnedFourLevel26200V1)
+                && kernel_code_reference.is_some()
+                && persona.is_some()),
+        "Owned table backlinks require --paging-profile owned_four_level_26200_v1, --kernel-code-reference and --persona"
+    );
     Ok(SubmittedOptions {
         service: service.context("submitted-driver requires --service NAME")?,
         max_instructions: max_instructions.unwrap_or(100_000_000),
@@ -166,6 +216,9 @@ fn submitted_options(args: impl Iterator<Item = String>) -> Result<SubmittedOpti
         offline_fixtures,
         persona,
         instruction_window,
+        paging_profile,
+        parked_thread_profile,
+        pfn_profile,
     })
 }
 
@@ -175,6 +228,164 @@ mod submitted_option_tests {
 
     fn parse(values: &[&str]) -> Result<SubmittedOptions> {
         submitted_options(values.iter().map(|value| (*value).to_owned()))
+    }
+
+    #[test]
+    fn submitted_cli_owned_pfn_requires_explicit_bound_authority() {
+        assert_eq!(parse(&["--service", "TestDrv"]).unwrap().pfn_profile, None);
+        for authorities in 0..8 {
+            let mut args = vec![
+                "--service",
+                "TestDrv",
+                "--pfn-profile",
+                "owned_table_backlinks_26200_v1",
+            ];
+            if authorities & 1 != 0 {
+                args.extend(["--paging-profile", "owned_four_level_26200_v1"]);
+            }
+            if authorities & 2 != 0 {
+                args.extend(["--kernel-code-reference", "kernel.pe"]);
+            }
+            if authorities & 4 != 0 {
+                args.extend(["--persona", "persona.json"]);
+            }
+            let result = parse(&args);
+            if authorities == 7 {
+                let selected = result.unwrap();
+                assert_eq!(
+                    selected.pfn_profile,
+                    Some(PfnProfile::OwnedTableBacklinks26200V1)
+                );
+                assert_eq!(selected.parked_thread_profile, None);
+                args.extend(["--pfn-profile", "owned_table_backlinks_26200_v1"]);
+                assert!(
+                    parse(&args)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("given twice")
+                );
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("require --paging-profile")
+                );
+            }
+        }
+        assert!(
+            parse(&["--service", "TestDrv", "--pfn-profile"])
+                .unwrap_err()
+                .to_string()
+                .contains("requires a value")
+        );
+        for label in [
+            "future",
+            "owned_table_backlinks_26200_v2",
+            "OwnedTableBacklinks26200V1",
+            " owned_table_backlinks_26200_v1",
+            "owned_table_backlinks_26200_v1 ",
+        ] {
+            assert!(
+                parse(&["--service", "TestDrv", "--pfn-profile", label])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Unsupported submitted-driver PFN profile")
+            );
+        }
+    }
+
+    #[test]
+    fn submitted_cli_quiescent_parked_requires_explicit_bound_authority() {
+        for authorities in 0..8 {
+            let mut args = vec![
+                "--service",
+                "TestDrv",
+                "--parked-thread-profile",
+                "quiescent_allocated_system_26200_v1",
+            ];
+            if authorities & 1 != 0 {
+                args.extend(["--paging-profile", "owned_four_level_26200_v1"]);
+            }
+            if authorities & 2 != 0 {
+                args.extend(["--kernel-code-reference", "kernel.pe"]);
+            }
+            if authorities & 4 != 0 {
+                args.extend(["--persona", "persona.json"]);
+            }
+            let result = parse(&args);
+            if authorities == 7 {
+                assert_eq!(
+                    result.unwrap().parked_thread_profile,
+                    Some(ParkedThreadProfile::QuiescentAllocatedSystem26200V1)
+                );
+                args.extend([
+                    "--parked-thread-profile",
+                    "quiescent_allocated_system_26200_v1",
+                ]);
+                assert!(
+                    parse(&args)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("given twice")
+                );
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("require --paging-profile")
+                );
+            }
+        }
+        assert!(
+            parse(&["--service", "TestDrv", "--parked-thread-profile"])
+                .unwrap_err()
+                .to_string()
+                .contains("requires a value")
+        );
+        for label in [
+            "future",
+            "quiescent_allocated_system_26200_v2",
+            "QuiescentAllocatedSystem26200V1",
+        ] {
+            assert!(
+                parse(&["--service", "TestDrv", "--parked-thread-profile", label])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Unsupported submitted-driver parked thread profile")
+            );
+        }
+    }
+
+    #[test]
+    fn submitted_cli_owned_paging_is_explicit_and_versioned() {
+        let selected = parse(&[
+            "--service",
+            "TestDrv",
+            "--paging-profile",
+            "owned_four_level_26200_v1",
+        ])
+        .unwrap();
+        assert_eq!(
+            selected.paging_profile,
+            Some(PagingProfile::OwnedFourLevel26200V1)
+        );
+        assert!(parse(&["--service", "TestDrv", "--paging-profile", "future"]).is_err());
+        assert!(parse(&["--service", "TestDrv", "--paging-profile"]).is_err());
+        assert!(
+            parse(&[
+                "--service",
+                "TestDrv",
+                "--paging-profile",
+                "owned_four_level_26200_v1",
+                "--paging-profile",
+                "owned_four_level_26200_v1"
+            ])
+            .unwrap_err()
+            .to_string()
+            .contains("given twice")
+        );
     }
 
     #[test]
@@ -189,6 +400,9 @@ mod submitted_option_tests {
                 offline_fixtures: None,
                 persona: None,
                 instruction_window: None,
+                paging_profile: None,
+                parked_thread_profile: None,
+                pfn_profile: None,
             }
         );
         assert_eq!(
@@ -209,6 +423,9 @@ mod submitted_option_tests {
                 offline_fixtures: None,
                 persona: None,
                 instruction_window: None,
+                paging_profile: None,
+                parked_thread_profile: None,
+                pfn_profile: None,
             }
         );
         for flag in [
@@ -297,8 +514,28 @@ fn main() {
 fn execute() -> Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
+        Some("inspect-api-surface") => {
+            let path = PathBuf::from(
+                args.next()
+                    .context("inspect-api-surface needs a JSON query list")?,
+            );
+            anyhow::ensure!(args.next().is_none(), "Unexpected API inventory arguments");
+            let mut raw = Vec::new();
+            File::open(path)?
+                .take(4 * 1024 * 1024 + 1)
+                .read_to_end(&mut raw)?;
+            anyhow::ensure!(
+                raw.len() <= 4 * 1024 * 1024,
+                "API inventory query exceeds 4MiB"
+            );
+            let queries: Vec<emumee_engine::ApiQuery> = serde_json::from_slice(&raw)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&emumee_engine::inspect_api_surface(&queries)?)?
+            );
+        }
         None | Some("help" | "--help" | "-h") => println!(
-            "Emumee Rust development build\n\npersona (print literal default Windows configuration)\ninspect PATH [--details] (PE or ELF metadata; no execution)\nlinux-elf SOURCE_ELF FRESH_OUTPUT_DIR [--library SONAME=PATH] [--max-instructions N] [--timeout-us N] (packaged offline worker; bounded ELF profiles)\ninspect-analysis-plan PLAN_JSON STAGED_ROOT (read-only; inputs/0000.bin slots)\nverify-analysis-plan PLAN_JSON STAGED_INPUT_ROOT FRESH_OUTPUT_ROOT (contained verify-only; no guest execution)\nverify-analysis-plan-fixture native-a FRESH_OUTPUT_ROOT [--fault swap-slots|tamper-slot|change-request|change-plan|missing-slot]\ninspect-powershell-source PATH (.ps1 bounded read-only; no execution)\ninspect-powershell-report RUN_DIR [SOURCE_PS1] (read-only saved report binding)\ninspect-managed PATH\ninspect-msi-report RUN_DIR [SOURCE_MSI] (read-only saved static report binding)\ninspect-msi PATH\nanalysis-fixture CASE FRESH_OUTPUT_DIR [--arch x86|x64] [--fault NAME]\nmsi-fixture CASE FRESH_OUTPUT_DIR (mini-v3, mini-v4, regular-v3, regular-v4, difat-v3, data-pe, mapped-data-pe, corrupt-fat, truncated, tamper-request, tamper-input, unknown-request-field, foreign-owned-fixture)\ninspect-batch-inputs DIRECTORY [--recursive] [--include-dll] [--include-driver] [--max-samples N] (metadata only; no execution)\ninspect-batch-log PATH (bounded read-only legacy NDJSON structure)\ninspect-batch-sequence LOG_PATH INPUT_ROOT [inventory flags] (read-only declarations)\ninspect-batch-aggregate LOG_PATH INPUT_ROOT REPORT_ROOT [inventory flags] (read-only declaration manifest)\ninspect-batch-report-map LOG_PATH REPORT_ROOT (read-only declared summary binding)\ninspect-report-index ROOT (bounded read-only summary index)\ninspect-report RUN_DIR [--verify-artifacts]\ninspect-driver-capture RUN_DIR (explicit Driver128 consistency only)\ndriver-capture-fixture CASE FRESH_OUTPUT_DIR [--fault NAME] (closed generated recipes only)\nsubmitted-driver SOURCE_SYS FRESH_OUTPUT_DIR --service NAME [--max-instructions N] [--timeout-us N] [--kernel-code-reference PE] [--offline-fixtures JSON] [--persona JSON] [--instruction-window START:COUNT]\ninspect-broker-journal PATH\ninspect-network-fixtures PATH [--normalized]\nrecover-bundle (recover private controller cleanup plan, no analysis)\nbroker-fixture CASE FRESH_OUTPUT_DIR [--arch x86|x64] (normal, miss, dns, crash, partial, hang, bad-id, bad-frame, worker-crash, native-a, native-w, native-miss, native-callback, native-parent, native-partial, native-null, controller-crash, controller-partial, http-binary, http-post, http-headers, http-body-miss, http-chunked-miss, native-binary-a, native-binary-w, native-binary-partial, native-binary-empty, native-binary-miss, winhttp, winhttp-before-receive, winhttp-bad-read, winhttp-bad-available, winhttp-close-parent, winhttp-miss, winhttp-async, winhttp-query-status, winhttp-query-small, winhttp-query-custom, winhttp-query-raw, winhttp-empty, winhttp-upload, winhttp-upload-early, winhttp-upload-bad-count, winhttp-upload-overrun, winhttp-upload-incomplete, winhttp-upload-closed, winhttp-chunked, winhttp-chunked-split, winhttp-chunked-incomplete, winhttp-chunked-malformed, winhttp-chunked-zero)\nmanaged-fixture [--arch x86|x64] [--write-input FRESH_PATH]\nboundary-probe NAME FRESH_OUTPUT_DIR (normal, timeout, output-bytes, output-count, file-stream, directory-stream, fast-output, output-link, abrupt-exit)\nfixture [--arch x86|x64] [--kind KIND] [--iterations N] [--max-instructions N] [--isolated-output DIR]\n\nFixture kinds: kernel-ipi-* (actual perCPU guest rendezvous contexts), kernel-waits-* (real delay and wait-all/any CPU continuations), kernel-thread-objects-* (actual scheduler handles/references and guarded headers), console-* (guest handles/output), kernel-objects-* (owned identities/refs), managed-convert-* (typed Base64), kernel-objects-* (owned System/Driver refs and opaque type identities; handle refs stop), stdio-* (standard FILE/errno/console), crt-format-* (bounded formatting), kernel-environment-* (processor identity and READ/NX public globals), kernel-kernel-environment-* (processor identity and typed READ/NX globals), rundown-* (opaque cache-aware refs; contended teardown/reenable stop), persona-* (environment/identity/directories/command-line), callback-* (bug-check and named bookkeeping, active dispatch stops), mdl-{{lifecycle,alias,read-only-cpu,read-only-api,nx,unmapped,free-active,pool-free-active,flags,geometry,unbuilt}}, registry-{{lifecycle,enumeration,small-buffer,default-value,invalid-handle,closed-handle,read-only,options}}-{{a,w}}, crt-copy, crt-string-overlap, crt-copy-invalid, crt-memory, crt-strings, crt-wide, crt-boundary, crt-read-fault, crt-write-fault, crt-overlap, crt-overflow, crt-rewrite, heap-lifecycle, heap-resize, heap-move, heap-in-place, heap-executable, heap-nx, heap-freed, heap-wrong-owner, heap-double-free, heap-virtual-free, heap-flags, heap-fixed, heap-zero, loop, managed-rva-decode, managed-rva-bytes, managed-rva-i32, managed-rva-zero, managed-rva-twice, managed-rva-bad-handle, managed-rva-missing-field, managed-rva-no-rva, managed-rva-missing-row, managed-rva-no-layout, managed-rva-bad-packing, managed-rva-too-small, managed-rva-bad-rva, managed-rva-reference-field, managed-rva-literal, managed-rva-wrong-array, managed-rva-null-array, managed-rva-bad-signature, managed-rva-handle-branch, managed-file-round-trip, managed-file-overwrite, managed-file-empty, managed-file-empty-exists, managed-file-exists, managed-file-exists-null, managed-file-missing, managed-file-parent-missing, managed-file-null-path, managed-file-null-bytes, managed-file-invalid-path, managed-file-unsupported-path, managed-file-bad-signature, managed-file-bad-assembly, managed-file-bad-array-type, managed-file-escape, managed-file-dedupe, managed-file-partial, managed-array-byte, managed-array-i32, managed-array-string, managed-array-string-zero, managed-array-length, managed-array-length-type, managed-array-native-length, managed-array-local, managed-array-local-null, managed-array-call, managed-array-identity, managed-array-different, managed-array-zero-byte, managed-array-null, managed-array-bounds, managed-array-bad-value, managed-array-bad-opcode, managed-array-too-large, managed-array-negative, managed-array-unknown-type, managed-array-bad-assembly, managed-array-bad-local, managed-array-quota, managed-array-bad-length-type, managed-array-vs-string, managed-framework-console-types, managed-framework-null-or-empty, managed-framework-inequality, managed-framework-strings, managed-framework-concat-identity, managed-framework-string-equality, managed-framework-concat-empty, managed-framework-concat-null, managed-framework-unicode-length, managed-framework-char, managed-framework-null-length, managed-framework-bad-index, managed-framework-bad-assembly, managed-framework-bad-signature, managed-framework-static-virtual, managed-framework-unknown, managed-framework-bad-owner, managed-framework-bad-scope, managed-framework-console, managed-framework-console-null, managed-framework-console-limit, managed-framework-argument-type, managed-string-identity, managed-string-aliases, managed-string-local, managed-string-local-null, managed-string-call, managed-string-return, managed-string-bad-token, managed-string-missing, managed-string-bad-type, managed-string-relational, managed-locals-loop, managed-local-zero, managed-local-indexed, managed-call-arguments, managed-argument-store, managed-void-return, managed-void-call, managed-recursive, managed-deep-recursion, managed-local-uninitialized, managed-local-bad-type, managed-argument-bad-type, managed-return, managed-loop, managed-arithmetic, managed-i64-arithmetic, managed-bad-branch, managed-underflow, managed-divide-zero, managed-unsupported, managed-return-stack, managed-stack-limit, managed-infinite, kernel-catalog-call, kernel-catalog-code-read, kernel-catalog-data-read, pool-lifecycle, pool-executable, pool-nx-execute, pool-freed-read, pool-bad-tag, pool-paged-irql, pool-bad-flags, pool-too-large, pool-double-free, kernel-api-address, user-api-address, user-api, copy, copy-to-code, debug-prompt, prompt-to-code, unsupported-import, api-loop, virtual-memory, virtual-write-protected, virtual-released-read, virtual-reserve-read, virtual-bad-protect-output, virtual-recommit, linked-module, forwarded-module, file-round-trip-a, file-round-trip-w, file-read-only, file-read-code, guarded-mutex, guarded-busy, guarded-bad-release, guarded-irql, critical-underflow, system-thread, system-thread-return, system-thread-bad-start, mutex-handoff, mutex-deadlock, cpu-identity, cpu-time, cpu-bad-xcr, cpu-rewrite, cpu-halt, cpu-tsc-aux, thread-msr, thread-tsc, cpu-tsc-msr-read, cpu-tsc-msr-write, cpu-tsc-msr-wrap, cpu-tsc-adjust, cpu-tsc-adjust-link, cpu-tsc-adjust-reset, cpu-tsc-msr-user, kernel-cpu, kernel-entry, kernel-relocated, kernel-resolve, kernel-resolve-bad-length, kernel-resolve-irql, kernel-resolve-unknown, user-resolve-a, user-resolve-w, user-resolve-unknown, user-resolve-bad-module, kernel-write-protected, kernel-syscall, kernel-syscall-bad-target, kernel-sysret, kernel-sysenter, kernel-sysexit, user-time, kernel-time, time-bad-output, shared-time, shared-time-write, event-auto, event-manual, event-timeout, event-long-timeout, event-absolute, event-deadlock, event-handoff, event-irql, event-alertable, event-tamper\n\nClosed plan controls: plan-fixture CASE ROOT [x86|x64]; inspect-plan-proof ROOT. Fixed fault controls: plan-fault NAME ROOT [x86|x64]; inspect-plan-fault ROOT. Cases: native-a, native-b, native-replay, native-deny, kernel17, kernel19, static-msi.\n\nGeneral sample execution is gated on the remaining Windows model migration."
+            "Emumee Rust development build\n\nrun INPUT --output FRESH_DIRECTORY [-- guest-arguments] (bounded native x86/x64 EXE/DLL profile)\ninspect-api-surface QUERY_JSON (read-only dispatch metadata)\npersona (print literal default Windows configuration)\ninspect PATH [--details] (PE or ELF metadata; no execution)\nlinux-elf SOURCE_ELF FRESH_OUTPUT_DIR [--library SONAME=PATH] [--max-instructions N] [--timeout-us N] (packaged offline worker; bounded ELF profiles)\ninspect-analysis-plan PLAN_JSON STAGED_ROOT (read-only; inputs/0000.bin slots)\nverify-analysis-plan PLAN_JSON STAGED_INPUT_ROOT FRESH_OUTPUT_ROOT (contained verify-only; no guest execution)\nverify-analysis-plan-fixture native-a FRESH_OUTPUT_ROOT [--fault swap-slots|tamper-slot|change-request|change-plan|missing-slot]\ninspect-powershell-source PATH (.ps1 bounded read-only; no execution)\ninspect-powershell-report RUN_DIR [SOURCE_PS1] (read-only saved report binding)\ninspect-managed PATH\ninspect-msi-report RUN_DIR [SOURCE_MSI] (read-only saved static report binding)\ninspect-msi PATH\nanalysis-fixture CASE FRESH_OUTPUT_DIR [--arch x86|x64] [--fault NAME]\nmsi-fixture CASE FRESH_OUTPUT_DIR (mini-v3, mini-v4, regular-v3, regular-v4, difat-v3, data-pe, mapped-data-pe, corrupt-fat, truncated, tamper-request, tamper-input, unknown-request-field, foreign-owned-fixture)\ninspect-batch-inputs DIRECTORY [--recursive] [--include-dll] [--include-driver] [--max-samples N] (metadata only; no execution)\ninspect-batch-log PATH (bounded read-only legacy NDJSON structure)\ninspect-batch-sequence LOG_PATH INPUT_ROOT [inventory flags] (read-only declarations)\ninspect-batch-aggregate LOG_PATH INPUT_ROOT REPORT_ROOT [inventory flags] (read-only declaration manifest)\ninspect-batch-report-map LOG_PATH REPORT_ROOT (read-only declared summary binding)\ninspect-report-index ROOT (bounded read-only summary index)\ninspect-report RUN_DIR [--verify-artifacts]\ninspect-driver-capture RUN_DIR (explicit Driver128 consistency only)\ndriver-capture-fixture CASE FRESH_OUTPUT_DIR [--fault NAME] (closed generated recipes only)\nsubmitted-driver SOURCE_SYS FRESH_OUTPUT_DIR --service NAME [--max-instructions N] [--timeout-us N] [--kernel-code-reference PE] [--offline-fixtures JSON] [--persona JSON] [--instruction-window START:COUNT] [--paging-profile NAME] [--parked-thread-profile NAME] [--pfn-profile NAME]\ninspect-broker-journal PATH\ninspect-network-fixtures PATH [--normalized]\nrecover-bundle (recover private controller cleanup plan, no analysis)\nbroker-fixture CASE FRESH_OUTPUT_DIR [--arch x86|x64] (normal, miss, dns, crash, partial, hang, bad-id, bad-frame, worker-crash, native-a, native-w, native-miss, native-callback, native-parent, native-partial, native-null, controller-crash, controller-partial, http-binary, http-post, http-headers, http-body-miss, http-chunked-miss, native-binary-a, native-binary-w, native-binary-partial, native-binary-empty, native-binary-miss, winhttp, winhttp-before-receive, winhttp-bad-read, winhttp-bad-available, winhttp-close-parent, winhttp-miss, winhttp-async, winhttp-query-status, winhttp-query-small, winhttp-query-custom, winhttp-query-raw, winhttp-empty, winhttp-upload, winhttp-upload-early, winhttp-upload-bad-count, winhttp-upload-overrun, winhttp-upload-incomplete, winhttp-upload-closed, winhttp-chunked, winhttp-chunked-split, winhttp-chunked-incomplete, winhttp-chunked-malformed, winhttp-chunked-zero)\nmanaged-fixture [--arch x86|x64] [--write-input FRESH_PATH]\nboundary-probe NAME FRESH_OUTPUT_DIR (normal, timeout, output-bytes, output-count, file-stream, directory-stream, fast-output, output-link, abrupt-exit)\nfixture [--arch x86|x64] [--kind KIND] [--iterations N] [--max-instructions N] [--isolated-output DIR]\n\nFixture kinds: kernel-ipi-* (actual perCPU guest rendezvous contexts), kernel-waits-* (real delay and wait-all/any CPU continuations), kernel-thread-objects-* (actual scheduler handles/references and guarded headers), console-* (guest handles/output), kernel-objects-* (owned identities/refs), managed-convert-* (typed Base64), kernel-objects-* (owned System/Driver refs and opaque type identities; handle refs stop), stdio-* (standard FILE/errno/console), crt-format-* (bounded formatting), kernel-environment-* (processor identity and READ/NX public globals), kernel-kernel-environment-* (processor identity and typed READ/NX globals), rundown-* (opaque cache-aware refs; contended teardown/reenable stop), persona-* (environment/identity/directories/command-line), callback-* (bug-check and named bookkeeping, active dispatch stops), mdl-{{lifecycle,alias,read-only-cpu,read-only-api,nx,unmapped,free-active,pool-free-active,flags,geometry,unbuilt}}, registry-{{lifecycle,enumeration,small-buffer,default-value,invalid-handle,closed-handle,read-only,options}}-{{a,w}}, crt-copy, crt-string-overlap, crt-copy-invalid, crt-memory, crt-strings, crt-wide, crt-boundary, crt-read-fault, crt-write-fault, crt-overlap, crt-overflow, crt-rewrite, heap-lifecycle, heap-resize, heap-move, heap-in-place, heap-executable, heap-nx, heap-freed, heap-wrong-owner, heap-double-free, heap-virtual-free, heap-flags, heap-fixed, heap-zero, loop, managed-rva-decode, managed-rva-bytes, managed-rva-i32, managed-rva-zero, managed-rva-twice, managed-rva-bad-handle, managed-rva-missing-field, managed-rva-no-rva, managed-rva-missing-row, managed-rva-no-layout, managed-rva-bad-packing, managed-rva-too-small, managed-rva-bad-rva, managed-rva-reference-field, managed-rva-literal, managed-rva-wrong-array, managed-rva-null-array, managed-rva-bad-signature, managed-rva-handle-branch, managed-file-round-trip, managed-file-overwrite, managed-file-empty, managed-file-empty-exists, managed-file-exists, managed-file-exists-null, managed-file-missing, managed-file-parent-missing, managed-file-null-path, managed-file-null-bytes, managed-file-invalid-path, managed-file-unsupported-path, managed-file-bad-signature, managed-file-bad-assembly, managed-file-bad-array-type, managed-file-escape, managed-file-dedupe, managed-file-partial, managed-array-byte, managed-array-i32, managed-array-string, managed-array-string-zero, managed-array-length, managed-array-length-type, managed-array-native-length, managed-array-local, managed-array-local-null, managed-array-call, managed-array-identity, managed-array-different, managed-array-zero-byte, managed-array-null, managed-array-bounds, managed-array-bad-value, managed-array-bad-opcode, managed-array-too-large, managed-array-negative, managed-array-unknown-type, managed-array-bad-assembly, managed-array-bad-local, managed-array-quota, managed-array-bad-length-type, managed-array-vs-string, managed-framework-console-types, managed-framework-null-or-empty, managed-framework-inequality, managed-framework-strings, managed-framework-concat-identity, managed-framework-string-equality, managed-framework-concat-empty, managed-framework-concat-null, managed-framework-unicode-length, managed-framework-char, managed-framework-null-length, managed-framework-bad-index, managed-framework-bad-assembly, managed-framework-bad-signature, managed-framework-static-virtual, managed-framework-unknown, managed-framework-bad-owner, managed-framework-bad-scope, managed-framework-console, managed-framework-console-null, managed-framework-console-limit, managed-framework-argument-type, managed-string-identity, managed-string-aliases, managed-string-local, managed-string-local-null, managed-string-call, managed-string-return, managed-string-bad-token, managed-string-missing, managed-string-bad-type, managed-string-relational, managed-locals-loop, managed-local-zero, managed-local-indexed, managed-call-arguments, managed-argument-store, managed-void-return, managed-void-call, managed-recursive, managed-deep-recursion, managed-local-uninitialized, managed-local-bad-type, managed-argument-bad-type, managed-return, managed-loop, managed-arithmetic, managed-i64-arithmetic, managed-bad-branch, managed-underflow, managed-divide-zero, managed-unsupported, managed-return-stack, managed-stack-limit, managed-infinite, kernel-catalog-call, kernel-catalog-code-read, kernel-catalog-data-read, pool-lifecycle, pool-executable, pool-nx-execute, pool-freed-read, pool-bad-tag, pool-paged-irql, pool-bad-flags, pool-too-large, pool-double-free, kernel-api-address, user-api-address, user-api, copy, copy-to-code, debug-prompt, prompt-to-code, unsupported-import, api-loop, virtual-memory, virtual-write-protected, virtual-released-read, virtual-reserve-read, virtual-bad-protect-output, virtual-recommit, linked-module, forwarded-module, file-round-trip-a, file-round-trip-w, file-read-only, file-read-code, guarded-mutex, guarded-busy, guarded-bad-release, guarded-irql, critical-underflow, system-thread, system-thread-return, system-thread-bad-start, mutex-handoff, mutex-deadlock, cpu-identity, cpu-time, cpu-bad-xcr, cpu-rewrite, cpu-halt, cpu-tsc-aux, thread-msr, thread-tsc, cpu-tsc-msr-read, cpu-tsc-msr-write, cpu-tsc-msr-wrap, cpu-tsc-adjust, cpu-tsc-adjust-link, cpu-tsc-adjust-reset, cpu-tsc-msr-user, kernel-cpu, kernel-entry, kernel-relocated, kernel-resolve, kernel-resolve-bad-length, kernel-resolve-irql, kernel-resolve-unknown, user-resolve-a, user-resolve-w, user-resolve-unknown, user-resolve-bad-module, kernel-write-protected, kernel-syscall, kernel-syscall-bad-target, kernel-sysret, kernel-sysenter, kernel-sysexit, user-time, kernel-time, time-bad-output, shared-time, shared-time-write, event-auto, event-manual, event-timeout, event-long-timeout, event-absolute, event-deadlock, event-handoff, event-irql, event-alertable, event-tamper\n\nClosed plan controls: plan-fixture CASE ROOT [x86|x64]; inspect-plan-proof ROOT. Fixed fault controls: plan-fault NAME ROOT [x86|x64]; inspect-plan-fault ROOT. Cases: native-a, native-b, native-replay, native-deny, kernel17, kernel19, static-msi.\n\nNative PE execution is limited to the documented bounded profile; unsupported effects stop explicitly."
         ),
         Some("--version" | "-V") => println!(
             "emumee-rs {} ({})",
@@ -560,6 +797,9 @@ fn execute() -> Result<()> {
                         offline_fixtures: options.offline_fixtures.as_deref(),
                         persona: options.persona.as_deref(),
                         instruction_window: options.instruction_window,
+                        paging_profile: options.paging_profile,
+                        parked_thread_profile: options.parked_thread_profile,
+                        pfn_profile: options.pfn_profile,
                     },
                 )?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -1017,7 +1257,9 @@ fn execute() -> Result<()> {
                     }
                     "--timeout-us" => timeout_us = value.parse().context("Invalid wall budget")?,
                     "--library" => {
-                        let (name, path) = value.split_once('=').context("--library requires SONAME=PATH")?;
+                        let (name, path) = value
+                            .split_once('=')
+                            .context("--library requires SONAME=PATH")?;
                         libraries.push((name.to_owned(), PathBuf::from(path)));
                     }
                     _ => bail!("Unknown linux-elf option: {flag}"),
@@ -1025,7 +1267,8 @@ fn execute() -> Result<()> {
             }
             #[cfg(windows)]
             {
-                let result = linux_controller::run(&source, &root, instructions, timeout_us, &libraries)?;
+                let result =
+                    linux_controller::run(&source, &root, instructions, timeout_us, &libraries)?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 if result["result"]["execution"]["completion_reason"] != "exit" {
                     std::process::exit(1);
@@ -1033,7 +1276,13 @@ fn execute() -> Result<()> {
             }
             #[cfg(target_os = "linux")]
             {
-                let result = linux_host_controller::run(&source, &root, instructions, timeout_us, &libraries)?;
+                let result = linux_host_controller::run(
+                    &source,
+                    &root,
+                    instructions,
+                    timeout_us,
+                    &libraries,
+                )?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 if result["result"]["execution"]["completion_reason"] != "exit" {
                     std::process::exit(1);
@@ -1186,11 +1435,80 @@ fn execute() -> Result<()> {
                 bail!("Closed plan worker requires Windows");
             }
         }
-        Some("run") => bail!(
-            "General sample execution is disabled until the Rust AppContainer and Windows API ports are qualified; this build never falls back to Python"
-        ),
+        Some("run") => {
+            let source = PathBuf::from(args.next().context("run requires INPUT.exe or INPUT.dll")?);
+            let mut root = None;
+            let mut persona = None;
+            let mut budget = None;
+            let mut timeout = None;
+            let mut arguments = Vec::new();
+            while let Some(flag) = args.next() {
+                if flag == "--" {
+                    arguments.extend(args);
+                    break;
+                }
+                if !flag.starts_with('-') && root.is_none() {
+                    root = Some(PathBuf::from(flag));
+                    continue;
+                }
+                let value = args
+                    .next()
+                    .with_context(|| format!("{flag} needs a value"))?;
+                match flag.as_str() {
+                    "--output" | "-o" => {
+                        ensure_once(&root, &flag)?;
+                        root = Some(PathBuf::from(value));
+                    }
+                    "--persona" => {
+                        ensure_once(&persona, &flag)?;
+                        persona = Some(PathBuf::from(value));
+                    }
+                    "--max-instructions" => {
+                        ensure_once(&budget, &flag)?;
+                        budget = Some(value.parse::<u64>()?);
+                    }
+                    "--timeout-us" => {
+                        ensure_once(&timeout, &flag)?;
+                        timeout = Some(value.parse::<u64>()?);
+                    }
+                    _ => bail!("Unknown run option: {flag}"),
+                }
+            }
+            let root = root.context("run requires --output FRESH_DIRECTORY")?;
+            #[cfg(windows)]
+            {
+                let manifest = user_controller::run(
+                    &source,
+                    &root,
+                    user_controller::Options {
+                        budget: budget.unwrap_or(100_000_000),
+                        timeout_us: timeout.unwrap_or(120_000_000),
+                        persona,
+                        arguments,
+                    },
+                )?;
+                let complete = matches!(
+                    manifest["result"]["execution"]["completion_reason"].as_str(),
+                    Some("entry_return" | "process_exit")
+                ) && manifest["result"]["execution"]["error"].is_null();
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+                if !complete {
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = (source, root, persona, budget, timeout, arguments);
+                bail!("Submitted PE execution requires Windows containment");
+            }
+        }
         Some(other) => bail!("Unknown command: {other}"),
     }
+    Ok(())
+}
+
+fn ensure_once<T>(value: &Option<T>, flag: &str) -> Result<()> {
+    anyhow::ensure!(value.is_none(), "{flag} given twice");
     Ok(())
 }
 

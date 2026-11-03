@@ -228,7 +228,9 @@ pub(super) fn initialize_with_reference(
     let mut reference_receipt = None;
     if reference.is_none()
         && !engine.get_data().apis.bindings.iter().any(|b| {
-            matches!(
+            (kernel_pushlocks::enabled(engine) && matches!(b.model,
+                Model::NormalSync(kernel_sync::Call::PushInitialize | kernel_sync::Call::PushAcquire | kernel_sync::Call::PushRelease)))
+            || matches!(
                 b.model,
                 Model::SystemRoutine
                     | Model::DynamicLoader(_)
@@ -329,6 +331,7 @@ pub(super) fn initialize_with_reference(
                 .chain(kernel_modules::ROUTINES)
                 .chain(kernel_files::ROUTINES)
                 .chain(kernel_sections::ROUTINES)
+                .chain(kernel_capture::ROUTINES)
             {
                 if !selected.contains(name) {
                     selected.push(*name);
@@ -651,6 +654,7 @@ mod delegated_routines_tests {
                 .iter()
                 .chain(rundown::ROUTINES)
                 .chain(callbacks::ROUTINES)
+                .chain(kernel_capture::ROUTINES)
             {
                 let binding = definition(architecture, "ntoskrnl.exe", name);
                 assert!(!matches!(binding.model, Model::Unsupported));

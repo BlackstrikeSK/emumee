@@ -9,7 +9,11 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use thiserror::Error;
 mod borrowed;
+mod fields;
+mod quiescent;
 pub use borrowed::Ownership;
+pub use fields::{ThreadFields, kernel_apc_disable_word};
+pub use quiescent::ParkedPairFields;
 #[derive(Debug, Error)]
 #[error("Kernel thread lifetime: {0}")]
 pub struct ThreadObjectError(pub &'static str);
@@ -30,7 +34,27 @@ pub struct Lifetime {
 #[derive(Clone, Debug, Serialize)]
 pub struct Lifetimes {
     architecture: Architecture,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_process: Option<SystemProcessField>,
+    quiescent_parked_26200: bool,
     pub entries: BTreeMap<u64, Lifetime>,
+}
+/// The pinned x64 ApcState.Process projection. Other private bytes remain
+/// unknown; this does not expose the Process object's private body.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct SystemProcessField {
+    pub offset: u16,
+    pub process: u64,
+}
+/// Pinned KTHREAD stack bounds for actual scheduler-owned stacks. Parked IPI
+/// identities have callback stacks, not an owned ordinary thread stack.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct StackFields {
+    pub thread: u64,
+    pub limit_offset: u16,
+    pub base_offset: u16,
+    pub limit: u64,
+    pub base: u64,
 }
 #[derive(Clone, Copy, Debug, Serialize)]
 pub enum Effect {
@@ -63,6 +87,8 @@ impl Lifetimes {
             })?;
         let state = Self {
             architecture,
+            system_process: None,
+            quiescent_parked_26200: false,
             entries: BTreeMap::from([(
                 address,
                 Lifetime {
@@ -91,6 +117,66 @@ impl Lifetimes {
             .find(|entry| entry.slot == slot && slot != 0)
             .ok_or(ThreadObjectError("unknown scheduler thread identity"))
     }
+    pub fn configure_system_process_26200(&mut self, objects: &Objects) -> Result<()> {
+        if self.architecture != Architecture::X64
+            || self.entries.len() != 1
+            || self.system_process.is_some()
+            || !self
+                .entries
+                .values()
+                .all(|life| life.root_caller && life.owner == 4 && !life.retired)
+        {
+            return Err(ThreadObjectError(
+                "System process field requires a fresh pinned x64 caller",
+            ));
+        }
+        let process = objects
+            .object(objects.system_process)
+            .map_err(|_| ThreadObjectError("System process identity missing"))?;
+        if process.kind != Kind::Process || process.permanent_references == 0 {
+            return Err(ThreadObjectError(
+                "System process field lacks a live permanent Process",
+            ));
+        }
+        self.system_process = Some(SystemProcessField {
+            offset: 0xb8,
+            process: objects.system_process,
+        });
+        Ok(())
+    }
+    pub fn system_process_field(&self) -> Option<SystemProcessField> {
+        self.system_process
+    }
+    fn projected_stack(&self, life: &Lifetime) -> Option<StackFields> {
+        if self.system_process.is_none() || life.retired {
+            return None;
+        }
+        let layout = KernelLayout::for_architecture(self.architecture);
+        let (limit, size) = match life.role {
+            Ownership::InitialCaller if life.slot == 1 && life.address == layout.root_thread => {
+                (layout.entry_stack, crate::kernel_layout::ENTRY_STACK_SIZE)
+            }
+            Ownership::CreatedSystemThread
+                if layout.thread_object(life.slot) == Some(life.address) =>
+            {
+                (
+                    layout.thread_stack(life.slot)?,
+                    crate::kernel_layout::THREAD_STACK_SIZE,
+                )
+            }
+            _ => return None,
+        };
+        Some(StackFields {
+            thread: life.address,
+            limit_offset: 0x30,
+            base_offset: 0x38,
+            limit,
+            base: limit.checked_add(size)?,
+        })
+    }
+    pub fn stack_fields(&self, objects: &Objects, address: u64) -> Result<Option<StackFields>> {
+        Ok(self.projected_stack(self.consistent(objects, address)?))
+    }
     fn consistent(&self, objects: &Objects, address: u64) -> Result<&Lifetime> {
         let life = self
             .entries
@@ -116,7 +202,8 @@ impl Lifetimes {
             }
             _ => return Err(ThreadObjectError("thread guest ID ownership diverged")),
         };
-        if life.guest_id != expected_id
+        if life.owner != 4
+            || life.guest_id != expected_id
             || object.kind != Kind::Thread
             || object.permanent_references != anchors
             || object.live == life.retired
@@ -339,6 +426,26 @@ impl Lifetimes {
             if body + 4096 <= address {
                 break;
             }
+            if !life.retired
+                && access == "read"
+                && (self.system_process.is_some_and(|field| {
+                    address >= body + u64::from(field.offset)
+                        && end <= body + u64::from(field.offset) + 8
+                }) || self.projected_stack(life).is_some_and(|field| {
+                    address >= body + u64::from(field.limit_offset)
+                        && end <= body + u64::from(field.base_offset) + 8
+                }) || self.projected_parked_pair(life).is_some_and(|field| {
+                    address >= field.thread + u64::from(field.offset)
+                        && end <= field.thread + u64::from(field.offset) + 8
+                }) || self.projected_fields(life).is_some_and(|field| {
+                    field.intervals().into_iter().any(|(offset, bytes)| {
+                        address >= body + u64::from(offset)
+                            && end <= body + u64::from(offset) + u64::from(bytes)
+                    })
+                }))
+            {
+                continue;
+            }
             let private = if life.retired || access != "read" {
                 *body
             } else {
@@ -361,6 +468,205 @@ impl Lifetimes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pinned_stack_bounds_follow_owned_stacks_and_lifetimes_without_opening_gaps() {
+        let mut root = initial(Architecture::X64);
+        let layout = KernelLayout::for_architecture(Architecture::X64);
+        assert_eq!(
+            root.lifetimes
+                .stack_fields(&root.objects, layout.root_thread)
+                .unwrap(),
+            None
+        );
+        root.lifetimes
+            .configure_system_process_26200(&root.objects)
+            .unwrap();
+        let child = root
+            .lifetimes
+            .create(&root.objects, 2, layout.thread_object(2).unwrap(), 1)
+            .unwrap();
+        let measured: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/native_capture_layout.json"
+        ))
+        .unwrap();
+        assert_eq!(measured["thread_fields"]["stack_limit"], 0x30);
+        assert_eq!(measured["thread_fields"]["stack_base"], 0x38);
+        for (address, limit, size) in [
+            (
+                layout.root_thread,
+                layout.entry_stack,
+                crate::kernel_layout::ENTRY_STACK_SIZE,
+            ),
+            (
+                layout.thread_object(2).unwrap(),
+                layout.thread_stack(2).unwrap(),
+                crate::kernel_layout::THREAD_STACK_SIZE,
+            ),
+        ] {
+            let fields = child
+                .lifetimes
+                .stack_fields(&child.objects, address)
+                .unwrap()
+                .unwrap();
+            assert_eq!((fields.limit, fields.base), (limit, limit + size));
+            assert_eq!((fields.limit_offset, fields.base_offset), (0x30, 0x38));
+            for (offset, bytes) in [(0x30, 16), (0x30, 8), (0x38, 8), (0x3f, 1), (0x34, 8)] {
+                assert!(
+                    child
+                        .lifetimes
+                        .private_access(address + offset, bytes, "read")
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            for (offset, bytes, access) in [
+                (0x2f, 8, "read"),
+                (0x38, 9, "read"),
+                (8, 0x38, "read"),
+                (0x30, 16, "write"),
+                (0x38, 8, "execute"),
+                (0x78, 4, "read"),
+            ] {
+                assert!(
+                    child
+                        .lifetimes
+                        .private_access(address + offset, bytes, access)
+                        .unwrap()
+                        .is_some()
+                );
+            }
+        }
+        let parked = child
+            .lifetimes
+            .register_parked_processor(&child.objects, 1)
+            .unwrap();
+        let address = crate::ipi::processor_layout(Architecture::X64, 1)
+            .unwrap()
+            .parked_thread
+            .unwrap();
+        assert_eq!(
+            parked
+                .lifetimes
+                .stack_fields(&parked.objects, address)
+                .unwrap(),
+            None
+        );
+        assert!(
+            parked
+                .lifetimes
+                .private_access(address + 0x30, 16, "read")
+                .unwrap()
+                .is_some()
+        );
+        let closed = child.lifetimes.close(&child.objects, 2, 1).unwrap();
+        let retired = closed.lifetimes.exit(&closed.objects, 2, 0).unwrap();
+        let address = layout.thread_object(2).unwrap();
+        assert_eq!(
+            retired
+                .lifetimes
+                .stack_fields(&retired.objects, address)
+                .unwrap(),
+            None
+        );
+        assert!(
+            retired
+                .lifetimes
+                .private_access(address + 0x30, 16, "read")
+                .unwrap()
+                .is_some()
+        );
+    }
+    #[test]
+    fn pinned_system_process_projection_is_lifetime_bound_and_preserves_private_gaps() {
+        let mut root = initial(Architecture::X64);
+        root.lifetimes
+            .configure_system_process_26200(&root.objects)
+            .unwrap();
+        let field = root.lifetimes.system_process_field().unwrap();
+        assert_eq!(
+            field,
+            SystemProcessField {
+                offset: 0xb8,
+                process: root.objects.system_process
+            }
+        );
+        let body = KernelLayout::for_architecture(Architecture::X64).root_thread;
+        for (offset, size) in [(0xb8, 8), (0xb8, 1), (0xbc, 4), (0xbf, 1)] {
+            assert!(
+                root.lifetimes
+                    .private_access(body + offset, size, "read")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        for (offset, size, access) in [
+            (0xb7, 8, "read"),
+            (0xb8, 9, "read"),
+            (8, 0xb8, "read"),
+            (0xb8, 8, "write"),
+            (0xb8, 8, "execute"),
+        ] {
+            assert!(
+                root.lifetimes
+                    .private_access(body + offset, size, access)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        let address = KernelLayout::for_architecture(Architecture::X64)
+            .thread_object(2)
+            .unwrap();
+        let child = root.lifetimes.create(&root.objects, 2, address, 1).unwrap();
+        assert_eq!(child.lifetimes.system_process_field(), Some(field));
+        let closed = child.lifetimes.close(&child.objects, 2, 1).unwrap();
+        let retired = closed.lifetimes.exit(&closed.objects, 2, 0).unwrap();
+        assert!(
+            retired
+                .lifetimes
+                .private_access(address + 0xb8, 8, "read")
+                .unwrap()
+                .is_some()
+        );
+    }
+    #[test]
+    fn system_process_projection_cannot_be_reconfigured_or_guessed_for_other_architectures() {
+        let mut x86 = initial(Architecture::X86);
+        assert!(
+            x86.lifetimes
+                .configure_system_process_26200(&x86.objects)
+                .is_err()
+        );
+        let mut x64 = initial(Architecture::X64);
+        let body = KernelLayout::for_architecture(Architecture::X64).root_thread;
+        assert!(
+            x64.lifetimes
+                .private_access(body + 0xb8, 8, "read")
+                .unwrap()
+                .is_some()
+        );
+        x64.lifetimes
+            .configure_system_process_26200(&x64.objects)
+            .unwrap();
+        assert!(
+            x64.lifetimes
+                .configure_system_process_26200(&x64.objects)
+                .is_err()
+        );
+        let mut invalid = initial(Architecture::X64);
+        let mut objects = invalid.objects.clone();
+        objects
+            .records
+            .get_mut(&objects.system_process)
+            .unwrap()
+            .kind = Kind::Thread;
+        assert!(
+            invalid
+                .lifetimes
+                .configure_system_process_26200(&objects)
+                .is_err()
+        );
+        assert!(invalid.lifetimes.system_process_field().is_none());
+    }
     #[test]
     fn guest_ids_are_distinct_stable_lifetime_values_and_retired_ids_cannot_be_queried() {
         for arch in [Architecture::X86, Architecture::X64] {

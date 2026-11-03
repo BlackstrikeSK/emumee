@@ -50,7 +50,7 @@ fn explicit_cpuid_observations_are_bounded_and_reach_cpu_projection() {
 #[test]
 fn explicit_virtual_directories_seed_only_directories_and_bind_the_seed() {
     let baseline = resolve(json!({})).unwrap();
-    let guest_path = r"C:\Program Files\Fixture Vendor\Logs";
+    let guest_path = r"C:\Program Files\Riot Vanguard\Logs";
     let added = resolve(json!({"virtual_directories":[guest_path]})).unwrap();
     assert!(!default_document().contains("virtual_directories"));
     assert!(

@@ -1,0 +1,21 @@
+{
+  "schema": "emumee.native_capture_layout_contract.v1",
+  "profile": "amd64-persistent-triage-26100-v1",
+  "native_capture_bytes": 262144,
+  "native_debugger_data_bytes": 928,
+  "sdk_debugger_data_bytes": 936,
+  "records": {
+    "context": {"offset": 840, "bytes": 1232},
+    "debugger_data": {"offset": 8320, "bytes": 928},
+    "processor": {"offset": 9248, "bytes": 52992},
+    "process": {"offset": 62240, "bytes": 2112},
+    "thread": {"offset": 64352, "bytes": 1944}
+  },
+  "thread_fields": {
+    "stack_limit": 48,
+    "stack_base": 56,
+    "apc_state_process": 184
+  },
+  "sources": "Pinned AMD64 kernel capture implementation and PDB layout; sizeof/offsetof facts from the installed Microsoft debugger SDK. The current SDK has an extra PointerIgnoreBits field beyond the native copied prefix.",
+  "scope": "Format and bounds only. These constants and generated fixtures are not native capture results, runtime kernel state, executable recovery or proof of successful initialization."
+}

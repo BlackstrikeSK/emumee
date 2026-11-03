@@ -73,5 +73,6 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
         )?;
     }
     engine.get_data_mut().clock_aliases = aliases;
+    crate::api::mdl::paging::register_clock(engine)?;
     sync(engine)
 }

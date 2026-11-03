@@ -28,8 +28,13 @@ pub struct Region {
     pub permissions: Permissions,
     pub owner: Option<u64>,
     pub tag: String,
+    #[serde(skip)]
+    mapping_id: u64,
 }
 impl Region {
+    pub fn mapping_id(&self) -> u64 {
+        self.mapping_id
+    }
     fn end(&self) -> u64 {
         self.base + self.size
     }
@@ -42,12 +47,24 @@ type Result<T> = std::result::Result<T, MemoryError>;
 pub struct AddressSpace {
     architecture: Architecture,
     regions: BTreeMap<u64, Region>,
+    #[serde(skip)]
+    next_mapping_id: u64,
+    #[serde(skip)]
+    epoch: u64,
 }
 impl AddressSpace {
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    pub fn architecture(&self) -> Architecture {
+        self.architecture
+    }
     pub fn new(architecture: Architecture) -> Self {
         Self {
             architecture,
             regions: BTreeMap::new(),
+            next_mapping_id: 1,
+            epoch: 0,
         }
     }
     fn end(&self, address: u64, size: u64) -> Result<u64> {
@@ -91,6 +108,14 @@ impl AddressSpace {
         {
             return Err(MemoryError("overlapping mapping"));
         }
+        let next_id = self
+            .next_mapping_id
+            .checked_add(1)
+            .ok_or(MemoryError("mapping identity exhausted"))?;
+        let epoch = self
+            .epoch
+            .checked_add(1)
+            .ok_or(MemoryError("mapping epoch exhausted"))?;
         self.regions.insert(
             base,
             Region {
@@ -99,8 +124,11 @@ impl AddressSpace {
                 permissions,
                 owner,
                 tag: tag.to_owned(),
+                mapping_id: self.next_mapping_id,
             },
         );
+        self.next_mapping_id = next_id;
+        self.epoch = epoch;
         Ok(())
     }
     pub fn region(&self, address: u64) -> Option<&Region> {
@@ -164,12 +192,17 @@ impl AddressSpace {
         if self.regions.len() - affected.len() + replacements.len() > MAX_REGIONS {
             return Err(MemoryError("protection split exceeds region bound"));
         }
+        let epoch = self
+            .epoch
+            .checked_add(1)
+            .ok_or(MemoryError("mapping epoch exhausted"))?;
         for region in affected {
             self.regions.remove(&region.base);
         }
         for region in replacements {
             self.regions.insert(region.base, region);
         }
+        self.epoch = epoch;
         Ok(())
     }
     pub fn protect(&mut self, base: u64, size: u64, permissions: Permissions) -> Result<()> {

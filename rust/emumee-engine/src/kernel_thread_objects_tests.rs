@@ -26,6 +26,168 @@ const CASES: [F; 24] = [
     F::HeaderReadBenchmark,
     F::OrdinaryReadBenchmark,
 ];
+fn process_field_fixture(offset: u32, dereference_process: bool, write: bool) -> Vec<u8> {
+    use emumee_core::fixtures::EnvironmentFixture;
+    let mut image = emumee_core::fixtures::api_probe(
+        Architecture::X64,
+        ApiFixture::Environment(EnvironmentFixture::DataOnly),
+    );
+    image[0x1500..0x1580].fill(0);
+    for (i, name) in ["IoGetCurrentProcess", "KeGetCurrentThread"]
+        .into_iter()
+        .enumerate()
+    {
+        let at = 0x1502 + i * 64;
+        image[at..at + name.len()].copy_from_slice(name.as_bytes());
+    }
+    let mut code = vec![0x48, 0x83, 0xec, 0x28];
+    fn call(code: &mut Vec<u8>, rva: i32) {
+        code.extend([0xff, 0x15]);
+        code.extend((rva - (0x1000 + code.len() + 4) as i32).to_le_bytes());
+    }
+    call(&mut code, 0x2080);
+    code.extend([0x48, 0x89, 0x44, 0x24, 0x20]);
+    call(&mut code, 0x2088);
+    code.extend([0x49, 0x89, 0xc2]);
+    code.extend([0x65, 0x48, 0x8b, 0x04, 0x25, 0x88, 0x01, 0, 0]);
+    code.extend([0x4c, 0x39, 0xd0, 0x74, 2, 0x0f, 0x0b]);
+    if write {
+        code.extend([0x48, 0xc7, 0x80]);
+        code.extend(offset.to_le_bytes());
+        code.extend(0u32.to_le_bytes());
+    } else {
+        code.extend([0x48, 0x8b, 0x80]);
+        code.extend(offset.to_le_bytes());
+        if dereference_process {
+            code.extend([0x48, 0x8b, 0x00]);
+        }
+        code.extend([0x48, 0x3b, 0x44, 0x24, 0x20, 0x74, 2, 0x0f, 0x0b]);
+    }
+    code.extend([0xb8, 42, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3]);
+    image[0x200..0x1200].fill(0xcc);
+    image[0x200..0x200 + code.len()].copy_from_slice(&code);
+    image
+}
+fn run_process_field(build: u32, offset: u32, dereference: bool, write: bool) -> Execution {
+    run_pinned_thread_image(build, &process_field_fixture(offset, dereference, write))
+}
+fn run_pinned_thread_image(build: u32, image: &[u8]) -> Execution {
+    run_pinned_thread_image_budget(build, image, 1000)
+}
+pub(super) fn run_pinned_thread_image_budget(build: u32, image: &[u8], budget: u64) -> Execution {
+    use emumee_core::{
+        fixtures::{ConfiguredFixture, configured_document},
+        fullpersona::{ResolveContext, decode},
+    };
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&configured_document(ConfiguredFixture::Kernel)).unwrap();
+    document["windows_build"] = serde_json::json!(build);
+    let persona = decode(
+        &serde_json::to_vec(&document).unwrap(),
+        &ResolveContext::default(),
+    )
+    .unwrap();
+    let prepared = configured::Prepared::new(
+        persona,
+        configured::Request {
+            architecture: Architecture::X64,
+            kernel: true,
+            initial_processor: 0,
+            process: None,
+            budget,
+            timeout_us: 30_000_000,
+        },
+    )
+    .unwrap();
+    run_generated_with_fixture_configuration(
+        image,
+        &[],
+        budget,
+        30_000_000,
+        GeneratedConfiguration {
+            configured: Some(prepared),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+#[test]
+fn thread_stack_fields_match_root_and_child_live_native_stack_pointers() {
+    let image = emumee_core::fixtures::api_probe(
+        Architecture::X64,
+        ApiFixture::ThreadObjects(F::StackBounds),
+    );
+    let e = run_pinned_thread_image(26200, &image);
+    assert_eq!(e.error, None, "{e:#?}");
+    assert_eq!(e.guest_entry_return, Some(1));
+    let threads = e.kernel_thread_objects.as_ref().unwrap();
+    assert_eq!(threads.stack_fields.len(), 1); // Child returned, closed and retired.
+    assert_eq!(
+        threads.stack_fields[0].thread,
+        emumee_core::kernel_layout::KernelLayout::for_architecture(Architecture::X64).root_thread
+    );
+    assert!(threads.threads.iter().any(|t| t.slot == 2 && t.retired));
+    assert!(threads.private_accesses.is_empty());
+    let other = run_pinned_thread_image(26100, &image);
+    assert!(other.error.is_some());
+    assert_eq!(other.guest_entry_return, None);
+    assert!(
+        other
+            .kernel_thread_objects
+            .as_ref()
+            .unwrap()
+            .stack_fields
+            .is_empty()
+    );
+}
+#[test]
+fn thread_stack_fields_refuse_adjacent_bytes_crossing_reads_writes_and_unknown_flags() {
+    for (offset, write) in [
+        (0x28, false),
+        (0x2f, false),
+        (0x39, false),
+        (0x78, false),
+        (0x30, true),
+        (0x38, true),
+    ] {
+        let e = run_process_field(26200, offset, false, write);
+        assert!(e.error.is_some(), "{offset:x}/{write}: {e:#?}");
+        let error = e.error.as_deref().unwrap();
+        assert!(
+            error.contains("private or released kernel thread body")
+                || (write && error.contains("WRITE_PROT")),
+            "Unexpected refusal at {offset:x}: {error}"
+        );
+        assert_eq!(e.guest_entry_return, None);
+    }
+}
+#[test]
+fn thread_system_process_projection_matches_actual_gs_identity_and_current_process_api() {
+    let e = run_process_field(26200, 0xb8, false, false);
+    assert_eq!(e.error, None, "{e:#?}");
+    assert_eq!(e.guest_entry_return, Some(42));
+    let objects = e.kernel_objects.as_ref().unwrap();
+    let threads = e.kernel_thread_objects.as_ref().unwrap();
+    let field = threads.system_process_field.unwrap();
+    assert_eq!(Some(field.process), objects.system_process);
+    assert_eq!(field.offset, 0xb8);
+    assert!(threads.private_accesses.is_empty());
+    assert!(!threads.native_effect_failure);
+    assert_eq!(e.api_events[0].result, Some(field.process));
+}
+#[test]
+fn thread_process_field_does_not_open_private_gaps_writes_or_the_opaque_process_body() {
+    for (build, offset, dereference, write) in [
+        (26100, 0xb8, false, false),
+        (26200, 0xb4, false, false),
+        (26200, 0xb8, true, false),
+        (26200, 0xb8, false, true),
+    ] {
+        let e = run_process_field(build, offset, dereference, write);
+        assert!(e.error.is_some(), "{build}/{offset:x}: {e:#?}");
+        assert_eq!(e.guest_entry_return, None);
+    }
+}
 fn budget(kind: F) -> u64 {
     if kind.benchmark() { 100000 } else { 1000 }
 }

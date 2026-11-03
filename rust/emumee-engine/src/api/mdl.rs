@@ -18,6 +18,9 @@ use super::*;
 use anyhow::{Context, anyhow};
 use emumee_core::mdl::{Alias, Effect, MapRequest, Mdls, Plan};
 use std::{cell::UnsafeCell, ffi::c_void};
+pub(crate) mod paging;
+pub(crate) mod pfn;
+mod physical;
 
 const PAGE: u64 = 4096;
 const MAX_BACKING_PAGES: usize = 32768;
@@ -71,22 +74,34 @@ impl OwnedPage {
 
 pub(crate) struct State {
     pub model: Mdls,
+    /// Explicit bounded admission through the versioned submitted request.
+    /// This does not certify whole-function native paging equivalence.
+    pub owned_paging_requested: bool,
+    paging: paging::State,
+    pub(crate) pfn: pfn::State,
     /// Opaque guest identity, not a host process identifier or handle.
     pub process: u64,
     backing: BTreeMap<u64, Box<OwnedPage>>,
     poisoned: bool,
     capture_read_bytes: u64,
     capture_skipped_ranges: u64,
+    physical: physical::State,
+    owned_queries: physical::owned::State,
 }
 impl State {
     pub fn new(architecture: Architecture) -> Self {
         Self {
             model: Mdls::new(architecture),
+            owned_paging_requested: false,
+            paging: paging::State::default(),
+            pfn: pfn::State::default(),
             process: 4,
             backing: BTreeMap::new(),
             poisoned: false,
             capture_read_bytes: 0,
             capture_skipped_ranges: 0,
+            physical: physical::State::default(),
+            owned_queries: physical::owned::State::default(),
         }
     }
 }
@@ -94,10 +109,13 @@ impl State {
 pub struct Report {
     pub model: Mdls,
     pub owned_backing_pages: usize,
+    pub owned_structural_view_pages: usize,
+    pub owned_pfn_metadata: pfn::Report,
     pub current_process_identity: u64,
     pub native_effect_failure: bool,
     pub capture_read_bytes: u64,
     pub capture_skipped_ranges: u64,
+    pub physical_queries: physical::Report,
     pub scope: &'static str,
 }
 pub(crate) fn report(engine: &Unicorn<Trace>) -> Report {
@@ -105,12 +123,26 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Report {
     Report {
         model: state.model.clone(),
         owned_backing_pages: state.backing.len(),
+        owned_structural_view_pages: state.paging.backing.len(),
+        owned_pfn_metadata: pfn::report(engine),
         current_process_identity: state.process,
         native_effect_failure: state.poisoned,
         capture_read_bytes: state.capture_read_bytes,
         capture_skipped_ranges: state.capture_skipped_ranges,
+        physical_queries: physical::report(engine),
         scope: "Nonpaged MDL metadata, synthetic guest PFNs and coherent NX current-process user aliases of active modeled NX pool buffers. Probe/lock, unlock, kernel mappings, IRP linkage and quota remain unsupported.",
     }
+}
+pub(crate) fn completion_error(engine: &Unicorn<Trace>) -> Option<String> {
+    if pfn::failed(engine) {
+        return Some("Owned PFN metadata access refused; execution cannot resume".into());
+    }
+    engine
+        .get_data()
+        .apis
+        .mdls
+        .poisoned
+        .then(|| "MDL native effect failed; execution cannot resume safely".into())
 }
 
 fn ready(engine: &Unicorn<Trace>) -> Result<()> {
@@ -142,6 +174,7 @@ fn native_failure<T>(engine: &mut Unicorn<Trace>, error: anyhow::Error) -> Resul
 
 /// Called by the central model-write primitive, including writes bypassing CPU protection.
 pub(crate) fn require_api_write(engine: &Unicorn<Trace>, address: u64, size: u64) -> Result<()> {
+    pfn::require_change(engine, address, size)?;
     engine
         .get_data()
         .apis
@@ -169,6 +202,7 @@ fn require_release(
         "Cannot release MDL backing after a native effect failure"
     );
     let model = &engine.get_data().apis.mdls.model;
+    pfn::require_change(engine, base, size)?;
     for (pointer, descriptor) in model.descriptors() {
         ensure!(
             Some(*pointer) == freeing_mdl
@@ -222,6 +256,7 @@ fn convert_source(engine: &mut Unicorn<Trace>, source: u64) -> Result<()> {
     if engine.get_data().apis.mdls.backing.contains_key(&source) {
         return Ok(());
     }
+    pfn::require_change(engine, source, PAGE)?;
     super::reference_mapping::require_api_access(engine, source, PAGE, P::WRITE)?;
     ensure!(
         engine.get_data().apis.mdls.backing.len() < MAX_BACKING_PAGES,
@@ -426,6 +461,14 @@ pub(super) fn call(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> Res
     if matches!(call, Call::Allocate) {
         return allocate(engine, args);
     }
+    if matches!(call, Call::Physical) && paging::enabled(engine) {
+        return physical::owned::query(engine, args[0]);
+    }
+    if matches!(call, Call::Physical) && physical::enabled(engine) {
+        if let Some(result) = physical::try_absent(engine, args[0])? {
+            return Ok(result);
+        }
+    }
     let state = &engine.get_data().apis;
     let plan = match call {
         Call::Build => {
@@ -506,7 +549,7 @@ pub(crate) fn capture(engine: &mut Unicorn<Trace>) {
                 .checked_add(size)
                 .is_some_and(|total| total <= CAPTURE_READ_LIMIT)
                 && engine.get_data().apis.memory.allows(address, size, P::READ);
-            if !allowed {
+            if !allowed || pfn::intersects(engine, address, size) {
                 crate::capture::aux_skipped(engine, size);
                 engine.get_data_mut().apis.mdls.capture_skipped_ranges += 1;
                 continue;

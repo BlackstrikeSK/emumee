@@ -334,7 +334,9 @@ pub(crate) fn before_instruction(engine: &mut Unicorn<Trace>, pc: u64, size: u32
                 .iter()
                 .zip(&registers)
                 .filter_map(|((_, name), address)| {
-                    if *name == "eflags" {
+                    if *name == "eflags"
+                        || api::mdl::pfn::intersects(engine, *address, POINTER_SAMPLE_BYTES as u64)
+                    {
                         return None;
                     }
                     let mut bytes = vec![0; POINTER_SAMPLE_BYTES];

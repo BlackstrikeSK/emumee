@@ -16,12 +16,22 @@ and seccomp checks.
 | `linux-elf SOURCE_ELF FRESH_OUTPUT_DIR [--library SONAME=PATH]` | Execute the admitted static, PIE, and staged shared-object ELF profiles in a confined worker. |
 | `submitted-driver SOURCE_SYS FRESH_OUTPUT_DIR --service NAME` | Bounded Windows driver diagnostics in the offline worker. |
 | `fixture`, `analysis-fixture`, and other verifier commands | Closed generated cases for development and containment checks. |
-| `run`, `batch`, `dashboard`, `powershell` | General product workflows are not yet implemented in Rust. `run` fails explicitly; the launcher never falls back to Python. |
+| `run INPUT --output FRESH_DIRECTORY [-- guest-arguments]` | Bounded native x86/x64 EXE/DLL execution in the offline Windows worker. See [the native PE guide](rust/USER_PE.md). |
+| `batch`, `dashboard`, `powershell` | These general product workflows are not yet implemented in Rust; the launcher never falls back to Python. |
 
 The Rust runtime is not yet a general PE emulator or a replacement for every
-workflow in the former Python application. General `run` is the next migration
-milestone. The [legacy Python documentation](docs/legacy-python.md) records
+workflow in the former Python application. Native `run` supports the documented bounded profile, not arbitrary Windows
+applications or the entire legacy API surface. The [legacy Python documentation](docs/legacy-python.md) records
 earlier behavior but does not describe the active launcher.
+
+## Release status
+
+This is a development source checkpoint, not a stable binary release. Source
+tests do not replace same-build packaged containment qualification. The new
+owned-PFN driver profile has incomplete package qualification after host security
+quarantined its captured evidence and frozen executables. No protection settings
+were changed. Driver initialization and complete driver compatibility remain
+unproved. See [release qualification](docs/release-readiness.md).
 
 ## Build and launch on Windows
 

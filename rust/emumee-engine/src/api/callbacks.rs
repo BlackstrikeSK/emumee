@@ -715,6 +715,10 @@ pub(crate) fn capture(engine: &mut Unicorn<Trace>) {
             crate::capture::aux_skipped(engine, size as u64);
             continue;
         }
+        if super::mdl::pfn::intersects(engine, address, size as u64) {
+            crate::capture::aux_skipped(engine, size as u64);
+            continue;
+        }
         if !crate::capture::reserve_read(engine, size as u64) {
             continue;
         }

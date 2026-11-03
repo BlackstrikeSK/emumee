@@ -9,6 +9,24 @@ pub const MAX_INSTRUCTIONS: u64 = 2_000_000_000;
 pub const MAX_TIMEOUT_US: u64 = 7_200_000_000;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PagingProfile {
+    #[serde(rename = "owned_four_level_26200_v1")]
+    OwnedFourLevel26200V1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ParkedThreadProfile {
+    #[serde(rename = "quiescent_allocated_system_26200_v1")]
+    QuiescentAllocatedSystem26200V1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PfnProfile {
+    #[serde(rename = "owned_table_backlinks_26200_v1")]
+    OwnedTableBacklinks26200V1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct InstructionWindow {
     pub start_instruction: u64,
@@ -32,6 +50,12 @@ pub struct Request {
     pub timeout_us: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction_window: Option<InstructionWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paging_profile: Option<PagingProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parked_thread_profile: Option<ParkedThreadProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pfn_profile: Option<PfnProfile>,
 }
 
 fn sha256(value: &str) -> bool {
@@ -71,6 +95,9 @@ impl Request {
             max_instructions,
             timeout_us,
             instruction_window: None,
+            paging_profile: None,
+            parked_thread_profile: None,
+            pfn_profile: None,
         };
         request.validate()?;
         Ok(request)
@@ -84,6 +111,27 @@ impl Request {
 
     pub fn with_persona(mut self, sha256: String) -> Result<Self, &'static str> {
         self.persona_sha256 = Some(sha256);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_paging_profile(mut self, profile: PagingProfile) -> Result<Self, &'static str> {
+        self.paging_profile = Some(profile);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_parked_thread_profile(
+        mut self,
+        profile: ParkedThreadProfile,
+    ) -> Result<Self, &'static str> {
+        self.parked_thread_profile = Some(profile);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_pfn_profile(mut self, profile: PfnProfile) -> Result<Self, &'static str> {
+        self.pfn_profile = Some(profile);
         self.validate()?;
         Ok(self)
     }
@@ -126,6 +174,29 @@ impl Request {
         }
         if self.persona_sha256.as_ref().is_some_and(|s| !sha256(s)) {
             return Err("Submitted persona hash invalid");
+        }
+        if self.pfn_profile.is_some()
+            && (self.paging_profile != Some(PagingProfile::OwnedFourLevel26200V1)
+                || self.kernel_code_reference_sha256.is_none()
+                || self.persona_sha256.is_none())
+        {
+            return Err(
+                "Owned table backlinks require owned paging, bound kernel reference and persona",
+            );
+        }
+        if self.parked_thread_profile.is_some()
+            && (self.paging_profile != Some(PagingProfile::OwnedFourLevel26200V1)
+                || self.kernel_code_reference_sha256.is_none()
+                || self.persona_sha256.is_none())
+        {
+            return Err(
+                "Quiescent parked threads require owned paging, bound kernel reference and persona",
+            );
+        }
+        if self.paging_profile.is_some()
+            && (self.kernel_code_reference_sha256.is_none() || self.persona_sha256.is_none())
+        {
+            return Err("Owned paging requires bound kernel reference and persona");
         }
         if !service_name_valid(&self.service_name) {
             return Err("Submitted driver service name outside bounded profile");
@@ -173,6 +244,191 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_pfn_profile_is_explicit_bound_and_versioned() {
+        let request = Request::new(
+            "20261101T120000Z-12345678".into(),
+            "b".repeat(64),
+            8192,
+            "TestDrv".into(),
+            10_000,
+            30_000_000,
+        )
+        .unwrap();
+        let profile = PfnProfile::OwnedTableBacklinks26200V1;
+        assert_eq!(request.pfn_profile, None);
+        let legacy = serde_json::to_string(&request).unwrap();
+        assert!(!legacy.contains("pfn_profile"));
+        assert_eq!(Request::parse(legacy.as_bytes()).unwrap().pfn_profile, None);
+        for authorities in 0..8 {
+            let mut candidate = request.clone();
+            if authorities & 1 != 0 {
+                candidate.paging_profile = Some(PagingProfile::OwnedFourLevel26200V1);
+            }
+            if authorities & 2 != 0 {
+                candidate.kernel_code_reference_sha256 = Some("a".repeat(64));
+            }
+            if authorities & 4 != 0 {
+                candidate.persona_sha256 = Some("c".repeat(64));
+            }
+            assert_eq!(
+                candidate.clone().with_pfn_profile(profile).is_ok(),
+                authorities == 7
+            );
+            candidate.pfn_profile = Some(profile);
+            assert_eq!(candidate.validate().is_ok(), authorities == 7);
+            assert_eq!(
+                Request::parse(&serde_json::to_vec(&candidate).unwrap()).is_ok(),
+                authorities == 7
+            );
+        }
+        let admitted = request
+            .with_reference("a".repeat(64))
+            .unwrap()
+            .with_persona("c".repeat(64))
+            .unwrap()
+            .with_paging_profile(PagingProfile::OwnedFourLevel26200V1)
+            .unwrap()
+            .with_pfn_profile(profile)
+            .unwrap();
+        let raw = serde_json::to_string(&admitted).unwrap();
+        assert_eq!(Request::parse(raw.as_bytes()).unwrap(), admitted);
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["pfn_profile"], "owned_table_backlinks_26200_v1");
+        for invalid in [
+            serde_json::json!("future"),
+            serde_json::json!("owned_table_backlinks_26200_v2"),
+            serde_json::json!("OwnedTableBacklinks26200V1"),
+            serde_json::json!(true),
+        ] {
+            let mut changed = value.clone();
+            changed["pfn_profile"] = invalid;
+            assert!(Request::parse(&serde_json::to_vec(&changed).unwrap()).is_err());
+        }
+        for hash_field in ["kernel_code_reference_sha256", "persona_sha256"] {
+            let mut changed = value.clone();
+            changed[hash_field] = serde_json::json!("invalid");
+            assert!(Request::parse(&serde_json::to_vec(&changed).unwrap()).is_err());
+        }
+        for duplicate in [r#""owned_table_backlinks_26200_v1""#, "null"] {
+            let duplicated = format!("{{\"pfn_profile\":{duplicate},{}", &raw[1..]);
+            assert!(Request::parse(duplicated.as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn quiescent_parked_profile_is_explicit_bound_and_versioned() {
+        let request = Request::new(
+            "20261101T120000Z-12345678".into(),
+            "b".repeat(64),
+            8192,
+            "TestDrv".into(),
+            10_000,
+            30_000_000,
+        )
+        .unwrap();
+        let profile = ParkedThreadProfile::QuiescentAllocatedSystem26200V1;
+        assert_eq!(request.parked_thread_profile, None);
+        assert!(
+            !serde_json::to_string(&request)
+                .unwrap()
+                .contains("parked_thread_profile")
+        );
+        for authorities in 0..8 {
+            let mut candidate = request.clone();
+            if authorities & 1 != 0 {
+                candidate.paging_profile = Some(PagingProfile::OwnedFourLevel26200V1);
+            }
+            if authorities & 2 != 0 {
+                candidate.kernel_code_reference_sha256 = Some("a".repeat(64));
+            }
+            if authorities & 4 != 0 {
+                candidate.persona_sha256 = Some("c".repeat(64));
+            }
+            assert_eq!(
+                candidate
+                    .clone()
+                    .with_parked_thread_profile(profile)
+                    .is_ok(),
+                authorities == 7
+            );
+            candidate.parked_thread_profile = Some(profile);
+            assert_eq!(candidate.validate().is_ok(), authorities == 7);
+            assert_eq!(
+                Request::parse(&serde_json::to_vec(&candidate).unwrap()).is_ok(),
+                authorities == 7
+            );
+        }
+        let selected = request
+            .with_reference("a".repeat(64))
+            .unwrap()
+            .with_persona("c".repeat(64))
+            .unwrap()
+            .with_paging_profile(PagingProfile::OwnedFourLevel26200V1)
+            .unwrap()
+            .with_parked_thread_profile(profile)
+            .unwrap();
+        let mut value = serde_json::to_value(&selected).unwrap();
+        assert_eq!(
+            value["parked_thread_profile"],
+            "quiescent_allocated_system_26200_v1"
+        );
+        assert_eq!(
+            Request::parse(&serde_json::to_vec(&value).unwrap()).unwrap(),
+            selected
+        );
+        for invalid in [
+            serde_json::json!("quiescent_allocated_system_26200_v2"),
+            serde_json::json!(true),
+            serde_json::json!({"profile": "quiescent_allocated_system_26200_v1"}),
+        ] {
+            value["parked_thread_profile"] = invalid;
+            assert!(Request::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        let raw = serde_json::to_string(&selected).unwrap();
+        let duplicate = format!(
+            "{{\"parked_thread_profile\":\"quiescent_allocated_system_26200_v1\",{}",
+            &raw[1..]
+        );
+        assert!(Request::parse(duplicate.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn owned_paging_profile_requires_both_bound_inputs_and_rejects_unknown_versions() {
+        let request = Request::new(
+            "20261030T120000Z-12345678".into(),
+            "b".repeat(64),
+            8192,
+            "TestDrv".into(),
+            10000,
+            30000000,
+        )
+        .unwrap();
+        let profile = PagingProfile::OwnedFourLevel26200V1;
+        assert!(request.clone().with_paging_profile(profile).is_err());
+        let reference = request.clone().with_reference("a".repeat(64)).unwrap();
+        assert!(reference.clone().with_paging_profile(profile).is_err());
+        assert!(
+            request
+                .with_persona("c".repeat(64))
+                .unwrap()
+                .with_paging_profile(profile)
+                .is_err()
+        );
+        let admitted = reference
+            .with_persona("c".repeat(64))
+            .unwrap()
+            .with_paging_profile(profile)
+            .unwrap();
+        let raw = serde_json::to_vec(&admitted).unwrap();
+        assert_eq!(Request::parse(&raw).unwrap(), admitted);
+        let mut value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        value["paging_profile"] = serde_json::json!("owned_four_level_26200_v2");
+        assert!(Request::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["paging_profile"] = serde_json::json!(true);
+        assert!(Request::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
 
     #[test]
     fn submitted_driver_request_binds_exact_service_and_budgets() {
@@ -227,15 +483,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(extended.max_instructions, 1_600_000_000);
-        assert!(Request::new(
-            request.run_id.clone(),
-            request.input_sha256.clone(),
-            request.input_size,
-            request.service_name.clone(),
-            MAX_INSTRUCTIONS + 1,
-            request.timeout_us,
-        )
-        .is_err());
+        assert!(
+            Request::new(
+                request.run_id.clone(),
+                request.input_sha256.clone(),
+                request.input_size,
+                request.service_name.clone(),
+                MAX_INSTRUCTIONS + 1,
+                request.timeout_us,
+            )
+            .is_err()
+        );
     }
 
     #[test]

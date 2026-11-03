@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use emumee_core::ipi::{QUANTUM, Rendezvous};
 use std::collections::BTreeMap;
 use unicorn_engine::Context;
+pub(crate) const PARKED_CRITICAL_DEPTH: u16 = 0;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Action {
     Begin,
@@ -392,7 +393,7 @@ fn run_member(engine: &mut Unicorn<Trace>, frame: &mut Frame, processor: u32) ->
     let critical = if processor == frame.caller.processor {
         frame.caller.critical
     } else {
-        0
+        PARKED_CRITICAL_DEPTH
     };
     let thread = crate::kernel_cpu::ipi_processors::thread(
         engine,
@@ -400,6 +401,7 @@ fn run_member(engine: &mut Unicorn<Trace>, frame: &mut Frame, processor: u32) ->
         frame.caller.processor,
         frame.caller.thread,
     )?;
+    crate::api::kernel_thread_objects::validate_quiescent(engine, thread)?;
     engine.get_data_mut().ipi.model = next;
     engine.get_data_mut().apis.kernel.restore((level, critical));
     engine.get_data_mut().apis.last_error = 0;
@@ -514,6 +516,7 @@ pub(crate) fn transition(engine: &mut Unicorn<Trace>, action: Action) -> Result<
                     frame.caller.thread,
                 )?;
                 let level = engine.get_data().ipi.model.level();
+                crate::api::kernel_thread_objects::validate_quiescent(engine, thread)?;
                 crate::kernel_cpu::ipi_processors::validate_profile(engine, thread, level)?;
                 let value = ax(engine)?;
                 let returned = engine.get_data().ipi.model.return_member(

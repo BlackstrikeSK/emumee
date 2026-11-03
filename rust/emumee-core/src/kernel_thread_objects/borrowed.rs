@@ -73,6 +73,77 @@ impl Lifetimes {
 mod tests {
     use super::*;
     #[test]
+    fn parked_lifetimes_are_closed_to_scheduler_termination_and_handle_ownership() {
+        let architecture = Architecture::X64;
+        let layout = KernelLayout::for_architecture(architecture);
+        let objects = Objects::new(
+            architecture,
+            layout.driver_object + 0x3000,
+            layout.driver_object,
+            layout.driver_object + 0x10000,
+        )
+        .unwrap();
+        let root = Lifetimes::initialize(architecture, &objects).unwrap();
+        for processor in 1..64 {
+            let plan = root
+                .lifetimes
+                .register_parked_processor(&root.objects, processor)
+                .unwrap();
+            let address = crate::ipi::processor_layout(architecture, processor)
+                .unwrap()
+                .parked_thread
+                .unwrap();
+            assert!(plan.lifetimes.exit(&plan.objects, 0, 0).is_err());
+            assert!(plan.lifetimes.close(&plan.objects, 0, 1).is_err());
+            assert!(plan.lifetimes.wait_target(&plan.objects, address).is_err());
+            let referenced = plan
+                .objects
+                .plan(0, address, crate::kernel_objects::Operation::Reference)
+                .unwrap();
+            let referenced = plan
+                .lifetimes
+                .after_api_reference(&referenced.state, address)
+                .unwrap();
+            let released = referenced
+                .objects
+                .plan(0, address, crate::kernel_objects::Operation::Dereference)
+                .unwrap();
+            let after = referenced
+                .lifetimes
+                .after_api_reference(&released.state, address)
+                .unwrap();
+            let life = &after.lifetimes.entries[&address];
+            assert_eq!(life.role, Ownership::ParkedProcessor { processor });
+            assert_eq!(life.slot, 0);
+            assert_eq!(life.open_handles, 0);
+            assert!(!life.root_caller && !life.executing && !life.terminated && !life.retired);
+            assert!(after.effects.is_empty());
+            assert!(
+                after
+                    .lifetimes
+                    .register_parked_processor(&after.objects, processor)
+                    .unwrap()
+                    .effects
+                    .is_empty()
+            );
+            for field in 0..4 {
+                let mut corrupt = after.lifetimes.clone();
+                let life = corrupt.entries.get_mut(&address).unwrap();
+                match field {
+                    0 => life.executing = true,
+                    1 => life.terminated = true,
+                    2 => life.retired = true,
+                    _ => life.open_handles = 1,
+                }
+                assert!(
+                    corrupt
+                        .register_parked_processor(&after.objects, processor)
+                        .is_err()
+                );
+            }
+        }
+    }
+    #[test]
     fn parked_cpu_identity_has_its_own_borrowed_anchor_and_cannot_fake_a_created_thread() {
         for architecture in [Architecture::X86, Architecture::X64] {
             let layout = KernelLayout::for_architecture(architecture);

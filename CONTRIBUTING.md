@@ -15,9 +15,9 @@ worker, and tests use harmless generated fixtures.
 
 For changes to isolation, input parsing, or guest process launching, include a
 small harmless fixture that exercises the behavior and a packaged AppContainer
-check. Record unmodeled behavior as a partial result. The Rust CLI still
-rejects general `run`; do not represent closed fixtures as arbitrary PE
-execution. Historical Python coverage is in
+check. Record unmodeled behavior as a partial result. The Rust CLI admits only
+the documented bounded native PE profile; do not represent it as complete
+Windows compatibility or general managed PE support. Historical Python coverage is in
 [COVERAGE_AND_SAFETY.md](COVERAGE_AND_SAFETY.md).
 
 Do not commit live malware, collected run outputs, local credentials, or generated

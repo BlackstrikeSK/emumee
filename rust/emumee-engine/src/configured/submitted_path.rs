@@ -327,6 +327,67 @@ mod tests {
     }
 
     #[test]
+    fn submitted_owned_paging_refuses_missing_authorities_and_wrong_build_before_execution() {
+        let bytes = module_query_driver();
+        let persona = persona_document(r"C:\Driver\CaseService.sys");
+        for (persona_input, reference) in [
+            (None, None),
+            (Some(persona.as_slice()), None),
+            (None, Some(&b"invalid"[..])),
+        ] {
+            let result = crate::run_submitted_driver_observed(
+                &bytes,
+                "CaseService",
+                100,
+                30000000,
+                crate::SubmittedObservationInputs {
+                    persona: persona_input,
+                    reference,
+                    broker: None,
+                    instruction_window: None,
+                    parked_thread_profile: None,
+                    pfn_profile: None,
+                    paging_profile: Some(
+                        emumee_core::driver_input::PagingProfile::OwnedFourLevel26200V1,
+                    ),
+                },
+            );
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("bound kernel reference and persona")
+            );
+        }
+        let mut document: serde_json::Value = serde_json::from_slice(&persona).unwrap();
+        document["windows_build"] = serde_json::json!(22631);
+        let wrong_build = serde_json::to_vec(&document).unwrap();
+        let result = crate::run_submitted_driver_observed(
+            &bytes,
+            "CaseService",
+            100,
+            30000000,
+            crate::SubmittedObservationInputs {
+                persona: Some(&wrong_build),
+                reference: Some(b"invalid"),
+                broker: None,
+                instruction_window: None,
+                parked_thread_profile: None,
+                pfn_profile: None,
+                paging_profile: Some(
+                    emumee_core::driver_input::PagingProfile::OwnedFourLevel26200V1,
+                ),
+            },
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("configured x64 kernel build26200")
+        );
+    }
+
+    #[test]
     fn submitted_and_generated_loader_catalog_share_the_declared_path() {
         let declared = r"\??\C:\Program Files\Fixture Driver\CaseService.sys";
         let expected = r"C:\Program Files\Fixture Driver\CaseService.sys";

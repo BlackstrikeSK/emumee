@@ -29,6 +29,7 @@ mod configured;
 mod console_tests;
 mod cpu;
 pub mod plan_runtime;
+pub mod user;
 pub use capture::run_owned as run_driver_runtime_fixture;
 pub use configured::ConfigurationReceipt;
 #[cfg(test)]
@@ -39,6 +40,8 @@ mod configured_tests;
 mod cr8_tests;
 #[cfg(test)]
 mod crt_format_tests;
+#[cfg(test)]
+mod crt_startup_tests;
 #[cfg(test)]
 mod crt_stdio_tests;
 #[cfg(test)]
@@ -56,9 +59,9 @@ mod ipi;
 #[cfg(test)]
 mod ipi_tests;
 #[cfg(test)]
-mod kernel_code_integrity_tests;
+mod kernel_capture_tests;
 #[cfg(test)]
-mod kernel_sections_tests;
+mod kernel_code_integrity_tests;
 mod kernel_context_reads;
 mod kernel_cpu;
 #[cfg(test)]
@@ -74,6 +77,8 @@ mod kernel_modules_tests;
 #[cfg(test)]
 mod kernel_objects_tests;
 #[cfg(test)]
+mod kernel_pushlock_tests;
+#[cfg(test)]
 mod kernel_reference_integrated_tests;
 #[cfg(test)]
 mod kernel_reference_nx_tests;
@@ -86,6 +91,8 @@ mod kernel_registry_tests;
 #[cfg(test)]
 mod kernel_rtl_tests;
 #[cfg(test)]
+mod kernel_sections_tests;
+#[cfg(test)]
 mod kernel_spin_tests;
 mod kernel_stack_writes;
 #[cfg(test)]
@@ -94,6 +101,8 @@ mod kernel_stack_writes_tests;
 mod kernel_sync_tests;
 #[cfg(test)]
 mod kernel_tail_tests;
+#[cfg(test)]
+mod kernel_thread_fields_tests;
 #[cfg(test)]
 mod kernel_thread_objects_tests;
 #[cfg(test)]
@@ -129,9 +138,13 @@ mod tcg;
 mod threads;
 mod time;
 #[cfg(test)]
+mod user_runtime_tests;
+#[cfg(test)]
 mod vfs_metadata_tests;
 #[cfg(test)]
 mod vfs_mutation_tests;
+#[cfg(test)]
+mod winstrings_guest_tests;
 pub use api::ApiRegion;
 pub use api::EnvironmentBlockReport;
 pub use api::KernelReport;
@@ -141,15 +154,17 @@ pub use api::callbacks::Report as CallbackReport;
 pub use api::crt_format::{KernelFormatObservation, KernelFormattingReport};
 pub use api::dynamic_loader::Report as DynamicLoaderReport;
 pub use api::kernel_callback_continuation::Report as KernelCallbackContinuationReport;
+pub use api::kernel_capture::Report as KernelCaptureReport;
 pub use api::kernel_code_integrity::Report as KernelCodeIntegrityReport;
-pub use api::kernel_sections::Report as KernelSectionsReport;
 pub use api::kernel_environment::Report as KernelEnvironmentReport;
 pub use api::kernel_files::Report as KernelFilesReport;
 pub use api::kernel_modules::Report as KernelModulesReport;
 pub use api::kernel_objects::Report as KernelObjectReport;
 pub use api::kernel_prompt::Report as KernelPromptReport;
+pub use api::kernel_pushlocks::Report as KernelPushLockReport;
 pub use api::kernel_registry::Report as KernelRegistryReport;
 pub use api::kernel_rtl::Report as KernelRtlReport;
+pub use api::kernel_sections::Report as KernelSectionsReport;
 pub use api::kernel_thread_objects::Report as KernelThreadObjectReport;
 pub use api::mdl::Report as MdlReport;
 pub use api::native_loader::Report as NativeLoaderReport;
@@ -222,6 +237,37 @@ pub fn backend() -> &'static str {
     "rust/unicorn-x86"
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiQuery {
+    pub module: String,
+    pub export: String,
+}
+pub fn inspect_api_surface(queries: &[ApiQuery]) -> Result<serde_json::Value> {
+    ensure!(
+        queries.len() <= 20000,
+        "API inventory query count exceeds bound"
+    );
+    let mut rows = Vec::with_capacity(queries.len() * 2);
+    for query in queries {
+        ensure!(
+            !query.module.is_empty()
+                && query.module.len() <= 128
+                && !query.export.is_empty()
+                && query.export.len() <= 512
+                && !query.module.contains('\0')
+                && !query.export.contains('\0'),
+            "Invalid API inventory name"
+        );
+        for arch in [Architecture::X86, Architecture::X64] {
+            rows.push(api::describe(arch, &query.module, &query.export));
+        }
+    }
+    Ok(
+        serde_json::json!({"schema":1,"entries":rows,"scope":"Read-only exact dispatcher binding inventory; no guest execution and no semantic parity claim"}),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct TraceEntry {
     pub pc: u64,
@@ -235,6 +281,8 @@ pub struct NativeMemoryFault {
     pub pc: u64,
 }
 struct Trace {
+    pub(crate) quiescent_parked_requested: bool,
+    process_exit_code: Option<u32>,
     architecture: Architecture,
     instructions: u64,
     entries: [TraceEntry; TAIL],
@@ -302,6 +350,8 @@ impl Trace {
     ) -> Self {
         Self {
             architecture,
+            quiescent_parked_requested: false,
+            process_exit_code: None,
             instructions: 0,
             entries: [TraceEntry::default(); TAIL],
             clock,
@@ -352,6 +402,12 @@ impl Trace {
 }
 #[derive(Debug, Serialize)]
 pub struct Execution {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub string_api_unsupported: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crt_startup: Option<api::crt_startup::Report>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_exit_code: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_exceptions: Option<native_exceptions::Report>,
     pub native_loader: Option<NativeLoaderReport>,
@@ -389,6 +445,8 @@ pub struct Execution {
     pub instruction_window: Option<instruction_window::Report>,
     pub kernel_objects: Option<KernelObjectReport>,
     pub kernel_thread_objects: Option<KernelThreadObjectReport>,
+    pub kernel_capture: Option<KernelCaptureReport>,
+    pub kernel_pushlocks: Option<KernelPushLockReport>,
     pub kernel_ipi: Option<IpiReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_reference: Option<KernelReferenceMappingReceipt>,
@@ -727,6 +785,10 @@ enum KernelReferenceInput {
 
 #[derive(Default)]
 struct GeneratedConfiguration {
+    submitted_user: bool,
+    owned_paging_requested: bool,
+    owned_pfn_requested: bool,
+    quiescent_parked_requested: bool,
     module_provenance_fault: Option<ModuleProvenanceFault>,
     submitted_driver_service: Option<String>,
     submitted_persona_authorized: bool,
@@ -752,6 +814,10 @@ fn run_generated_with_fixture_configuration(
     configuration: GeneratedConfiguration,
 ) -> Result<Execution> {
     let GeneratedConfiguration {
+        submitted_user,
+        owned_paging_requested,
+        owned_pfn_requested,
+        quiescent_parked_requested,
         module_provenance_fault,
         submitted_driver_service,
         submitted_persona_authorized,
@@ -845,7 +911,30 @@ fn run_generated_with_fixture_configuration(
                 .unwrap_or_else(|| format!(r"C:\Windows\System32\drivers\{service}.sys"))
         },
     );
-    let root_module_origin = if submitted_driver_service.is_some() {
+    ensure!(
+        !submitted_user
+            || (configured.is_some()
+                && submitted_driver_service.is_none()
+                && companions.is_empty()
+                && kernel_reference.is_none()
+                && !owned_callback_namespace
+                && !unavailable_callback_namespace),
+        "Submitted user configuration authority mismatch"
+    );
+    if quiescent_parked_requested || owned_pfn_requested {
+        ensure!(
+            owned_paging_requested
+                && matches!(&kernel_reference, Some(KernelReferenceInput::Pinned(_))),
+            "Quiescent parked threads require owned paging and pinned kernel reference"
+        );
+        configured
+            .as_ref()
+            .context("Quiescent parked threads require bound configured persona")?
+            .require_owned_paging()?;
+    }
+    let root_module_origin = if submitted_user {
+        emumee_core::modules::ModuleOrigin::SubmittedUser
+    } else if submitted_driver_service.is_some() {
         emumee_core::modules::ModuleOrigin::SubmittedDriver
     } else if declared_path.is_some() {
         emumee_core::modules::ModuleOrigin::ConfiguredGuest
@@ -891,6 +980,9 @@ fn run_generated_with_fixture_configuration(
         .as_ref()
         .map(|_| tcg::configure_submitted_driver(&mut engine))
         .transpose()?;
+    engine.get_data_mut().apis.mdls.owned_paging_requested = owned_paging_requested;
+    engine.get_data_mut().apis.mdls.pfn.requested = owned_pfn_requested;
+    engine.get_data_mut().quiescent_parked_requested = quiescent_parked_requested;
     engine.get_data_mut().plan_limits = plan_limits;
     engine.get_data_mut().instruction_window =
         observation_window.map(instruction_window::State::new);
@@ -956,6 +1048,7 @@ fn run_generated_with_fixture_configuration(
         .get_data_mut()
         .apis
         .target(arch, pe.sample.kind == emumee_core::pe::Kind::Driver)?;
+    api::crt_startup::initialize(&mut engine)?;
     api::kernel_objects::initialize(&mut engine)?;
     if module_provenance_fault.is_some() {
         engine
@@ -1129,6 +1222,7 @@ fn run_generated_with_fixture_configuration(
         .transpose()?;
     if layout.is_some() {
         api::kernel_thread_objects::initialize_root(&mut engine)?;
+        api::kernel_capture::initialize_boot(&mut engine)?;
     }
     kernel_cpu::initialize(&mut engine)?;
     native_exceptions::install(&mut engine)?;
@@ -1155,6 +1249,11 @@ fn run_generated_with_fixture_configuration(
         uc(engine.reg_write(RegisterX86::ESP, sp))?;
     }
     uc(engine.add_code_hook(1, 0, |engine, pc, size| {
+        if api::mdl::pfn::failed(engine) {
+            engine.get_data_mut().apis.fault = Some("Owned PFN metadata access refused".into());
+            let _ = engine.emu_stop();
+            return;
+        }
         if let Err(error) = plan_runtime::check_limits(engine) {
             engine.get_data_mut().apis.fault = Some(format!("{error:#}"));
             let _ = engine.emu_stop();
@@ -1184,12 +1283,18 @@ fn run_generated_with_fixture_configuration(
         if api_gate && engine.get_data().apis.kernel_callback_continuation.active() {
             api::kernel_callback_continuation::before_api(engine, pc);
         }
-        if api::native_loader::before_instruction(engine, pc)
+        let architectural_boundary = api::native_loader::before_instruction(engine, pc)
             || ipi::before_instruction(engine, pc)
-            || threads::dpc::before_instruction(engine, pc, size)
-            || threads::before_instruction(engine, pc)
-        {
-            if engine.get_data().cpu.debug_control.active() {
+            || threads::dpc::before_instruction(engine, pc, size);
+        let scheduler_boundary = !architectural_boundary && threads::before_instruction(engine, pc);
+        if architectural_boundary || scheduler_boundary {
+            // A quantum checkpoint can select this same ordinary thread again.
+            // The scheduler validates its actual selected owner before restoring
+            // a context; merely reaching a checkpoint is not a guest transfer.
+            if engine.get_data().cpu.debug_control.active()
+                && (architectural_boundary
+                    || !matches!(engine.get_data().thread_action, Some(threads::Action::Yield)))
+            {
                 engine.get_data_mut().cpu.fault = Some(
                     "DEBUGCTL active scheduler/loader transition requires architectural tracing support".into(),
                 );
@@ -1220,6 +1325,9 @@ fn run_generated_with_fixture_configuration(
                 if api::dynamic_loader::resume_api(engine, pc)? {
                     return Ok(());
                 }
+                if api::crt_startup::resume_api(engine, pc)? {
+                    return Ok(());
+                }
                 if ipi::resume_api(engine, pc)? {
                     return Ok(());
                 }
@@ -1244,6 +1352,7 @@ fn run_generated_with_fixture_configuration(
             Some(threads::Action::Wait { .. })
         ) && !matches!(engine.get_data().ipi_action, Some(ipi::Action::Begin))
             && !api::dynamic_loader::queued(engine)
+            && !api::crt_startup::queued(engine)
             && !native_exceptions::queued(engine)
         {
             if engine
@@ -1276,6 +1385,7 @@ fn run_generated_with_fixture_configuration(
             || engine.get_data().thread_action.is_some()
             || engine.get_data().ipi_action.is_some()
             || api::dynamic_loader::queued(engine)
+            || api::crt_startup::queued(engine)
             || native_exceptions::queued(engine)
         {
             let _ = engine.emu_stop();
@@ -1291,6 +1401,18 @@ fn run_generated_with_fixture_configuration(
     ] {
         uc(
             engine.add_mem_hook(hook, 1, 0, move |engine, _, address, size, _| {
+                if hook == HookType::MEM_READ_UNMAPPED {
+                    match api::mdl::paging::read(engine, address, size) {
+                        Ok(true) => return true,
+                        Ok(false) => {}
+                        Err(error) => {
+                            engine.get_data_mut().apis.fault =
+                                Some(format!("Owned paging view: {error:#}"));
+                            let _ = engine.emu_stop();
+                            return false;
+                        }
+                    }
+                }
                 if engine.get_data().native_memory_fault.is_none() {
                     let pc = engine.pc_read().unwrap_or(0);
                     engine.get_data_mut().native_memory_fault = Some(NativeMemoryFault {
@@ -1373,6 +1495,9 @@ fn run_generated_with_fixture_configuration(
     let callback_error = api::callbacks::completion_error(&engine);
     let rundown_error = api::rundown::completion_error(&engine);
     let thread_object_error = api::kernel_thread_objects::completion_error(&engine);
+    let kernel_capture_error = api::kernel_capture::completion_error(&engine);
+    let kernel_pushlock_error = api::kernel_pushlocks::completion_error(&engine);
+    let mdl_error = api::mdl::completion_error(&engine);
     let rtl_error = api::kernel_rtl::completion_error(&engine);
     let spin_error = api::kernel_spin::completion_error(&engine);
     let (memory_strings, memory_string_sources) = indicators::take(&mut engine);
@@ -1393,6 +1518,12 @@ fn run_generated_with_fixture_configuration(
         Some(error)
     } else if let Some(error) = thread_object_error {
         Some(error)
+    } else if let Some(error) = kernel_pushlock_error {
+        Some(error)
+    } else if let Some(error) = mdl_error {
+        Some(error)
+    } else if let Some(error) = kernel_capture_error {
+        Some(error)
     } else if let Some(error) = rtl_error {
         Some(error)
     } else if let Some(error) = spin_error {
@@ -1405,6 +1536,8 @@ fn run_generated_with_fixture_configuration(
     let returned = outcome.returned && error.is_none();
     let completion = if error.is_some() {
         "error"
+    } else if trace.process_exit_code.is_some() {
+        "process_exit"
     } else if returned {
         "entry_return"
     } else if count >= budget {
@@ -1414,6 +1547,9 @@ fn run_generated_with_fixture_configuration(
     };
     let value = if returned { outcome.value } else { None };
     let mut report = Execution {
+        crt_startup: api::crt_startup::report(&engine),
+        string_api_unsupported: engine.get_data().apis.winstrings.clone(),
+        process_exit_code: trace.process_exit_code,
         native_exceptions: native_exceptions::report(&engine),
         native_loader: api::native_loader::report(&engine),
         dynamic_loader: api::dynamic_loader::report(&engine),
@@ -1446,6 +1582,8 @@ fn run_generated_with_fixture_configuration(
         kernel_sections:api::kernel_sections::report(&engine),
         kernel_objects: trace.apis.kernel_mode.then(|| api::kernel_objects::report(&engine)),
         kernel_thread_objects: trace.apis.kernel_mode.then(|| api::kernel_thread_objects::report(&engine)),
+        kernel_capture: api::kernel_capture::report(&engine),
+        kernel_pushlocks: api::kernel_pushlocks::report(&engine),
         kernel_ipi:trace.apis.kernel_mode.then(||ipi::report(&engine)),
         kernel_reference,
         kernel_reference_unload_history: api::reference_unload::report(&engine),
@@ -1481,6 +1619,8 @@ fn run_generated_with_fixture_configuration(
             relocated: base != preferred_base,
             scope: if submitted_driver_service.is_some() {
                 "Checked materialization/relocation of an exact worker-verified submitted driver. Automatic placement and full Windows loader lifecycle remain pending."
+            } else if submitted_user {
+                "Checked materialization of worker-verified submitted user PE bytes at the preferred base. Bounded TLS-callback/DllMain startup; full Windows loader lifecycle remains pending."
             } else {
                 "Checked materialization/relocation of generated images. Automatic placement, arbitrary companions and full Windows loader lifecycle remain pending."
             },
@@ -1529,6 +1669,8 @@ fn run_generated_with_fixture_configuration(
             .map(|threads| threads.report(trace.apis.kernel.save())),
         scope: if submitted_driver_service.is_some() {
             "Bounded submitted x64 native driver execution with caller-bound service identity. Guest return, capture and report are partial evidence; initialization, unpacking and full Windows parity are not implied."
+        } else if submitted_user {
+            "Bounded submitted native user PE execution with request-bound process identity and validated persona. Unsupported behavior stops explicitly; full legacy API parity and general Windows runtime compatibility are not implied."
         } else {
             "Generated CPU/PE/Windows API fixtures only. General sample execution awaits the remaining Windows model ports and parity checks."
         },
@@ -1825,6 +1967,9 @@ pub fn run_submitted_driver_with_persona_and_reference_and_broker(
             reference,
             broker,
             instruction_window: None,
+            paging_profile: None,
+            parked_thread_profile: None,
+            pfn_profile: None,
         },
     )
 }
@@ -1835,6 +1980,9 @@ pub struct SubmittedObservationInputs<'a> {
     pub reference: Option<&'a [u8]>,
     pub broker: Option<Box<dyn emumee_core::broker::Client>>,
     pub instruction_window: Option<emumee_core::driver_input::InstructionWindow>,
+    pub paging_profile: Option<emumee_core::driver_input::PagingProfile>,
+    pub parked_thread_profile: Option<emumee_core::driver_input::ParkedThreadProfile>,
+    pub pfn_profile: Option<emumee_core::driver_input::PfnProfile>,
 }
 
 pub fn run_submitted_driver_observed(
@@ -1849,6 +1997,9 @@ pub fn run_submitted_driver_observed(
         reference,
         broker,
         instruction_window,
+        paging_profile,
+        parked_thread_profile,
+        pfn_profile,
     } = inputs;
     ensure!(
         emumee_core::driver_input::service_name_valid(service_name),
@@ -1869,6 +2020,18 @@ pub fn run_submitted_driver_observed(
             && pe.sample.kind == emumee_core::pe::Kind::Driver
             && !pe.sample.managed,
         "Submitted input requires an unmanaged x64 native driver"
+    );
+    ensure!(
+        paging_profile.is_none() || (persona.is_some() && reference.is_some()),
+        "Owned paging requires bound kernel reference and persona"
+    );
+    ensure!(
+        (parked_thread_profile.is_none() && pfn_profile.is_none())
+            || (paging_profile
+                == Some(emumee_core::driver_input::PagingProfile::OwnedFourLevel26200V1)
+                && persona.is_some()
+                && reference.is_some()),
+        "Quiescent parked threads require owned paging, bound kernel reference and persona"
     );
     let submitted_persona_authorized = persona.is_some();
     let configured = persona
@@ -1892,12 +2055,21 @@ pub fn run_submitted_driver_observed(
             .bind_submitted_service(service_name)
         })
         .transpose()?;
+    if paging_profile.is_some() {
+        configured
+            .as_ref()
+            .context("Owned paging persona absent")?
+            .require_owned_paging()?;
+    }
     run_generated_with_fixture_configuration(
         bytes,
         &[],
         budget,
         timeout_us,
         GeneratedConfiguration {
+            owned_paging_requested: paging_profile.is_some(),
+            owned_pfn_requested: pfn_profile.is_some(),
+            quiescent_parked_requested: parked_thread_profile.is_some(),
             // Nonrelocatable images must use their preferred base. Relocatable
             // drivers take a stable kernel range for deterministic replays.
             load_base: (pe.directories[5].rva != 0

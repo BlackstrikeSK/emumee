@@ -428,17 +428,17 @@ mod tests {
             .target(Architecture::X64, true)
             .unwrap();
         let catalog = &mut engine.get_data_mut().apis.modules;
-        let pe = PeImage::parse(&counted_driver(Architecture::X64, 1), "fixture-driver.sys").unwrap();
+        let pe = PeImage::parse(&counted_driver(Architecture::X64, 1), "vgk.sys").unwrap();
         catalog
             .add_with_path(
-                "fixture-driver.sys",
+                "vgk.sys",
                 pe.image_base,
                 &pe,
-                r"C:\Windows\System32\drivers\fixture-driver.sys",
+                r"C:\Windows\System32\drivers\vgk.sys",
                 ModuleOrigin::OwnedGenerated,
             )
             .unwrap();
-        catalog.set_primary("fixture-driver.sys").unwrap();
+        catalog.set_primary("vgk.sys").unwrap();
         let nt = PeImage::parse(&counted_driver(Architecture::X64, 1), "ntoskrnl.exe").unwrap();
         catalog
             .add_with_path(
@@ -452,7 +452,7 @@ mod tests {
         let (plan, pages) = build_plan(&engine, Authority::GeneratedX64).unwrap();
         assert_eq!(plan.nodes.len(), 2);
         assert_eq!(plan.nodes[0].name, "ntoskrnl.exe");
-        assert_eq!(plan.nodes[1].name, "fixture-driver.sys");
+        assert_eq!(plan.nodes[1].name, "vgk.sys");
         assert_eq!(plan.primary, plan.nodes[1].address);
         assert_eq!(u64_at(&pages[0], 0), plan.nodes[0].address);
         assert_eq!(u64_at(&pages[0], 8), plan.nodes[1].address);
@@ -476,7 +476,7 @@ mod tests {
                 + STRING_OFFSET as u64
                 + "C:\\Windows\\System32\\drivers\\".encode_utf16().count() as u64 * 2
         );
-        let path = r"C:\Windows\System32\drivers\fixture-driver.sys";
+        let path = r"C:\Windows\System32\drivers\vgk.sys";
         let encoded: Vec<u8> = path.encode_utf16().flat_map(u16::to_le_bytes).collect();
         assert_eq!(
             &pages[2][STRING_OFFSET..STRING_OFFSET + encoded.len()],

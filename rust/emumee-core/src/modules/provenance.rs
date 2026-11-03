@@ -9,6 +9,7 @@ pub enum ModuleOrigin {
     ConfiguredGuest,
     GuestFile,
     SubmittedDriver,
+    SubmittedUser,
     SyntheticProvider,
 }
 #[derive(Clone, Debug, Serialize)]

@@ -250,8 +250,26 @@ pub(crate) fn launch_general_verify(
     )
 }
 #[cfg(windows)]
+pub(crate) fn launch_user(
+    verified: &VerifiedBundle,
+    root: &Path,
+    arguments: &[OsString],
+    limits: OutputLimits,
+    timeout_ms: u32,
+) -> Result<emumee_platform::windows::WorkerExit> {
+    launch_profile(
+        verified,
+        root,
+        arguments,
+        limits,
+        timeout_ms,
+        JobProfile::User1024,
+    )
+}
+#[cfg(windows)]
 #[derive(Clone, Copy)]
 enum JobProfile {
+    User1024,
     LegacyFixture512,
     DriverCapture2048,
     GeneralVerify1024,
@@ -269,6 +287,7 @@ fn launch_profile(
     let worker = bundle.join("emumee-worker.exe");
     let mut recovery = RecoverySession::begin(bundle, root)?;
     let memory_mib = match job_profile {
+        JobProfile::User1024 => 1024,
         JobProfile::LegacyFixture512 => 512,
         JobProfile::DriverCapture2048 => 2048,
         JobProfile::GeneralVerify1024 => 1024,
@@ -279,7 +298,10 @@ fn launch_profile(
     // General verify-only admission may read committed control bytes, but it
     // can write only in worker/. The generated/Driver128 roles retain their
     // established root grant until separately qualified for narrower ACLs.
-    let general = matches!(job_profile, JobProfile::GeneralVerify1024);
+    let general = matches!(
+        job_profile,
+        JobProfile::GeneralVerify1024 | JobProfile::User1024
+    );
     let mut output_access = profile.grant_tracked(root, !general, &mut recovery)?;
     let mut general_worker_access = if general {
         Some(profile.grant_tracked(&root.join("worker"), true, &mut recovery)?)
@@ -337,7 +359,7 @@ fn launch_profile(
         save_new(
             &root.join("general-job-profile.json"),
             &serde_json::to_vec_pretty(
-                &serde_json::json!({"schema":1,"profile":"general_verify_1024_v1","process_memory_bytes":1024u64*1024*1024,"active_process_limit":1,"network_capabilities":0,"peak_process_memory_bytes":peak,"output_limits":limits,"cleanup":"restored"}),
+                &serde_json::json!({"schema":1,"profile":if matches!(job_profile, JobProfile::User1024) {"submitted_user_1024_v1"} else {"general_verify_1024_v1"},"process_memory_bytes":1024u64*1024*1024,"active_process_limit":1,"network_capabilities":0,"peak_process_memory_bytes":peak,"output_limits":limits,"cleanup":"restored"}),
             )?,
         )?;
     }

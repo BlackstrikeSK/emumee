@@ -24,3 +24,8 @@ available. Do not post an exploit or a live malware sample in a public issue.
 Historical Python coverage and containment evidence is in
 [COVERAGE_AND_SAFETY.md](COVERAGE_AND_SAFETY.md). Rust ELF profile evidence is
 recorded in [issue #1](https://github.com/BlackstrikeSK/emumee/issues/1).
+
+Experimental driver paging and PFN profiles expose only explicitly modeled
+fields. Unsupported memory and API effects fail closed; their source tests do
+not certify arbitrary-driver safety or successful initialization. Host security
+quarantine is not automatically bypassed or disabled during qualification.

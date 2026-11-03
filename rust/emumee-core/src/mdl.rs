@@ -136,6 +136,25 @@ pub struct Plan {
     pub effect: Effect,
     pub result: u64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewEffect {
+    Map,
+    Refresh,
+    Rebind,
+    Unmap,
+}
+/// Native adapters must apply/verify this effect before committing state/memory.
+/// Native backing for a retired frame must remain alive until all views unmap.
+#[derive(Clone, Debug)]
+pub struct ViewPlan {
+    pub state: Mdls,
+    pub memory: AddressSpace,
+    pub address: u64,
+    pub pfn: Option<u64>,
+    pub previous_pfn: Option<u64>,
+    pub bytes: Vec<u8>,
+    pub effect: ViewEffect,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct MapRequest {
@@ -156,6 +175,8 @@ pub struct Mdls {
     frames: BTreeMap<u64, u64>,
     aliases: BTreeMap<u64, Alias>,
     next_alias: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    physical: Option<crate::kernel_paging::Authority>,
 }
 
 fn put_pointer(bytes: &mut [u8], offset: usize, value: u64, width: usize) {
@@ -184,13 +205,180 @@ impl Mdls {
             frames: BTreeMap::new(),
             aliases: BTreeMap::new(),
             next_alias: 0x40000000,
+            physical: None,
         }
     }
     pub fn descriptor_count(&self) -> usize {
         self.descriptors.len()
     }
     pub fn frame_count(&self) -> usize {
-        self.frames.len()
+        self.physical
+            .as_ref()
+            .map_or(self.frames.len(), |p| p.data_frames())
+    }
+    pub fn physical(&self) -> Option<&crate::kernel_paging::Authority> {
+        self.physical.as_ref()
+    }
+    /// Must be installed before any legacy descriptor/alias/PFN is published.
+    /// Engine commits the state only after native CR3/context effects succeed.
+    pub fn prepare_owned_paging(&self, memory: &AddressSpace) -> Result<Plan> {
+        if self.architecture != Architecture::X64
+            || self.physical.is_some()
+            || !self.frames.is_empty()
+            || !self.descriptors.is_empty()
+            || !self.aliases.is_empty()
+        {
+            return Err(MdlError(
+                "owned paging requires a fresh x64 identity namespace",
+            ));
+        }
+        let mut plan = self.plan(memory);
+        let paging = crate::kernel_paging::Authority::new(memory).map_err(|e| MdlError(e.0))?;
+        plan.result = paging.cr3();
+        plan.state.physical = Some(paging);
+        Ok(plan)
+    }
+    /// Declares genuine shared backing; the engine must establish byte coherence
+    /// before committing this pure-state plan, as with MDL aliases.
+    pub fn prepare_shared_physical_alias(
+        &self,
+        memory: &AddressSpace,
+        target: u64,
+        source: u64,
+        pages: u64,
+    ) -> Result<Plan> {
+        let mut plan = self.plan(memory);
+        plan.state
+            .physical
+            .as_mut()
+            .ok_or(MdlError("owned paging is not enabled"))?
+            .register_alias(memory, target, source, pages)
+            .map_err(|e| MdlError(e.0))?;
+        Ok(plan)
+    }
+    pub fn prepare_physical_transport(
+        &self,
+        memory: &AddressSpace,
+        backend: u64,
+        target: u64,
+    ) -> Result<Plan> {
+        let mut plan = self.plan(memory);
+        plan.state
+            .physical
+            .as_mut()
+            .ok_or(MdlError("owned paging is not enabled"))?
+            .register_transport(memory, backend, target)
+            .map_err(|e| MdlError(e.0))?;
+        Ok(plan)
+    }
+    pub fn prepare_physical_walk(
+        &self,
+        memory: &AddressSpace,
+        address: u64,
+    ) -> Result<(Plan, crate::kernel_physical::owned::Walk)> {
+        let mut plan = self.plan(memory);
+        let physical = plan
+            .state
+            .physical
+            .as_mut()
+            .ok_or(MdlError("owned paging is not enabled"))?;
+        let walk = physical.walk(memory, address).map_err(|e| MdlError(e.0))?;
+        plan.result = physical
+            .translate(memory, address)
+            .map_err(|e| MdlError(e.0))?
+            .unwrap_or(0);
+        Ok((plan, walk))
+    }
+    pub fn prepare_physical_sync(&self, memory: &AddressSpace) -> Result<Plan> {
+        let mut plan = self.plan(memory);
+        plan.state
+            .physical
+            .as_mut()
+            .ok_or(MdlError("owned paging is not enabled"))?
+            .sync(memory)
+            .map_err(|e| MdlError(e.0))?;
+        Ok(plan)
+    }
+    pub fn prepare_physical_view(&self, memory: &AddressSpace, address: u64) -> Result<ViewPlan> {
+        let mut state = self.clone();
+        let mut memory = memory.clone();
+        let physical = state
+            .physical
+            .as_mut()
+            .ok_or(MdlError("owned paging is not enabled"))?;
+        if address % PAGE != 0 {
+            return Err(MdlError("structural view address is unaligned"));
+        }
+        let previous = physical
+            .views()
+            .find_map(|(at, v)| (*at == address).then_some(v.pfn));
+        let result = physical
+            .translate(&memory, address)
+            .map_err(|e| MdlError(e.0))?;
+        let Some(paddr) = result else {
+            if previous.is_none() {
+                return Err(MdlError("structural table is not present"));
+            }
+            physical.remove_view(address).map_err(|e| MdlError(e.0))?;
+            memory
+                .unmap(address, PAGE)
+                .map_err(|_| MdlError("structural view unmap metadata differs"))?;
+            return Ok(ViewPlan {
+                state,
+                memory,
+                address,
+                pfn: None,
+                previous_pfn: previous,
+                bytes: Vec::new(),
+                effect: ViewEffect::Unmap,
+            });
+        };
+        let pfn = paddr / PAGE;
+        if !matches!(
+            physical.frame_kind(pfn),
+            Some(crate::kernel_paging::FrameKind::Table { .. })
+        ) {
+            return Err(MdlError("structural view does not target table storage"));
+        }
+        let bytes = physical
+            .table_bytes(&memory, pfn)
+            .map_err(|e| MdlError(e.0))?;
+        let effect = match previous {
+            None => {
+                memory
+                    .map(
+                        address,
+                        PAGE,
+                        Permissions::READ,
+                        Some(4),
+                        crate::kernel_paging::VIEW_TAG,
+                    )
+                    .map_err(|_| MdlError("structural view mapping overlaps backing"))?;
+                physical
+                    .register_view(&memory, address, pfn)
+                    .map_err(|e| MdlError(e.0))?;
+                ViewEffect::Map
+            }
+            Some(old) => {
+                physical
+                    .refresh_view(&memory, address, pfn)
+                    .map_err(|e| MdlError(e.0))?;
+                if old == pfn {
+                    ViewEffect::Refresh
+                } else {
+                    ViewEffect::Rebind
+                }
+            }
+        };
+        Ok(ViewPlan {
+            state,
+            memory,
+            address,
+            pfn: Some(pfn),
+            previous_pfn: previous,
+            bytes,
+            effect,
+        })
     }
     pub fn alias_count(&self) -> usize {
         self.aliases.len()
@@ -298,7 +486,12 @@ impl Mdls {
         Ok(plan)
     }
 
-    fn frame(&mut self, address: u64) -> Result<u64> {
+    fn frame(&mut self, memory: &AddressSpace, address: u64) -> Result<u64> {
+        if let Some(physical) = self.physical.as_mut() {
+            return physical
+                .data_frame(memory, address)
+                .map_err(|e| MdlError(e.0));
+        }
         let page = address & !(PAGE - 1);
         let source = self
             .aliases
@@ -361,7 +554,9 @@ impl Mdls {
             .copy_from_slice(&(flags | SOURCE_IS_NONPAGED_POOL).to_le_bytes());
         put_pointer(&mut bytes, layout.mapped_offset(), layout.buffer, width);
         for index in 0..layout.pages {
-            let frame = plan.state.frame(layout.start() + u64::from(index) * PAGE)?;
+            let frame = plan
+                .state
+                .frame(memory, layout.start() + u64::from(index) * PAGE)?;
             put_pointer(
                 &mut bytes,
                 layout.header_size() + index as usize * width,
@@ -393,9 +588,21 @@ impl Mdls {
 
     /// Returns the full PHYSICAL_ADDRESS. The x86 adapter splits it into EDX:EAX.
     pub fn prepare_physical_address(&self, memory: &AddressSpace, address: u64) -> Result<Plan> {
+        if self.physical.is_some() {
+            let mut plan = self.plan(memory);
+            plan.result = plan
+                .state
+                .physical
+                .as_mut()
+                .unwrap()
+                .translate(memory, address)
+                .map_err(|e| MdlError(e.0))?
+                .unwrap_or(0);
+            return Ok(plan);
+        }
         require(memory, address, 1, Permissions::READ)?;
         let mut plan = self.plan(memory);
-        plan.result = plan.state.frame(address)? * PAGE + (address & (PAGE - 1));
+        plan.result = plan.state.frame(memory, address)? * PAGE + (address & (PAGE - 1));
         Ok(plan)
     }
 
@@ -508,6 +715,16 @@ impl Mdls {
             .map_err(|_| MdlError("alias metadata mapping failed"))?;
         plan.state.next_alias = next;
         plan.state.aliases.insert(alias.returned, alias.clone());
+        if let Some(physical) = plan.state.physical.as_mut() {
+            physical
+                .register_alias(
+                    &plan.memory,
+                    alias.base,
+                    alias.source_base,
+                    alias.size / PAGE,
+                )
+                .map_err(|e| MdlError(e.0))?;
+        }
         plan.result = alias.returned;
         plan.effect = Effect::MapAlias(alias);
         Ok(plan)
@@ -537,12 +754,22 @@ impl Mdls {
             .unmap(alias.base, alias.size)
             .map_err(|_| MdlError("alias metadata unmap failed"))?;
         plan.state.aliases.remove(&address);
+        if let Some(physical) = plan.state.physical.as_mut() {
+            physical
+                .remove_alias(alias.base)
+                .map_err(|e| MdlError(e.0))?;
+        }
         plan.effect = Effect::UnmapAlias(alias.clone());
         Ok(plan)
     }
 
     /// Invoke for every modeled API write, including writes that bypass CPU page checks.
     pub fn require_api_write(&self, address: u64, size: u64) -> Result<()> {
+        if let Some(physical) = &self.physical {
+            physical
+                .require_write(address, size)
+                .map_err(|e| MdlError(e.0))?;
+        }
         if size == 0 {
             return Ok(());
         }

@@ -13,6 +13,7 @@ use unicorn_engine::{RegisterX86, Unicorn, unicorn_const::Prot};
 mod allocation;
 pub(crate) mod callbacks;
 mod crt;
+pub(crate) mod crt_startup;
 pub(crate) mod dynamic_loader;
 mod files;
 mod filesystem_metadata;
@@ -22,9 +23,11 @@ mod internet;
 #[cfg(test)]
 mod internet_tests;
 mod kernel;
+pub(crate) mod kernel_capture;
 pub(crate) mod kernel_code_integrity;
-pub(crate) mod kernel_sections;
 pub(crate) mod kernel_modules;
+pub(crate) mod kernel_pushlocks;
+pub(crate) mod kernel_sections;
 pub(crate) mod kernel_spin;
 pub(crate) mod kernel_sync;
 pub(crate) mod mdl;
@@ -32,6 +35,8 @@ pub(crate) mod native_loader;
 mod network;
 #[cfg(test)]
 mod network_tests;
+pub(crate) mod user_runtime;
+mod winstrings;
 pub use network::Report as NetworkReport;
 mod console;
 pub(crate) mod crt_format;
@@ -67,6 +72,10 @@ pub(super) const BASE: u64 = 0x68000000;
 const MAX_TRANSFER: u64 = 16 * 1024 * 1024;
 #[derive(Clone, Copy)]
 enum Model {
+    CrtStartup(crt_startup::Call),
+    UserRuntime(user_runtime::Call),
+    WinStrings(winstrings::Call),
+    ExitProcess,
     OpenSection,
     DynamicLoader(dynamic_loader::Call),
     Objects(kernel_objects::Call),
@@ -116,6 +125,7 @@ enum Model {
     DpcQueue(bool),
     DelayThread,
     Irql,
+    PersistentCapture,
     Copy,
     Zero,
     Fill,
@@ -234,8 +244,13 @@ pub(super) struct ApiState {
     pub environment: kernel_environment::State,
     pub objects: kernel_objects::State,
     pub thread_objects: kernel_thread_objects::State,
+    pub kernel_capture: kernel_capture::State,
+    pub kernel_pushlocks: kernel_pushlocks::State,
     pub persona: persona::State,
     pub crt_stdio: crt_stdio::State,
+    pub crt_startup: crt_startup::State,
+    pub user_runtime: user_runtime::State,
+    pub winstrings: Vec<String>,
     pub kernel_formatting: crt_format::KernelFormatting,
     pub console: console::State,
     pub file_metadata: filesystem_metadata::State,
@@ -319,8 +334,13 @@ impl ApiState {
             environment: kernel_environment::State::default(),
             objects: kernel_objects::State::default(),
             thread_objects: kernel_thread_objects::State::default(),
+            kernel_capture: kernel_capture::State::default(),
+            kernel_pushlocks: kernel_pushlocks::State::default(),
             persona,
             crt_stdio: crt_stdio::State::fixture(architecture),
+            crt_startup: crt_startup::State::default(),
+            user_runtime: user_runtime::State::default(),
+            winstrings: Vec::new(),
             console: console::State::fixture(),
             file_metadata: filesystem_metadata::State::default(),
             mdls: mdl::State::new(architecture),
@@ -407,6 +427,14 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         convention: C::Stdcall,
         returns: T::U32,
     };
+    if matches!(module, "kernel32" | "kernelbase") && name == "ExitProcess"
+        || module == "ntdll" && name == "RtlExitUserProcess"
+    {
+        binding.model = Model::ExitProcess;
+        binding.count = 1;
+        binding.returns = T::Void;
+        return binding;
+    }
     if architecture == Architecture::X64
         && matches!(module, "ntoskrnl" | "ntdll")
         && name == "DbgBreakPoint"
@@ -462,10 +490,30 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         binding.returns = returns;
         return binding;
     }
+    if let Some((call, count, returns)) = crt_startup::definition(architecture, module, name) {
+        binding.model = Model::CrtStartup(call);
+        binding.count = count;
+        binding.convention = C::Cdecl;
+        binding.returns = returns;
+        return binding;
+    }
     if let Some((call, count, returns)) = crt_stdio::definition(module, name) {
         binding.model = Model::CrtStdio(call);
         binding.count = count;
         binding.convention = C::Cdecl;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns, convention)) = winstrings::definition(module, name) {
+        binding.model = Model::WinStrings(call);
+        binding.count = count;
+        binding.returns = returns;
+        binding.convention = convention;
+        return binding;
+    }
+    if let Some((call, count, returns)) = user_runtime::definition(module, name) {
+        binding.model = Model::UserRuntime(call);
+        binding.count = count;
         binding.returns = returns;
         return binding;
     }
@@ -820,6 +868,9 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         ("kernel32" | "kernelbase", "GetFileSizeEx") => (Model::FileSize, 2, C::Stdcall, T::U32),
         ("kernel32" | "kernelbase", "CloseHandle") => (Model::CloseHandle, 1, C::Stdcall, T::U32),
         ("ntoskrnl", "KeGetCurrentIrql") => (Model::Irql, 0, C::Stdcall, T::U32),
+        ("ntoskrnl", "KeCapturePersistentThreadState") => {
+            (Model::PersistentCapture, 8, C::Stdcall, T::U32)
+        }
         ("ntoskrnl", "KeInitializeGuardedMutex") => {
             (Model::InitGuardedMutex, 1, C::Stdcall, T::U32)
         }
@@ -864,6 +915,21 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
     ) = definition;
     binding
 }
+
+/// Read-only dispatcher inventory. A present model is not evidence of behavioral
+/// parity or admission of every argument combination. No CPU or host API runs.
+pub(crate) fn describe(architecture: Architecture, module: &str, name: &str) -> serde_json::Value {
+    let binding = definition(architecture, module, name);
+    let class = match binding.model {
+        Model::Unsupported => "unmodeled",
+        Model::CrtStdio(crt_stdio::Call::Unsupported(_)) => "explicit_unsupported",
+        _ => "model",
+    };
+    serde_json::json!({"module":module,"export":name,"architecture":architecture,
+        "dispatch":class,"argc":binding.count,"convention":binding.convention,
+        "return_type":match binding.returns {T::Void=>"void",T::U32=>"u32",T::Pointer=>"pointer",T::U64=>"u64"},
+        "semantic_parity_verified":false})
+}
 pub(super) fn bind(engine: &mut Unicorn<Trace>, pe: &PeImage) -> Result<()> {
     if pe.imports.is_empty() {
         return Ok(());
@@ -875,7 +941,9 @@ pub(super) fn bind(engine: &mut Unicorn<Trace>, pe: &PeImage) -> Result<()> {
     let size = 65536;
     let base = engine.get_data().apis.base;
     if engine.get_data().apis.end == base {
-        uc(engine.mem_map(base, size, Prot::ALL))?;
+        // Gate bytes are populated through paused host writes; guest writes
+        // were never part of the declared RX stub mapping.
+        uc(engine.mem_map(base, size, Prot::READ | Prot::EXEC))?;
         engine.get_data_mut().apis.memory.map(
             base,
             size,
@@ -999,6 +1067,8 @@ impl GuestRead for Frame<'_, '_> {
         Ok(output)
     }
     fn memory_into(&self, address: u64, output: &mut [u8]) -> std::result::Result<(), AbiError> {
+        mdl::pfn::require_api_access(self.0, address, output.len() as u64)
+            .map_err(|_| AbiError("stack argument intersects guarded PFN metadata"))?;
         if !self
             .0
             .get_data()
@@ -1055,6 +1125,7 @@ fn require_owner_ranges(
     size: u64,
     permissions: P,
 ) -> Result<()> {
+    mdl::pfn::require_api_access(engine, address, size)?;
     ensure!(size <= MAX_TRANSFER, "API transfer exceeds16MiB bound");
     kernel_rtl::require_api_access(engine, address, size)?;
     provider_metadata::require_api_access(engine, address, size, permissions)?;
@@ -1147,10 +1218,20 @@ fn string_length(engine: &Unicorn<Trace>, address: u64, limit: u64) -> Result<u6
     bail!("API string is not terminated within its modeled bound")
 }
 fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<u64> {
+    kernel_thread_objects::require_quiescent_callback_api(engine)?;
     kernel_spin::require_ready(engine)?;
     crate::threads::timers::require_ready(engine)?;
     kernel_rtl::require_native_ready(engine)?;
     Ok(match binding.model {
+        Model::ExitProcess => {
+            ensure!(
+                !engine.get_data().apis.kernel_mode && engine.get_data().threads.is_none(),
+                "Process exit requires an ordinary modeled user process"
+            );
+            engine.get_data_mut().process_exit_code = Some(args[0] as u32);
+            uc(engine.emu_stop())?;
+            0
+        }
         Model::Breakpoint => crate::native_exceptions::api_frame::queue(
             engine,
             crate::native_exceptions::api_frame::Kind::Breakpoint,
@@ -1177,6 +1258,9 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::KernelRtl(call) => kernel_rtl::invoke(engine, call, args)?,
         Model::Persona(call) => persona::invoke(engine, args, call)?,
         Model::CrtStdio(call) => crt_stdio::invoke(engine, args, call)?,
+        Model::CrtStartup(call) => crt_startup::invoke(engine, args, call)?,
+        Model::UserRuntime(call) => user_runtime::invoke(engine, args, call)?,
+        Model::WinStrings(call) => winstrings::invoke(engine, args, call)?,
         Model::Console(call) => console::invoke(engine, args, call)?,
         Model::FileMetadata(call) => filesystem_metadata::invoke(engine, args, call)?,
         Model::FileMutation(call) => filesystem_mutation::invoke(engine, args, call)?,
@@ -1231,6 +1315,7 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::DpcQueue(insert) => crate::threads::dpc::call(engine, insert, args)?,
         Model::Ipi => crate::ipi::call(engine, args)?,
         Model::KernelModules(call) => kernel_modules::call(engine, call, args)?,
+        Model::PersistentCapture => kernel_capture::call(engine, args)?,
         Model::OpenSection => kernel_sections::open(engine, args)?,
         Model::NormalSync(call) => kernel_sync::call(engine, call, args)?,
         Model::Spin(call) => kernel_spin::call(engine, call, args)?,
@@ -1389,6 +1474,7 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
         engine.get_data().ipi_action,
         Some(crate::ipi::Action::Begin)
     ) || dynamic_loader::queued(engine)
+        || crt_startup::queued(engine)
         || crate::native_exceptions::queued(engine);
     if engine.get_data().apis.next_event_index().is_some() {
         let event = ApiEvent {
@@ -1439,8 +1525,11 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
                     Model::WaitEvent => "waits_for_event",
                     Model::WaitMany => "waits_for_multiple_objects",
                     Model::DelayThread => "delays_current_thread",
+                    Model::CrtStartup(_) => "crt_initializers_pending",
                     _ => "waits_for_mutex",
                 })
+            } else if matches!(binding.model, Model::ExitProcess) && result.is_ok() {
+                Some("terminates_current_process")
             } else if matches!(binding.model, Model::TerminateSystemThread) && result.is_ok() {
                 Some("terminates_current_thread")
             } else {

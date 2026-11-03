@@ -38,7 +38,7 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
     let state = &engine.get_data().cpu.debug_control;
     (!state.processors.is_empty()).then(|| Report {
         processors: state.processors.clone(),
-        scope: "Configured Intel legacy32 LBR/BTF controls, perCPU reset DEBUGCTL0; committed near taken branches record actual from/to in a bounded32-entry history. No prediction/cycle metadata or guest LBR MSR encoding is fabricated. Other DEBUGCTL controls, EFLAGS.TF with BTF, far/system/exception transfers, active API dispatch and ownership changes remain explicit unsupported boundaries. Pending edges are attempts, never claimed retired until a next hook in the same owner is observed.",
+        scope: "Configured Intel legacy32 LBR/BTF controls, perCPU reset DEBUGCTL0; committed near taken branches record actual from/to in a bounded32-entry history. Same-owner ordinary quantum checkpoints preserve pending edges and device state without recording an invented scheduler branch. No prediction/cycle metadata or guest LBR MSR encoding is fabricated. Other DEBUGCTL controls, EFLAGS.TF with BTF, far/system/exception transfers, active API dispatch, DPC delivery and actual ownership changes remain explicit unsupported boundaries. Pending edges are attempts, never claimed retired until a next hook in the same owner is observed.",
     })
 }
 fn depth(engine: &Unicorn<Trace>) -> Result<usize> {
@@ -258,6 +258,112 @@ mod tests {
         let mut image = counted_driver(Architecture::X64, 1);
         image[0x200..0x200 + code.len()].copy_from_slice(code);
         image
+    }
+    fn quantum_image(recording: bool, blocked_child: bool) -> Vec<u8> {
+        use emumee_core::fixtures::{ApiFixture, EnvironmentFixture};
+        let mut image = emumee_core::fixtures::api_probe(
+            Architecture::X64,
+            ApiFixture::Environment(EnvironmentFixture::DataOnly),
+        );
+        image[0x1280..0x12b0].fill(0);
+        image[0x1380..0x13b0].fill(0);
+        image[0x1500..0x1580].fill(0);
+        for (index, name) in ["PsCreateSystemThread", "KeDelayExecutionThread"]
+            .into_iter()
+            .enumerate()
+        {
+            let rva = 0x2300u64 + index as u64 * 64;
+            for table in [0x1280, 0x1380] {
+                image[table + index * 8..table + index * 8 + 8].copy_from_slice(&rva.to_le_bytes());
+            }
+            let at = 0x1502 + index * 64;
+            image[at..at + name.len()].copy_from_slice(name.as_bytes());
+        }
+        image[0x1d80..0x1da0].fill(0);
+        image[0x1d90..0x1d98].copy_from_slice(&(-100_000_000i64).to_le_bytes());
+        fn rel(code: &mut Vec<u8>, start: u32, prefix: &[u8], target: u32) {
+            code.extend(prefix);
+            code.extend((target as i32 - (start as i32 + code.len() as i32 + 4)).to_le_bytes());
+        }
+        let mut root = vec![0x48, 0x83, 0xec, 0x48];
+        rel(&mut root, 0x1000, &[0x48, 0x8d, 0x0d], 0x2b00);
+        root.extend([
+            0xba, 0xff, 0xff, 0x1f, 0, 0x45, 0x31, 0xc0, 0x45, 0x31, 0xc9,
+        ]);
+        root.extend([0x48, 0xc7, 0x44, 0x24, 0x20, 0, 0, 0, 0]);
+        rel(&mut root, 0x1000, &[0x48, 0x8d, 0x05], 0x1800);
+        root.extend([0x48, 0x89, 0x44, 0x24, 0x28]);
+        rel(&mut root, 0x1000, &[0x48, 0x8d, 0x05], 0x2b80);
+        root.extend([0x48, 0x89, 0x44, 0x24, 0x30]);
+        rel(&mut root, 0x1000, &[0xff, 0x15], 0x2080);
+        let spin = root.len();
+        rel(&mut root, 0x1000, &[0x8b, 0x05], 0x2b80);
+        root.extend([0x85, 0xc0, 0x74]);
+        root.push((spin as isize - (root.len() + 1) as isize) as i8 as u8);
+        root.extend([0xb9, 0xd9, 1, 0, 0]);
+        write(&mut root, if recording { 3 } else { 0 });
+        // Each triplet includes a taken zero-displacement branch. A256-step
+        // quantum cycles through every position, including pending branches.
+        for _ in 0..300 {
+            root.extend([0xeb, 0, 0x90, 0x90]);
+        }
+        write(&mut root, 0);
+        root.extend([0xb8, 42, 0, 0, 0, 0x48, 0x83, 0xc4, 0x48, 0xc3]);
+        assert!(root.len() < 0x800);
+        image[0x200..0x1200].fill(0xcc);
+        image[0x200..0x200 + root.len()].copy_from_slice(&root);
+        let mut child = vec![0x48, 0x83, 0xec, 0x28, 0xb8, 1, 0, 0, 0];
+        rel(&mut child, 0x1800, &[0x89, 0x05], 0x2b80);
+        if blocked_child {
+            child.extend([0x31, 0xc9, 0x31, 0xd2]);
+            rel(&mut child, 0x1800, &[0x4c, 0x8d, 0x05], 0x2b90);
+            rel(&mut child, 0x1800, &[0xff, 0x15], 0x2088);
+            child.extend([0x48, 0x83, 0xc4, 0x28, 0xc3]);
+        } else {
+            child.extend([0x90, 0xeb, 0xfd]);
+        }
+        image[0xa00..0xa00 + child.len()].copy_from_slice(&child);
+        image
+    }
+    #[test]
+    fn debug_control_same_owner_quanta_preserve_pending_branches_and_identical_guest_time() {
+        let baseline =
+            crate::run_generated_image(&quantum_image(false, true), 10000, 30_000_000).unwrap();
+        let traced =
+            crate::run_generated_image(&quantum_image(true, true), 10000, 30_000_000).unwrap();
+        assert_eq!(baseline.error, None, "{baseline:#?}");
+        assert_eq!(traced.error, None, "{traced:#?}");
+        assert_eq!(traced.guest_entry_return, Some(42));
+        assert_eq!(traced.instruction_count, baseline.instruction_count);
+        assert_eq!(traced.virtual_tsc, baseline.virtual_tsc);
+        let threads = traced.kernel_threads.unwrap();
+        assert_eq!(threads.switches, baseline.kernel_threads.unwrap().switches);
+        assert!(threads.switches >= 6);
+        let report = traced.cpu.debug_control.unwrap();
+        let device = &report.processors[&0];
+        assert_eq!(device.device.read(), 0);
+        assert!(device.pending.is_none());
+        assert_eq!(device.device.edges().len(), 32);
+        assert_eq!(
+            serde_json::to_value(&device.device).unwrap()["recorded_edges"],
+            300
+        );
+        assert!(device.device.edges().all(|edge| edge.to == edge.from + 2));
+    }
+    #[test]
+    fn debug_control_real_owner_changes_remain_explicit_before_context_restore() {
+        let result =
+            crate::run_generated_image(&quantum_image(true, false), 10000, 30_000_000).unwrap();
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("scheduler ownership transition")),
+            "{result:#?}"
+        );
+        assert_eq!(result.guest_entry_return, None);
+        let report = result.cpu.debug_control.unwrap();
+        assert_eq!(report.processors[&0].device.read(), 3);
     }
     fn write(code: &mut Vec<u8>, value: u32) {
         code.push(0xb8);

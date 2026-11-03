@@ -7,7 +7,10 @@ use anyhow::{Result, bail, ensure};
 use emumee_core::{
     memory::{PAGE, Permissions as P},
     pe::Architecture,
-    provider::{ReferenceHeaderIdentity, RelocatedCodeView, relocate_pinned_nt22631, relocate_pinned_nt26200},
+    provider::{
+        ReferenceHeaderIdentity, RelocatedCodeView, relocate_pinned_nt22631,
+        relocate_pinned_nt26200,
+    },
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -54,7 +57,10 @@ pub(crate) fn prepare_integrated(bytes: &[u8], windows_build: u32) -> Result<Int
     };
     let pe = emumee_core::pe::PeImage::parse(bytes, "ntoskrnl.exe")?;
     let pe_offset = u32::from_le_bytes(bytes[0x3c..0x40].try_into()?) as usize;
-    ensure!(pe_offset <= 0x1000, "Reference PE header exceeds first page");
+    ensure!(
+        pe_offset <= 0x1000,
+        "Reference PE header exceeds first page"
+    );
     let accepted = pe.accepted_headers();
     let header_identity = ReferenceHeaderIdentity {
         dos_prefix: bytes[..pe_offset].to_vec(),
@@ -93,6 +99,7 @@ pub(crate) fn require_api_access(
     size: u64,
     permissions: P,
 ) -> Result<()> {
+    super::mdl::pfn::require_api_access(engine, address, size)?;
     if size == 0 || !(permissions.contains(P::WRITE) || permissions.contains(P::EXECUTE)) {
         return Ok(());
     }

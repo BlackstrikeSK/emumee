@@ -295,6 +295,9 @@ fn execute_mode(root: &Path, request_hash: &str, claim_sha256: Option<&str>) -> 
                     reference: reference.as_deref(),
                     broker: Some(client),
                     instruction_window: request.instruction_window,
+                    paging_profile: request.paging_profile,
+                    parked_thread_profile: request.parked_thread_profile,
+                    pfn_profile: request.pfn_profile,
                 },
             );
             close.close()?;
@@ -326,6 +329,9 @@ fn execute_mode(root: &Path, request_hash: &str, claim_sha256: Option<&str>) -> 
                     reference: reference.as_deref(),
                     broker: None,
                     instruction_window: request.instruction_window,
+                    paging_profile: request.paging_profile,
+                    parked_thread_profile: request.parked_thread_profile,
+                    pfn_profile: request.pfn_profile,
                 },
             )
         };

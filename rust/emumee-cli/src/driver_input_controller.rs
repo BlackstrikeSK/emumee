@@ -12,7 +12,10 @@ use emumee_core::{
     analysis_plan::{Arch, PreparedIntake},
     broker_journal,
     driver_capture_reports::{self as reports, Binding, Mode, Stop},
-    driver_input::{InstructionWindow, MAX_INPUT, MAX_PERSONA, MAX_REFERENCE, PROFILE, Request},
+    driver_input::{
+        InstructionWindow, MAX_INPUT, MAX_PERSONA, MAX_REFERENCE, PROFILE, PagingProfile,
+        ParkedThreadProfile, PfnProfile, Request,
+    },
     general_broker_private_attestation::{Claim, MAX_CLAIM},
     general_worker_public_preflight::preflight_driver128_public_report,
     networkfixtures::{Fixtures, MAX_FILE},
@@ -44,6 +47,9 @@ pub struct OptionalPaths<'a> {
     pub offline_fixtures: Option<&'a Path>,
     pub persona: Option<&'a Path>,
     pub instruction_window: Option<InstructionWindow>,
+    pub paging_profile: Option<PagingProfile>,
+    pub parked_thread_profile: Option<ParkedThreadProfile>,
+    pub pfn_profile: Option<PfnProfile>,
 }
 
 struct WorkerInputPresence {
@@ -676,6 +682,9 @@ pub fn run(
         offline_fixtures,
         persona: persona_path,
         instruction_window,
+        paging_profile,
+        parked_thread_profile,
+        pfn_profile,
     } = optional;
     ensure!(
         source
@@ -743,6 +752,25 @@ pub fn run(
     if let Some(window) = instruction_window {
         request = request
             .with_instruction_window(window)
+            .map_err(anyhow::Error::msg)?;
+    }
+    if let Some(profile) = paging_profile {
+        ensure!(
+            guest_build == 26200,
+            "Owned paging requires build26200 persona"
+        );
+        request = request
+            .with_paging_profile(profile)
+            .map_err(anyhow::Error::msg)?;
+    }
+    if let Some(profile) = parked_thread_profile {
+        request = request
+            .with_parked_thread_profile(profile)
+            .map_err(anyhow::Error::msg)?;
+    }
+    if let Some(profile) = pfn_profile {
+        request = request
+            .with_pfn_profile(profile)
             .map_err(anyhow::Error::msg)?;
     }
     let request_raw = bounded_json(&request, 4096)?;
@@ -1217,7 +1245,8 @@ mod broker_stage_tests {
         )
         .unwrap();
         let root = home.join("stage");
-        let stage = stage_brokered_driver(&root, run_id, &request, &target, &fixture_path, 22631).unwrap();
+        let stage =
+            stage_brokered_driver(&root, run_id, &request, &target, &fixture_path, 22631).unwrap();
         save_new(&root.join("input.sys"), &target).unwrap();
         assert_eq!(stage.request_sha256.len(), 64);
         assert_eq!(stage.claim_sha256, digest(&stage.claim_raw));

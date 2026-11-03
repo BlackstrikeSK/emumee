@@ -47,6 +47,7 @@ fn intersects(a: u64, n: u64, b: u64, m: u64) -> bool {
     a.checked_add(n).is_none_or(|end| b < end) && b.checked_add(m).is_none_or(|end| a < end)
 }
 pub(crate) fn require_write(engine: &Unicorn<Trace>, address: u64, size: u64) -> Result<()> {
+    super::kernel_pushlocks::require_write(engine, address, size)?;
     if size == 0 {
         return Ok(());
     }
@@ -65,6 +66,7 @@ pub(crate) fn require_mapping_change(
     address: u64,
     size: u64,
 ) -> Result<()> {
+    super::kernel_pushlocks::require_mapping(engine, address, size)?;
     // VirtualFree RELEASE reports size0; still protect a registered word atbase.
     ensure!(
         !engine
@@ -78,6 +80,7 @@ pub(crate) fn require_mapping_change(
     Ok(())
 }
 pub(crate) fn require_alias(engine: &Unicorn<Trace>, address: u64, size: u64) -> Result<()> {
+    super::kernel_pushlocks::require_mapping(engine, address, size)?;
     ensure!(
         !engine.get_data().apis.kernel.spin.overlaps(address, size),
         "MDL alias/descriptor overlaps an initialized spin word"
@@ -85,6 +88,7 @@ pub(crate) fn require_alias(engine: &Unicorn<Trace>, address: u64, size: u64) ->
     Ok(())
 }
 pub(crate) fn require_pool_release(engine: &Unicorn<Trace>, base: u64, size: u64) -> Result<()> {
+    super::kernel_pushlocks::require_release(engine, base, size)?;
     engine
         .get_data()
         .apis
@@ -94,6 +98,7 @@ pub(crate) fn require_pool_release(engine: &Unicorn<Trace>, base: u64, size: u64
     Ok(())
 }
 pub(crate) fn retired_pool(engine: &mut Unicorn<Trace>, base: u64, size: u64) -> Result<()> {
+    super::kernel_pushlocks::retire(engine, base, size)?;
     engine.get_data_mut().apis.kernel.spin.retire(base, size)?;
     Ok(())
 }
@@ -114,6 +119,7 @@ pub(crate) fn require_lower(engine: &Unicorn<Trace>, new: u8) -> Result<()> {
     Ok(())
 }
 pub(crate) fn require_exit(engine: &Unicorn<Trace>) -> Result<()> {
+    super::kernel_pushlocks::require_exit(engine)?;
     engine
         .get_data()
         .apis
@@ -137,6 +143,7 @@ fn checked_current_owner(engine: &Unicorn<Trace>, actual: u8) -> Result<()> {
     require_lower(engine, actual)
 }
 pub(crate) fn require_ready(engine: &mut Unicorn<Trace>) -> Result<()> {
+    super::kernel_pushlocks::ready(engine)?;
     engine.get_data().apis.kernel.spin.ready()?;
     if engine.get_data().apis.kernel_mode {
         let actual = super::kernel_sync::observe_irql(engine)?;
@@ -160,7 +167,7 @@ pub(crate) fn completion_error(engine: &Unicorn<Trace>) -> Option<String> {
         .err()
         .map(|e| e.to_string())
 }
-fn backing(engine: &Unicorn<Trace>, address: u64, width: u64) -> Result<Backing> {
+pub(super) fn backing(engine: &Unicorn<Trace>, address: u64, width: u64) -> Result<Backing> {
     ensure!(
         address != 0 && address % width == 0,
         "Kernel spin null or unaligned word"

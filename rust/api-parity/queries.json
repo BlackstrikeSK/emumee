@@ -1,0 +1,5178 @@
+[
+  {
+    "module": "advapi32",
+    "export": "AdjustTokenPrivileges"
+  },
+  {
+    "module": "advapi32",
+    "export": "AllocateAndInitializeSid"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditEnumerateCategories"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditEnumerateSubCategories"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditFree"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditLookupCategoryGuidFromCategoryId"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditLookupCategoryIdFromCategoryGuid"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditLookupCategoryNameA"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditLookupCategoryNameW"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditLookupSubCategoryNameA"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditLookupSubCategoryNameW"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditQuerySystemPolicy"
+  },
+  {
+    "module": "advapi32",
+    "export": "AuditSetSystemPolicy"
+  },
+  {
+    "module": "advapi32",
+    "export": "ChangeServiceConfig2"
+  },
+  {
+    "module": "advapi32",
+    "export": "ChangeServiceConfigA"
+  },
+  {
+    "module": "advapi32",
+    "export": "ChangeServiceConfigW"
+  },
+  {
+    "module": "advapi32",
+    "export": "CheckTokenMembership"
+  },
+  {
+    "module": "advapi32",
+    "export": "CloseServiceHandle"
+  },
+  {
+    "module": "advapi32",
+    "export": "ControlService"
+  },
+  {
+    "module": "advapi32",
+    "export": "CopySid"
+  },
+  {
+    "module": "advapi32",
+    "export": "CreateProcessAsUserA"
+  },
+  {
+    "module": "advapi32",
+    "export": "CreateProcessAsUserW"
+  },
+  {
+    "module": "advapi32",
+    "export": "CreateServiceA"
+  },
+  {
+    "module": "advapi32",
+    "export": "CreateServiceW"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptAcquireContextA"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptAcquireContextW"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptCreateHash"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptDecrypt"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptDeriveKey"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptDestroyHash"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptGenRandom"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptGetHashParam"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptHashData"
+  },
+  {
+    "module": "advapi32",
+    "export": "CryptReleaseContext"
+  },
+  {
+    "module": "advapi32",
+    "export": "DeleteService"
+  },
+  {
+    "module": "advapi32",
+    "export": "DuplicateTokenEx"
+  },
+  {
+    "module": "advapi32",
+    "export": "EnumServicesStatus"
+  },
+  {
+    "module": "advapi32",
+    "export": "EqualSid"
+  },
+  {
+    "module": "advapi32",
+    "export": "FreeSid"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetCurrentHwProfileA"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetCurrentHwProfileW"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetLengthSid"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetSidIdentifierAuthority"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetSidSubAuthority"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetSidSubAuthorityCount"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetTokenInformation"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetUserNameA"
+  },
+  {
+    "module": "advapi32",
+    "export": "GetUserNameW"
+  },
+  {
+    "module": "advapi32",
+    "export": "ImpersonateLoggedOnUser"
+  },
+  {
+    "module": "advapi32",
+    "export": "InitializeSid"
+  },
+  {
+    "module": "advapi32",
+    "export": "IsValidSid"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupAccountNameA"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupAccountNameW"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupAccountSidA"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupAccountSidW"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupPrivilegeDisplayNameA"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupPrivilegeDisplayNameW"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupPrivilegeNameA"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupPrivilegeNameW"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupPrivilegeValueA"
+  },
+  {
+    "module": "advapi32",
+    "export": "LookupPrivilegeValueW"
+  },
+  {
+    "module": "advapi32",
+    "export": "OpenProcessToken"
+  },
+  {
+    "module": "advapi32",
+    "export": "OpenSCManager"
+  },
+  {
+    "module": "advapi32",
+    "export": "OpenServiceA"
+  },
+  {
+    "module": "advapi32",
+    "export": "OpenServiceW"
+  },
+  {
+    "module": "advapi32",
+    "export": "OpenThreadToken"
+  },
+  {
+    "module": "advapi32",
+    "export": "QueryServiceConfig"
+  },
+  {
+    "module": "advapi32",
+    "export": "QueryServiceConfigA"
+  },
+  {
+    "module": "advapi32",
+    "export": "QueryServiceConfigW"
+  },
+  {
+    "module": "advapi32",
+    "export": "QueryServiceStatus"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegCloseKey"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegCreateKeyA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegCreateKeyExA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegCreateKeyExW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegCreateKeyW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegDeleteKeyA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegDeleteKeyW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegDeleteValueA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegDeleteValueW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegEnumKey"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegEnumKeyExA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegEnumKeyExW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegEnumValueA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegEnumValueW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegGetValueA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegGetValueW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegOpenKeyA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegOpenKeyExA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegOpenKeyExW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegOpenKeyW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegQueryInfoKey"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegQueryInfoKeyA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegQueryInfoKeyW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegQueryValueExA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegQueryValueExW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegSetValueExA"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegSetValueExW"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegisterServiceCtrlHandler"
+  },
+  {
+    "module": "advapi32",
+    "export": "RegisterServiceCtrlHandlerEx"
+  },
+  {
+    "module": "advapi32",
+    "export": "RevertToSelf"
+  },
+  {
+    "module": "advapi32",
+    "export": "SetServiceStatus"
+  },
+  {
+    "module": "advapi32",
+    "export": "SetTokenInformation"
+  },
+  {
+    "module": "advapi32",
+    "export": "StartService"
+  },
+  {
+    "module": "advapi32",
+    "export": "StartServiceA"
+  },
+  {
+    "module": "advapi32",
+    "export": "StartServiceCtrlDispatcherA"
+  },
+  {
+    "module": "advapi32",
+    "export": "StartServiceCtrlDispatcherW"
+  },
+  {
+    "module": "advapi32",
+    "export": "SystemFunction036"
+  },
+  {
+    "module": "advpack",
+    "export": "IsNTAdmin"
+  },
+  {
+    "module": "api-ms-win-core-apiquery-l1-1-0",
+    "export": "ApiSetQueryApiSetPresence"
+  },
+  {
+    "module": "api-ms-win-core-console-l1-1-0",
+    "export": "GetConsoleCP"
+  },
+  {
+    "module": "api-ms-win-core-console-l1-1-0",
+    "export": "GetConsoleMode"
+  },
+  {
+    "module": "api-ms-win-core-console-l1-1-0",
+    "export": "GetConsoleOutputCP"
+  },
+  {
+    "module": "api-ms-win-core-console-l1-1-0",
+    "export": "GetConsoleScreenBufferInfo"
+  },
+  {
+    "module": "api-ms-win-core-console-l1-1-0",
+    "export": "SetConsoleMode"
+  },
+  {
+    "module": "api-ms-win-core-console-l1-1-0",
+    "export": "WriteConsoleA"
+  },
+  {
+    "module": "api-ms-win-core-console-l1-1-0",
+    "export": "WriteConsoleW"
+  },
+  {
+    "module": "api-ms-win-core-console-l2-1-0",
+    "export": "GetConsoleCP"
+  },
+  {
+    "module": "api-ms-win-core-console-l2-1-0",
+    "export": "GetConsoleMode"
+  },
+  {
+    "module": "api-ms-win-core-console-l2-1-0",
+    "export": "GetConsoleOutputCP"
+  },
+  {
+    "module": "api-ms-win-core-console-l2-1-0",
+    "export": "GetConsoleScreenBufferInfo"
+  },
+  {
+    "module": "api-ms-win-core-console-l2-1-0",
+    "export": "SetConsoleMode"
+  },
+  {
+    "module": "api-ms-win-core-console-l2-1-0",
+    "export": "WriteConsoleA"
+  },
+  {
+    "module": "api-ms-win-core-console-l2-1-0",
+    "export": "WriteConsoleW"
+  },
+  {
+    "module": "api-ms-win-core-delayload-l1-1-1",
+    "export": "ResolveDelayLoadedAPI"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "CreateFileA"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "CreateFileW"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "FindClose"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "FindFirstFileA"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "FindFirstFileW"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "FindNextFileA"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "FindNextFileW"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "GetFileType"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "GetFullPathNameA"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "GetFullPathNameW"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "ReadFile"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-1-0",
+    "export": "WriteFile"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-2-0",
+    "export": "GetDiskFreeSpaceExA"
+  },
+  {
+    "module": "api-ms-win-core-file-l1-2-0",
+    "export": "GetDiskFreeSpaceExW"
+  },
+  {
+    "module": "api-ms-win-core-handle-l1-1-0",
+    "export": "CloseHandle"
+  },
+  {
+    "module": "api-ms-win-core-heap-l1-1-0",
+    "export": "HeapValidate"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "FindStringOrdinal"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "FreeLibrary"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "GetProcAddress"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "LoadLibraryA"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "LoadLibraryExA"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "LoadLibraryExW"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "LoadLibraryW"
+  },
+  {
+    "module": "api-ms-win-core-libraryloader-l1-2-0",
+    "export": "LoadStringW"
+  },
+  {
+    "module": "api-ms-win-core-localization-l1-2-0",
+    "export": "FormatMessageW"
+  },
+  {
+    "module": "api-ms-win-core-localization-l1-2-0",
+    "export": "GetThreadUILanguage"
+  },
+  {
+    "module": "api-ms-win-core-localization-l1-2-0",
+    "export": "GetUserDefaultUILanguage"
+  },
+  {
+    "module": "api-ms-win-core-localization-l1-2-0",
+    "export": "IsDBCSLeadByte"
+  },
+  {
+    "module": "api-ms-win-core-localization-l1-2-0",
+    "export": "SetThreadPreferredUILanguages"
+  },
+  {
+    "module": "api-ms-win-core-localization-l1-2-0",
+    "export": "SetThreadUILanguage"
+  },
+  {
+    "module": "api-ms-win-core-memory-l1-1-0",
+    "export": "CreateFileMappingA"
+  },
+  {
+    "module": "api-ms-win-core-memory-l1-1-0",
+    "export": "CreateFileMappingW"
+  },
+  {
+    "module": "api-ms-win-core-memory-l1-1-0",
+    "export": "FlushViewOfFile"
+  },
+  {
+    "module": "api-ms-win-core-memory-l1-1-0",
+    "export": "MapViewOfFile"
+  },
+  {
+    "module": "api-ms-win-core-memory-l1-1-0",
+    "export": "OpenFileMappingA"
+  },
+  {
+    "module": "api-ms-win-core-memory-l1-1-0",
+    "export": "OpenFileMappingW"
+  },
+  {
+    "module": "api-ms-win-core-memory-l1-1-0",
+    "export": "UnmapViewOfFile"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegCloseKey"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegCreateKeyA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegCreateKeyExA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegCreateKeyExW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegCreateKeyW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegDeleteKeyA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegDeleteKeyW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegEnumKeyExA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegEnumKeyExW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegEnumValueA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegEnumValueW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegGetValueA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegGetValueW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegOpenKeyA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegOpenKeyExA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegOpenKeyExW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegOpenKeyW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegQueryInfoKeyA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegQueryInfoKeyW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegQueryValueExA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegQueryValueExW"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegSetValueExA"
+  },
+  {
+    "module": "api-ms-win-core-registry-l1-1-0",
+    "export": "RegSetValueExW"
+  },
+  {
+    "module": "api-ms-win-core-string-l1-1-0",
+    "export": "CompareStringA"
+  },
+  {
+    "module": "api-ms-win-core-string-l1-1-0",
+    "export": "CompareStringW"
+  },
+  {
+    "module": "api-ms-win-core-string-l1-1-0",
+    "export": "WideCharToMultiByte"
+  },
+  {
+    "module": "api-ms-win-core-string-l2-1-0",
+    "export": "CharUpperW"
+  },
+  {
+    "module": "api-ms-win-core-sysinfo-l1-1-0",
+    "export": "GetComputerNameA"
+  },
+  {
+    "module": "api-ms-win-core-sysinfo-l1-1-0",
+    "export": "GetComputerNameExA"
+  },
+  {
+    "module": "api-ms-win-core-sysinfo-l1-1-0",
+    "export": "GetComputerNameExW"
+  },
+  {
+    "module": "api-ms-win-core-sysinfo-l1-1-0",
+    "export": "GetComputerNameW"
+  },
+  {
+    "module": "api-ms-win-core-timezone-l1-1-0",
+    "export": "GetDynamicTimeZoneInformation"
+  },
+  {
+    "module": "api-ms-win-core-timezone-l1-1-0",
+    "export": "GetTimeZoneInformation"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "__p___argc"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "__p___argv"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "__p___wargv"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "__stdio_common_vfprintf"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "__stdio_common_vswprintf"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_get_initial_narrow_environment"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_get_initial_wide_environment"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o___acrt_iob_func"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o___p___argc"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o___p___argv"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o___p___wargv"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o___stdio_common_vfprintf"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o___stdio_common_vswprintf"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__errno"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__fileno"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__get_initial_narrow_environment"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__get_initial_wide_environment"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__get_osfhandle"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__memicmp"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__setmode"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o__write"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o_exit"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_o_fflush"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "_wcslwr"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "wcschr"
+  },
+  {
+    "module": "api-ms-win-crt-private-l1-1-0",
+    "export": "wcsncmp"
+  },
+  {
+    "module": "api-ms-win-crt-string-l1-1-0",
+    "export": "_wcslwr"
+  },
+  {
+    "module": "api-ms-win-crt-string-l1-1-0",
+    "export": "wcsncmp"
+  },
+  {
+    "module": "bcrypt",
+    "export": "BCryptCloseAlgorithmProvider"
+  },
+  {
+    "module": "bcrypt",
+    "export": "BCryptDestroyKey"
+  },
+  {
+    "module": "bcrypt",
+    "export": "BCryptGetProperty"
+  },
+  {
+    "module": "bcrypt",
+    "export": "BCryptImportKeyPair"
+  },
+  {
+    "module": "bcrypt",
+    "export": "BCryptOpenAlgorithmProvider"
+  },
+  {
+    "module": "bcryptprimitives",
+    "export": "ProcessPrng"
+  },
+  {
+    "module": "com_api",
+    "export": "IUnknown.AddRef"
+  },
+  {
+    "module": "com_api",
+    "export": "IUnknown.QueryInterface"
+  },
+  {
+    "module": "com_api",
+    "export": "IUnknown.Release"
+  },
+  {
+    "module": "com_api",
+    "export": "IWbemLocator.ConnectServer"
+  },
+  {
+    "module": "com_api",
+    "export": "IWbemServices.ExecQuery"
+  },
+  {
+    "module": "comctl32",
+    "export": "InitCommonControls"
+  },
+  {
+    "module": "comctl32",
+    "export": "InitCommonControlsEx"
+  },
+  {
+    "module": "comctl32",
+    "export": "ordinal_17"
+  },
+  {
+    "module": "crypt32",
+    "export": "CryptStringToBinaryA"
+  },
+  {
+    "module": "crypt32",
+    "export": "CryptStringToBinaryW"
+  },
+  {
+    "module": "dnsapi",
+    "export": "DnsFree"
+  },
+  {
+    "module": "dnsapi",
+    "export": "DnsQuery_A"
+  },
+  {
+    "module": "dnsapi",
+    "export": "DnsQuery_UTF8"
+  },
+  {
+    "module": "dnsapi",
+    "export": "DnsQuery_W"
+  },
+  {
+    "module": "dnsapi",
+    "export": "DnsRecordListFree"
+  },
+  {
+    "module": "ext-ms-win-fsutilext-ulib-l1-1-0",
+    "export": "SetThreadUILanguageStub"
+  },
+  {
+    "module": "ext-ms-win-ntuser-chartranslation-l1-1-0",
+    "export": "CharToOemA"
+  },
+  {
+    "module": "gdi32",
+    "export": "BitBlt"
+  },
+  {
+    "module": "gdi32",
+    "export": "CreateBitmap"
+  },
+  {
+    "module": "gdi32",
+    "export": "CreateCompatibleBitmap"
+  },
+  {
+    "module": "gdi32",
+    "export": "CreateCompatibleDC"
+  },
+  {
+    "module": "gdi32",
+    "export": "CreateDCA"
+  },
+  {
+    "module": "gdi32",
+    "export": "CreateDIBSection"
+  },
+  {
+    "module": "gdi32",
+    "export": "CreateFontIndirectA"
+  },
+  {
+    "module": "gdi32",
+    "export": "DeleteDC"
+  },
+  {
+    "module": "gdi32",
+    "export": "DeleteObject"
+  },
+  {
+    "module": "gdi32",
+    "export": "GdiSetBatchLimit"
+  },
+  {
+    "module": "gdi32",
+    "export": "GetDIBits"
+  },
+  {
+    "module": "gdi32",
+    "export": "GetDeviceCaps"
+  },
+  {
+    "module": "gdi32",
+    "export": "GetMapMode"
+  },
+  {
+    "module": "gdi32",
+    "export": "GetObjectA"
+  },
+  {
+    "module": "gdi32",
+    "export": "GetStockObject"
+  },
+  {
+    "module": "gdi32",
+    "export": "GetTextCharacterExtra"
+  },
+  {
+    "module": "gdi32",
+    "export": "LineTo"
+  },
+  {
+    "module": "gdi32",
+    "export": "MaskBlt"
+  },
+  {
+    "module": "gdi32",
+    "export": "MoveToEx"
+  },
+  {
+    "module": "gdi32",
+    "export": "SelectObject"
+  },
+  {
+    "module": "gdi32",
+    "export": "StretchBlt"
+  },
+  {
+    "module": "gdi32",
+    "export": "WidenPath"
+  },
+  {
+    "module": "icmp",
+    "export": "IcmpCloseHandle"
+  },
+  {
+    "module": "icmp",
+    "export": "IcmpCreateFile"
+  },
+  {
+    "module": "icmp",
+    "export": "IcmpSendEcho"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "ConvertLengthToIpv4Mask"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetAdaptersAddresses"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetAdaptersInfo"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetExtendedTcpTable"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetIfTable"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetIpAddrTable"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetIpForwardTable"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetIpNetTable"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "GetNetworkParams"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "IcmpCloseHandle"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "IcmpCreateFile"
+  },
+  {
+    "module": "iphlpapi",
+    "export": "IcmpSendEcho"
+  },
+  {
+    "module": "kernel32",
+    "export": "AcquireSRWLockExclusive"
+  },
+  {
+    "module": "kernel32",
+    "export": "AcquireSRWLockShared"
+  },
+  {
+    "module": "kernel32",
+    "export": "AddAtomA"
+  },
+  {
+    "module": "kernel32",
+    "export": "AddAtomW"
+  },
+  {
+    "module": "kernel32",
+    "export": "AddVectoredContinueHandler"
+  },
+  {
+    "module": "kernel32",
+    "export": "AddVectoredExceptionHandler"
+  },
+  {
+    "module": "kernel32",
+    "export": "AllocConsole"
+  },
+  {
+    "module": "kernel32",
+    "export": "AreFileApisANSI"
+  },
+  {
+    "module": "kernel32",
+    "export": "CancelWaitableTimer"
+  },
+  {
+    "module": "kernel32",
+    "export": "CharUpperW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CheckRemoteDebuggerPresent"
+  },
+  {
+    "module": "kernel32",
+    "export": "CloseHandle"
+  },
+  {
+    "module": "kernel32",
+    "export": "CompareFileTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "CompareStringA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CompareStringW"
+  },
+  {
+    "module": "kernel32",
+    "export": "ConnectNamedPipe"
+  },
+  {
+    "module": "kernel32",
+    "export": "CopyFileA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CopyFileW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateDirectoryA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateDirectoryW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateEventA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateEventW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateFileA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateFileMappingA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateFileMappingW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateFileW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateIoCompletionPort"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateMutexA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateMutexExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateMutexExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateMutexW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateNamedPipeA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateNamedPipeW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreatePipe"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateProcessA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateProcessInternal"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateProcessInternalA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateProcessInternalW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateProcessW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateRemoteThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateSemaphoreW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateToolhelp32Snapshot"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateWaitableTimerA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateWaitableTimerExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateWaitableTimerExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "CreateWaitableTimerW"
+  },
+  {
+    "module": "kernel32",
+    "export": "DecodePointer"
+  },
+  {
+    "module": "kernel32",
+    "export": "DeleteAtom"
+  },
+  {
+    "module": "kernel32",
+    "export": "DeleteCriticalSection"
+  },
+  {
+    "module": "kernel32",
+    "export": "DeleteFileA"
+  },
+  {
+    "module": "kernel32",
+    "export": "DeleteFileW"
+  },
+  {
+    "module": "kernel32",
+    "export": "DeviceIoControl"
+  },
+  {
+    "module": "kernel32",
+    "export": "DisableThreadLibraryCalls"
+  },
+  {
+    "module": "kernel32",
+    "export": "DisconnectNamedPipe"
+  },
+  {
+    "module": "kernel32",
+    "export": "DuplicateHandle"
+  },
+  {
+    "module": "kernel32",
+    "export": "EncodePointer"
+  },
+  {
+    "module": "kernel32",
+    "export": "EnterCriticalSection"
+  },
+  {
+    "module": "kernel32",
+    "export": "EnumProcesses"
+  },
+  {
+    "module": "kernel32",
+    "export": "ExitProcess"
+  },
+  {
+    "module": "kernel32",
+    "export": "ExitThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "ExpandEnvironmentStringsA"
+  },
+  {
+    "module": "kernel32",
+    "export": "ExpandEnvironmentStringsW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FileTimeToSystemTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindAtomA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindAtomW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindClose"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindFirstFileA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindFirstFileEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindFirstFileW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindFirstVolumeA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindFirstVolumeW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindNextFileA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindNextFileW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindNextVolumeA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindNextVolumeW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindResourceA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindResourceExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindResourceExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindResourceW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindStringOrdinal"
+  },
+  {
+    "module": "kernel32",
+    "export": "FindVolumeClose"
+  },
+  {
+    "module": "kernel32",
+    "export": "FlsAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "FlsFree"
+  },
+  {
+    "module": "kernel32",
+    "export": "FlsGetValue"
+  },
+  {
+    "module": "kernel32",
+    "export": "FlsGetValue2"
+  },
+  {
+    "module": "kernel32",
+    "export": "FlsSetValue"
+  },
+  {
+    "module": "kernel32",
+    "export": "FlushFileBuffers"
+  },
+  {
+    "module": "kernel32",
+    "export": "FlushViewOfFile"
+  },
+  {
+    "module": "kernel32",
+    "export": "FormatMessageW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FreeConsole"
+  },
+  {
+    "module": "kernel32",
+    "export": "FreeEnvironmentStrings"
+  },
+  {
+    "module": "kernel32",
+    "export": "FreeEnvironmentStringsA"
+  },
+  {
+    "module": "kernel32",
+    "export": "FreeEnvironmentStringsW"
+  },
+  {
+    "module": "kernel32",
+    "export": "FreeLibrary"
+  },
+  {
+    "module": "kernel32",
+    "export": "FreeLibraryAndExitThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "FreeResource"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetACP"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetAtomNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetAtomNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetBinaryType"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCPInfo"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCommProperties"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCommTimeouts"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCommandLineA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCommandLineW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetComputerNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetComputerNameExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetComputerNameExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetComputerNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetConsoleCP"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetConsoleMode"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetConsoleOutputCP"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetConsoleScreenBufferInfo"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetConsoleTitleA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetConsoleTitleW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetConsoleWindow"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCurrentDirectoryA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCurrentDirectoryW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCurrentPackageId"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCurrentProcess"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCurrentProcessId"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCurrentThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetCurrentThreadId"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDateFormatA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDateFormatW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDiskFreeSpaceEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDiskFreeSpaceExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDiskFreeSpaceExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDriveTypeA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDriveTypeW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetDynamicTimeZoneInformation"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetEnvironmentStringsA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetEnvironmentStringsW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetEnvironmentVariableA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetEnvironmentVariableW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetErrorMode"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetExitCodeProcess"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetExitCodeThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileAttributesA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileAttributesExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileAttributesExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileAttributesW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileInformationByHandle"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileSize"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileSizeEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFileType"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFullPathNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetFullPathNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetHandleInformation"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetLastError"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetLocalTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetLocaleInfoA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetLocaleInfoW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetLogicalDrives"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetLongPathNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetLongPathNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetMailslotInfo"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleFileNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleFileNameExAA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleFileNameExAW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleFileNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleHandleA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleHandleEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleHandleExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleHandleExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetModuleHandleW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetNativeSystemInfo"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetOEMCP"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetPhysicallyInstalledSystemMemory"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetProcAddress"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetProcessAffinityMask"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetProcessHandleCount"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetProcessHeap"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetProcessVersion"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetProfileInt"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetShortPathNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetShortPathNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetStartupInfoA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetStartupInfoW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetStdHandle"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetStringTypeA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetStringTypeWA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetStringTypeWW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemDefaultLCID"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemDefaultLangID"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemDefaultUILanguage"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemDirectoryA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemDirectoryW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemFirmwareTable"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemInfo"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemTimeAsFileTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemTimePreciseAsFileTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetSystemTimes"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTempFileNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTempFileNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTempPathA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTempPathW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetThreadContext"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetThreadId"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetThreadLocale"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetThreadPriority"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetThreadTimes"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetThreadUILanguage"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTickCount"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTickCount64"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTimeFormatA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTimeFormatW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetTimeZoneInformation"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetUserDefaultLCID"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetUserDefaultLangID"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetUserDefaultUILanguage"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVersion"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVersionEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVersionExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVersionExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVolumeInformationA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVolumeInformationW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVolumeNameForVolumeMountPointA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVolumeNameForVolumeMountPointW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVolumePathNamesForVolumeNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetVolumePathNamesForVolumeNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "GetWindowsDirectory"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalAddAtomA"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalFlags"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalFree"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalHandle"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalLock"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalMemoryStatus"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalMemoryStatusEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalSize"
+  },
+  {
+    "module": "kernel32",
+    "export": "GlobalUnlock"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapCreate"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapDestroy"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapFree"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapReAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapSetInformation"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapSize"
+  },
+  {
+    "module": "kernel32",
+    "export": "HeapValidate"
+  },
+  {
+    "module": "kernel32",
+    "export": "InitOnceBeginInitialize"
+  },
+  {
+    "module": "kernel32",
+    "export": "InitializeConditionVariable"
+  },
+  {
+    "module": "kernel32",
+    "export": "InitializeCriticalSection"
+  },
+  {
+    "module": "kernel32",
+    "export": "InitializeCriticalSectionAndSpinCount"
+  },
+  {
+    "module": "kernel32",
+    "export": "InitializeCriticalSectionEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "InitializeSListHead"
+  },
+  {
+    "module": "kernel32",
+    "export": "InitializeSRWLock"
+  },
+  {
+    "module": "kernel32",
+    "export": "InterlockedCompareExchange"
+  },
+  {
+    "module": "kernel32",
+    "export": "InterlockedDecrement"
+  },
+  {
+    "module": "kernel32",
+    "export": "InterlockedExchange"
+  },
+  {
+    "module": "kernel32",
+    "export": "InterlockedExchangeAdd"
+  },
+  {
+    "module": "kernel32",
+    "export": "InterlockedIncrement"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsBadReadPtr"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsBadStringPtrA"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsBadStringPtrW"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsBadWritePtr"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsDBCSLeadByte"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsDebuggerPresent"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsProcessorFeaturePresent"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsValidCodePage"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsValidLocale"
+  },
+  {
+    "module": "kernel32",
+    "export": "IsWow64Process"
+  },
+  {
+    "module": "kernel32",
+    "export": "K32EnumProcessModules"
+  },
+  {
+    "module": "kernel32",
+    "export": "K32GetModuleBaseName"
+  },
+  {
+    "module": "kernel32",
+    "export": "K32GetModuleBaseNameA"
+  },
+  {
+    "module": "kernel32",
+    "export": "K32GetModuleBaseNameW"
+  },
+  {
+    "module": "kernel32",
+    "export": "K32GetModuleFileNameEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "K32GetModuleFileNameExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "K32GetModuleFileNameExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "LCMapStringA"
+  },
+  {
+    "module": "kernel32",
+    "export": "LCMapStringEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "LCMapStringW"
+  },
+  {
+    "module": "kernel32",
+    "export": "LeaveCriticalSection"
+  },
+  {
+    "module": "kernel32",
+    "export": "LoadLibraryA"
+  },
+  {
+    "module": "kernel32",
+    "export": "LoadLibraryExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "LoadLibraryExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "LoadLibraryW"
+  },
+  {
+    "module": "kernel32",
+    "export": "LoadResource"
+  },
+  {
+    "module": "kernel32",
+    "export": "LocalAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "LocalFree"
+  },
+  {
+    "module": "kernel32",
+    "export": "LocalLock"
+  },
+  {
+    "module": "kernel32",
+    "export": "LocalReAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "LockResource"
+  },
+  {
+    "module": "kernel32",
+    "export": "MapViewOfFile"
+  },
+  {
+    "module": "kernel32",
+    "export": "Module32First"
+  },
+  {
+    "module": "kernel32",
+    "export": "Module32FirstA"
+  },
+  {
+    "module": "kernel32",
+    "export": "Module32FirstW"
+  },
+  {
+    "module": "kernel32",
+    "export": "Module32Next"
+  },
+  {
+    "module": "kernel32",
+    "export": "Module32NextA"
+  },
+  {
+    "module": "kernel32",
+    "export": "Module32NextW"
+  },
+  {
+    "module": "kernel32",
+    "export": "MoveFileA"
+  },
+  {
+    "module": "kernel32",
+    "export": "MoveFileExA"
+  },
+  {
+    "module": "kernel32",
+    "export": "MoveFileExW"
+  },
+  {
+    "module": "kernel32",
+    "export": "MoveFileW"
+  },
+  {
+    "module": "kernel32",
+    "export": "MulDiv"
+  },
+  {
+    "module": "kernel32",
+    "export": "MultiByteToWideChar"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenEventA"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenEventW"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenFileMappingA"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenFileMappingW"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenMutexA"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenMutexW"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenProcess"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenWaitableTimerA"
+  },
+  {
+    "module": "kernel32",
+    "export": "OpenWaitableTimerW"
+  },
+  {
+    "module": "kernel32",
+    "export": "OutputDebugStringA"
+  },
+  {
+    "module": "kernel32",
+    "export": "OutputDebugStringW"
+  },
+  {
+    "module": "kernel32",
+    "export": "PeekNamedPipe"
+  },
+  {
+    "module": "kernel32",
+    "export": "Process32FirstA"
+  },
+  {
+    "module": "kernel32",
+    "export": "Process32FirstW"
+  },
+  {
+    "module": "kernel32",
+    "export": "Process32NextA"
+  },
+  {
+    "module": "kernel32",
+    "export": "Process32NextW"
+  },
+  {
+    "module": "kernel32",
+    "export": "ProcessIdToSessionId"
+  },
+  {
+    "module": "kernel32",
+    "export": "QueryDosDeviceA"
+  },
+  {
+    "module": "kernel32",
+    "export": "QueryDosDeviceW"
+  },
+  {
+    "module": "kernel32",
+    "export": "QueryPerformanceCounter"
+  },
+  {
+    "module": "kernel32",
+    "export": "QueryPerformanceFrequency"
+  },
+  {
+    "module": "kernel32",
+    "export": "QueueUserAPC"
+  },
+  {
+    "module": "kernel32",
+    "export": "RaiseException"
+  },
+  {
+    "module": "kernel32",
+    "export": "ReadFile"
+  },
+  {
+    "module": "kernel32",
+    "export": "ReadProcessMemory"
+  },
+  {
+    "module": "kernel32",
+    "export": "ReleaseMutex"
+  },
+  {
+    "module": "kernel32",
+    "export": "ReleaseSRWLockExclusive"
+  },
+  {
+    "module": "kernel32",
+    "export": "ReleaseSRWLockShared"
+  },
+  {
+    "module": "kernel32",
+    "export": "RemoveDirectoryA"
+  },
+  {
+    "module": "kernel32",
+    "export": "RemoveDirectoryW"
+  },
+  {
+    "module": "kernel32",
+    "export": "RemoveVectoredExceptionHandler"
+  },
+  {
+    "module": "kernel32",
+    "export": "ResetEvent"
+  },
+  {
+    "module": "kernel32",
+    "export": "ResumeThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "RtlCaptureContext"
+  },
+  {
+    "module": "kernel32",
+    "export": "RtlCopyMemory"
+  },
+  {
+    "module": "kernel32",
+    "export": "RtlLookupFunctionEntry"
+  },
+  {
+    "module": "kernel32",
+    "export": "RtlMoveMemory"
+  },
+  {
+    "module": "kernel32",
+    "export": "RtlUnwind"
+  },
+  {
+    "module": "kernel32",
+    "export": "RtlZeroMemory"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetConsoleCtrlHandler"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetConsoleHistoryInfo"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetConsoleMode"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetConsoleTitleA"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetConsoleTitleW"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetCurrentDirectoryA"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetCurrentDirectoryW"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetDefaultDllDirectories"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetDllDirectoryA"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetDllDirectoryW"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetEndOfFile"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetEnvironmentVariableA"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetEnvironmentVariableW"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetErrorMode"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetEvent"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetFileAttributesA"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetFileAttributesW"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetFileInformationByHandle"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetFilePointer"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetFilePointerEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetFileTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetHandleCount"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetHandleInformation"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetLastError"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetPriorityClass"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetProcessPriorityBoost"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadContext"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadDescription"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadErrorMode"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadLocale"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadPreferredUILanguages"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadPriority"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadStackGuarantee"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetThreadUILanguage"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetUnhandledExceptionFilter"
+  },
+  {
+    "module": "kernel32",
+    "export": "SetWaitableTimer"
+  },
+  {
+    "module": "kernel32",
+    "export": "SizeofResource"
+  },
+  {
+    "module": "kernel32",
+    "export": "Sleep"
+  },
+  {
+    "module": "kernel32",
+    "export": "SleepEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "SuspendThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "SwitchToThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "SystemTimeToFileTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "SystemTimeToTzSpecificLocalTime"
+  },
+  {
+    "module": "kernel32",
+    "export": "TerminateProcess"
+  },
+  {
+    "module": "kernel32",
+    "export": "TerminateThread"
+  },
+  {
+    "module": "kernel32",
+    "export": "Thread32First"
+  },
+  {
+    "module": "kernel32",
+    "export": "Thread32Next"
+  },
+  {
+    "module": "kernel32",
+    "export": "TlsAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "TlsFree"
+  },
+  {
+    "module": "kernel32",
+    "export": "TlsGetValue"
+  },
+  {
+    "module": "kernel32",
+    "export": "TlsSetValue"
+  },
+  {
+    "module": "kernel32",
+    "export": "UnhandledExceptionFilter"
+  },
+  {
+    "module": "kernel32",
+    "export": "UnmapViewOfFile"
+  },
+  {
+    "module": "kernel32",
+    "export": "VerSetConditionMask"
+  },
+  {
+    "module": "kernel32",
+    "export": "VerifyVersionInfo"
+  },
+  {
+    "module": "kernel32",
+    "export": "VerifyVersionInfoA"
+  },
+  {
+    "module": "kernel32",
+    "export": "VerifyVersionInfoW"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualAlloc"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualAllocEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualAllocExNuma"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualFree"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualFreeEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualProtect"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualProtectEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "VirtualQuery"
+  },
+  {
+    "module": "kernel32",
+    "export": "WTSGetActiveConsoleSessionId"
+  },
+  {
+    "module": "kernel32",
+    "export": "WaitForMultipleObjects"
+  },
+  {
+    "module": "kernel32",
+    "export": "WaitForSingleObject"
+  },
+  {
+    "module": "kernel32",
+    "export": "WaitForSingleObjectEx"
+  },
+  {
+    "module": "kernel32",
+    "export": "WakeAllConditionVariable"
+  },
+  {
+    "module": "kernel32",
+    "export": "WerGetFlags"
+  },
+  {
+    "module": "kernel32",
+    "export": "WerSetFlags"
+  },
+  {
+    "module": "kernel32",
+    "export": "WideCharToMultiByte"
+  },
+  {
+    "module": "kernel32",
+    "export": "WinExec"
+  },
+  {
+    "module": "kernel32",
+    "export": "Wow64DisableWow64FsRedirection"
+  },
+  {
+    "module": "kernel32",
+    "export": "Wow64RevertWow64FsRedirection"
+  },
+  {
+    "module": "kernel32",
+    "export": "WriteConsoleA"
+  },
+  {
+    "module": "kernel32",
+    "export": "WriteConsoleW"
+  },
+  {
+    "module": "kernel32",
+    "export": "WriteFile"
+  },
+  {
+    "module": "kernel32",
+    "export": "WriteProcessMemory"
+  },
+  {
+    "module": "kernel32",
+    "export": "_lclose"
+  },
+  {
+    "module": "kernel32",
+    "export": "_llseek"
+  },
+  {
+    "module": "kernel32",
+    "export": "_lopenA"
+  },
+  {
+    "module": "kernel32",
+    "export": "_lopenW"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcatA"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcatW"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcmpA"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcmpW"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcmpiA"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcmpiW"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcpyA"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcpyW"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcpynA"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrcpynW"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrlenA"
+  },
+  {
+    "module": "kernel32",
+    "export": "lstrlenW"
+  },
+  {
+    "module": "kernelbase",
+    "export": "AppPolicyGetProcessTerminationMethod"
+  },
+  {
+    "module": "kernelbase",
+    "export": "FormatMessageW"
+  },
+  {
+    "module": "kernelbase",
+    "export": "GetDiskFreeSpaceExA"
+  },
+  {
+    "module": "kernelbase",
+    "export": "GetDiskFreeSpaceExW"
+  },
+  {
+    "module": "kernelbase",
+    "export": "HeapValidate"
+  },
+  {
+    "module": "kernelbase",
+    "export": "WriteConsoleA"
+  },
+  {
+    "module": "kernelbase",
+    "export": "WriteConsoleW"
+  },
+  {
+    "module": "lz32",
+    "export": "LZSeek"
+  },
+  {
+    "module": "mpr",
+    "export": "WNetAddConnection2"
+  },
+  {
+    "module": "mpr",
+    "export": "WNetEnumResource"
+  },
+  {
+    "module": "mpr",
+    "export": "WNetGetConnectionA"
+  },
+  {
+    "module": "mpr",
+    "export": "WNetGetConnectionW"
+  },
+  {
+    "module": "mpr",
+    "export": "WNetOpenEnum"
+  },
+  {
+    "module": "mscoree",
+    "export": "CorExitProcess"
+  },
+  {
+    "module": "msi32",
+    "export": "#29"
+  },
+  {
+    "module": "msi32",
+    "export": "MsiDatabaseMergeA"
+  },
+  {
+    "module": "msimg32",
+    "export": "TransparentBlt"
+  },
+  {
+    "module": "msvcrt",
+    "export": "??2@YAPAXI@Z"
+  },
+  {
+    "module": "msvcrt",
+    "export": "??3@YAXPAX@Z"
+  },
+  {
+    "module": "msvcrt",
+    "export": "??3@YAXPEAX@Z"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_CxxThrowException"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_EH_prolog"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_XcptFilter"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__CxxFrameHandler"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__acrt_iob_func"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__current_exception"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__current_exception_context"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__dllonexit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__getmainargs"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__iob_func"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__p___argc"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__p___argv"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__p___initenv"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__p___wargv"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__p__acmdln"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__p__commode"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__p__fmode"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__set_app_type"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__setusermatherr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__stdio_common_vfprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__stdio_common_vsprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "__wgetmainargs"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_adjust_fdiv"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_beginthread"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_beginthreadex"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_c_exit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_cexit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_configthreadlocale"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_configure_narrow_argv"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_controlfp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_controlfp_s"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_crt_atexit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_errno"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_except_handler3"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_except_handler4_common"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_exit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_fileno"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_ftol"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_get_initial_narrow_environment"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_get_initial_wide_environment"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_get_osfhandle"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_initialize_narrow_environment"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_initialize_onexit_table"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_initterm"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_initterm_e"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_isatty"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_itoa"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_itow"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_lock"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_ltoa"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_memicmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_onexit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_register_onexit_function"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_register_thread_local_exe_atexit_callback"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_seh_filter_dll"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_seh_filter_exe"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_set_app_type"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_set_fmode"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_set_invalid_parameter_handler"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_set_new_mode"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_setmode"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_setusermatherr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_snprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_snwprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_snwprintf_s"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_strcmpi"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_strdate"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_stricmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_strlwr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_strnicmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_strtime"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_strupr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_ultow"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_unlock"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_vsnprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_vsnwprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_wcsicmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_wcslwr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_wcsnicmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_wcsupr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_wfopen"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_write"
+  },
+  {
+    "module": "msvcrt",
+    "export": "_wsetlocale"
+  },
+  {
+    "module": "msvcrt",
+    "export": "abs"
+  },
+  {
+    "module": "msvcrt",
+    "export": "atoi"
+  },
+  {
+    "module": "msvcrt",
+    "export": "calloc"
+  },
+  {
+    "module": "msvcrt",
+    "export": "clock"
+  },
+  {
+    "module": "msvcrt",
+    "export": "exit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fclose"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fflush"
+  },
+  {
+    "module": "msvcrt",
+    "export": "floor"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fopen"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fputc"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fread"
+  },
+  {
+    "module": "msvcrt",
+    "export": "free"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fseek"
+  },
+  {
+    "module": "msvcrt",
+    "export": "ftell"
+  },
+  {
+    "module": "msvcrt",
+    "export": "fwprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "isdigit"
+  },
+  {
+    "module": "msvcrt",
+    "export": "malloc"
+  },
+  {
+    "module": "msvcrt",
+    "export": "mbstowcs_s"
+  },
+  {
+    "module": "msvcrt",
+    "export": "mbtowc"
+  },
+  {
+    "module": "msvcrt",
+    "export": "memcmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "memcpy"
+  },
+  {
+    "module": "msvcrt",
+    "export": "memmove"
+  },
+  {
+    "module": "msvcrt",
+    "export": "memset"
+  },
+  {
+    "module": "msvcrt",
+    "export": "pow"
+  },
+  {
+    "module": "msvcrt",
+    "export": "printf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "puts"
+  },
+  {
+    "module": "msvcrt",
+    "export": "rand"
+  },
+  {
+    "module": "msvcrt",
+    "export": "setlocale"
+  },
+  {
+    "module": "msvcrt",
+    "export": "signal"
+  },
+  {
+    "module": "msvcrt",
+    "export": "sin"
+  },
+  {
+    "module": "msvcrt",
+    "export": "sprintf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "srand"
+  },
+  {
+    "module": "msvcrt",
+    "export": "sscanf"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strcat"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strchr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strcmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strcpy"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strcspn"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strlen"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strncat"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strncat_s"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strncmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strncpy"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strncpy_s"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strrchr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "strstr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "swprintf_s"
+  },
+  {
+    "module": "msvcrt",
+    "export": "system"
+  },
+  {
+    "module": "msvcrt",
+    "export": "terminate"
+  },
+  {
+    "module": "msvcrt",
+    "export": "time"
+  },
+  {
+    "module": "msvcrt",
+    "export": "tolower"
+  },
+  {
+    "module": "msvcrt",
+    "export": "toupper"
+  },
+  {
+    "module": "msvcrt",
+    "export": "towupper"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcscat"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcschr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcscmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcscpy"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcscspn"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcslen"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcsncmp"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcsncpy"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcsrchr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcsspn"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcsstr"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcstok"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wcstombs"
+  },
+  {
+    "module": "msvcrt",
+    "export": "wprintf"
+  },
+  {
+    "module": "msvfw32",
+    "export": "ICClose"
+  },
+  {
+    "module": "msvfw32",
+    "export": "ICOpen"
+  },
+  {
+    "module": "msvfw32",
+    "export": "ICSendMessage"
+  },
+  {
+    "module": "ncrypt",
+    "export": "NCryptDeleteKey"
+  },
+  {
+    "module": "ncrypt",
+    "export": "NCryptFreeObject"
+  },
+  {
+    "module": "ncrypt",
+    "export": "NCryptImportKey"
+  },
+  {
+    "module": "ncrypt",
+    "export": "NCryptOpenStorageProvider"
+  },
+  {
+    "module": "netapi32",
+    "export": "NetApiBufferFree"
+  },
+  {
+    "module": "netapi32",
+    "export": "NetGetJoinInformation"
+  },
+  {
+    "module": "netapi32",
+    "export": "NetUserAdd"
+  },
+  {
+    "module": "netapi32",
+    "export": "NetWkstaGetInfo"
+  },
+  {
+    "module": "netutils",
+    "export": "NetApiBufferFree"
+  },
+  {
+    "module": "ntdll",
+    "export": "LdrAccessResource"
+  },
+  {
+    "module": "ntdll",
+    "export": "LdrFindResource_U"
+  },
+  {
+    "module": "ntdll",
+    "export": "LdrGetProcedureAddress"
+  },
+  {
+    "module": "ntdll",
+    "export": "LdrLoadDll"
+  },
+  {
+    "module": "ntdll",
+    "export": "LdrUnloadDll"
+  },
+  {
+    "module": "ntdll",
+    "export": "NtQueryInformationProcess"
+  },
+  {
+    "module": "ntdll",
+    "export": "NtSetInformationProcess"
+  },
+  {
+    "module": "ntdll",
+    "export": "NtUnmapViewOfSection"
+  },
+  {
+    "module": "ntdll",
+    "export": "NtWaitForSingleObject"
+  },
+  {
+    "module": "ntdll",
+    "export": "NtYieldExecution"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlAddVectoredExceptionHandler"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlComputeCrc32"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlCopyMemory"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlDecodePointer"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlEncodePointer"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlFlushSecureMemoryCache"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlGetCurrentPeb"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlGetLastWin32Error"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlGetNtVersionNumbers"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlGetVersion"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlIpv4AddressToStringExW"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlIsTextUnicode"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlMoveMemory"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlNtStatusToDosError"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlOemToUnicodeN"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlQueryFeatureConfiguration"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlRemoveVectoredExceptionHandler"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlSizeHeap"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlVerifyVersionInfo"
+  },
+  {
+    "module": "ntdll",
+    "export": "RtlZeroMemory"
+  },
+  {
+    "module": "ntdll",
+    "export": "VerSetConditionMask"
+  },
+  {
+    "module": "ole32",
+    "export": "CoCreateGuid"
+  },
+  {
+    "module": "ole32",
+    "export": "CoCreateInstance"
+  },
+  {
+    "module": "ole32",
+    "export": "CoInitialize"
+  },
+  {
+    "module": "ole32",
+    "export": "CoInitializeEx"
+  },
+  {
+    "module": "ole32",
+    "export": "CoInitializeSecurity"
+  },
+  {
+    "module": "ole32",
+    "export": "CoSetProxyBlanket"
+  },
+  {
+    "module": "ole32",
+    "export": "CoUninitialize"
+  },
+  {
+    "module": "ole32",
+    "export": "OleInitialize"
+  },
+  {
+    "module": "ole32",
+    "export": "StringFromCLSID"
+  },
+  {
+    "module": "oleaut32",
+    "export": "#2"
+  },
+  {
+    "module": "oleaut32",
+    "export": "#4"
+  },
+  {
+    "module": "oleaut32",
+    "export": "#6"
+  },
+  {
+    "module": "oleaut32",
+    "export": "#8"
+  },
+  {
+    "module": "oleaut32",
+    "export": "SysAllocString"
+  },
+  {
+    "module": "oleaut32",
+    "export": "SysAllocStringLen"
+  },
+  {
+    "module": "oleaut32",
+    "export": "SysFreeString"
+  },
+  {
+    "module": "oleaut32",
+    "export": "VariantInit"
+  },
+  {
+    "module": "psapi",
+    "export": "EnumProcessModules"
+  },
+  {
+    "module": "psapi",
+    "export": "EnumProcesses"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleBaseName"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleBaseNameA"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleBaseNameAA"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleBaseNameAW"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleBaseNameW"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleBaseNameWA"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleBaseNameWW"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleFileNameEx"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleFileNameExA"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleFileNameExAA"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleFileNameExAW"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleFileNameExW"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleFileNameExWA"
+  },
+  {
+    "module": "psapi",
+    "export": "GetModuleFileNameExWW"
+  },
+  {
+    "module": "rpcrt4",
+    "export": "UuidCreate"
+  },
+  {
+    "module": "rpcrt4",
+    "export": "UuidToStringA"
+  },
+  {
+    "module": "secur32",
+    "export": "EncryptMessage"
+  },
+  {
+    "module": "secur32",
+    "export": "GetUserNameExA"
+  },
+  {
+    "module": "secur32",
+    "export": "GetUserNameExW"
+  },
+  {
+    "module": "secur32",
+    "export": "LsaCallAuthenticationPackage"
+  },
+  {
+    "module": "secur32",
+    "export": "LsaConnectUntrusted"
+  },
+  {
+    "module": "secur32",
+    "export": "LsaDeregisterLogonProcess"
+  },
+  {
+    "module": "secur32",
+    "export": "LsaFreeReturnBuffer"
+  },
+  {
+    "module": "secur32",
+    "export": "LsaLookupAuthenticationPackage"
+  },
+  {
+    "module": "sfc",
+    "export": "#2"
+  },
+  {
+    "module": "sfc",
+    "export": "SfcIsFileProtected"
+  },
+  {
+    "module": "sfc",
+    "export": "SfcTerminateWatcherThread"
+  },
+  {
+    "module": "shell32",
+    "export": "#680"
+  },
+  {
+    "module": "shell32",
+    "export": "CommandLineToArgvA"
+  },
+  {
+    "module": "shell32",
+    "export": "CommandLineToArgvW"
+  },
+  {
+    "module": "shell32",
+    "export": "ExtractIcon"
+  },
+  {
+    "module": "shell32",
+    "export": "IsUserAnAdmin"
+  },
+  {
+    "module": "shell32",
+    "export": "SHChangeNotify"
+  },
+  {
+    "module": "shell32",
+    "export": "SHCreateDirectoryExA"
+  },
+  {
+    "module": "shell32",
+    "export": "SHCreateDirectoryExW"
+  },
+  {
+    "module": "shell32",
+    "export": "SHGetFolderPathA"
+  },
+  {
+    "module": "shell32",
+    "export": "SHGetFolderPathW"
+  },
+  {
+    "module": "shell32",
+    "export": "SHGetMalloc"
+  },
+  {
+    "module": "shell32",
+    "export": "ShellExecuteA"
+  },
+  {
+    "module": "shell32",
+    "export": "ShellExecuteEx"
+  },
+  {
+    "module": "shell32",
+    "export": "ShellExecuteW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathAddBackslashA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathAddBackslashW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathAppendA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathAppendW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathCanonicalize"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathFindExtensionA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathFindExtensionW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathFindFileNameA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathFindFileNameW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathIsRelativeA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathIsRelativeW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathRemoveExtensionA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathRemoveExtensionW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathRemoveFileSpecA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathRemoveFileSpecW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathRenameExtensionA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathRenameExtensionW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathStripPathA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "PathStripPathW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "StrCmpIA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "StrCmpIW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "StrStrA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "StrStrIA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "StrStrIW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "StrStrW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "StrTrimW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "wnsprintfA"
+  },
+  {
+    "module": "shlwapi",
+    "export": "wnsprintfW"
+  },
+  {
+    "module": "shlwapi",
+    "export": "wvnsprintfA"
+  },
+  {
+    "module": "sspicli",
+    "export": "LsaCallAuthenticationPackage"
+  },
+  {
+    "module": "sspicli",
+    "export": "LsaConnectUntrusted"
+  },
+  {
+    "module": "sspicli",
+    "export": "LsaDeregisterLogonProcess"
+  },
+  {
+    "module": "sspicli",
+    "export": "LsaFreeReturnBuffer"
+  },
+  {
+    "module": "sspicli",
+    "export": "LsaLookupAuthenticationPackage"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "__acrt_iob_func"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "__p___argc"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "__p___argv"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "__p___wargv"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "__stdio_common_vfprintf"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "__stdio_common_vswprintf"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_errno"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_get_initial_narrow_environment"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_get_initial_wide_environment"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_o___p___argc"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_o___p___argv"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_o___p___wargv"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_o___stdio_common_vfprintf"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_o___stdio_common_vswprintf"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_o__get_initial_narrow_environment"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_o__get_initial_wide_environment"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "_wcslwr"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "wcschr"
+  },
+  {
+    "module": "ucrtbase",
+    "export": "wcsncmp"
+  },
+  {
+    "module": "urlmon",
+    "export": "URLDownloadToCacheFileA"
+  },
+  {
+    "module": "urlmon",
+    "export": "URLDownloadToCacheFileW"
+  },
+  {
+    "module": "urlmon",
+    "export": "URLDownloadToFileA"
+  },
+  {
+    "module": "urlmon",
+    "export": "URLDownloadToFileW"
+  },
+  {
+    "module": "user32",
+    "export": "BeginPaint"
+  },
+  {
+    "module": "user32",
+    "export": "CallNextHookEx"
+  },
+  {
+    "module": "user32",
+    "export": "ChangeWindowMessageFilter"
+  },
+  {
+    "module": "user32",
+    "export": "CharLowerA"
+  },
+  {
+    "module": "user32",
+    "export": "CharLowerBuffA"
+  },
+  {
+    "module": "user32",
+    "export": "CharLowerBuffW"
+  },
+  {
+    "module": "user32",
+    "export": "CharLowerW"
+  },
+  {
+    "module": "user32",
+    "export": "CharNextA"
+  },
+  {
+    "module": "user32",
+    "export": "CharNextW"
+  },
+  {
+    "module": "user32",
+    "export": "CharPrevA"
+  },
+  {
+    "module": "user32",
+    "export": "CharPrevW"
+  },
+  {
+    "module": "user32",
+    "export": "CharToOemA"
+  },
+  {
+    "module": "user32",
+    "export": "CharUpperA"
+  },
+  {
+    "module": "user32",
+    "export": "CharUpperBuffA"
+  },
+  {
+    "module": "user32",
+    "export": "CharUpperBuffW"
+  },
+  {
+    "module": "user32",
+    "export": "CharUpperW"
+  },
+  {
+    "module": "user32",
+    "export": "CloseDesktop"
+  },
+  {
+    "module": "user32",
+    "export": "CloseWindowStation"
+  },
+  {
+    "module": "user32",
+    "export": "CreateDialogIndirectParam"
+  },
+  {
+    "module": "user32",
+    "export": "CreateWindowExA"
+  },
+  {
+    "module": "user32",
+    "export": "CreateWindowExW"
+  },
+  {
+    "module": "user32",
+    "export": "CreateWindowStation"
+  },
+  {
+    "module": "user32",
+    "export": "DefWindowProc"
+  },
+  {
+    "module": "user32",
+    "export": "DestroyWindow"
+  },
+  {
+    "module": "user32",
+    "export": "DialogBoxParamA"
+  },
+  {
+    "module": "user32",
+    "export": "DialogBoxParamW"
+  },
+  {
+    "module": "user32",
+    "export": "DispatchMessage"
+  },
+  {
+    "module": "user32",
+    "export": "EnableWindow"
+  },
+  {
+    "module": "user32",
+    "export": "EndPaint"
+  },
+  {
+    "module": "user32",
+    "export": "EnumDisplayMonitors"
+  },
+  {
+    "module": "user32",
+    "export": "EnumWindows"
+  },
+  {
+    "module": "user32",
+    "export": "FindWindowA"
+  },
+  {
+    "module": "user32",
+    "export": "FindWindowW"
+  },
+  {
+    "module": "user32",
+    "export": "FlashWindow"
+  },
+  {
+    "module": "user32",
+    "export": "GetActiveWindow"
+  },
+  {
+    "module": "user32",
+    "export": "GetAltTabInfo"
+  },
+  {
+    "module": "user32",
+    "export": "GetAsyncKeyState"
+  },
+  {
+    "module": "user32",
+    "export": "GetCaretBlinkTime"
+  },
+  {
+    "module": "user32",
+    "export": "GetCaretPos"
+  },
+  {
+    "module": "user32",
+    "export": "GetClientRect"
+  },
+  {
+    "module": "user32",
+    "export": "GetClipboardOwner"
+  },
+  {
+    "module": "user32",
+    "export": "GetClipboardSequenceNumber"
+  },
+  {
+    "module": "user32",
+    "export": "GetClipboardViewer"
+  },
+  {
+    "module": "user32",
+    "export": "GetCursor"
+  },
+  {
+    "module": "user32",
+    "export": "GetCursorPos"
+  },
+  {
+    "module": "user32",
+    "export": "GetDC"
+  },
+  {
+    "module": "user32",
+    "export": "GetDesktopWindow"
+  },
+  {
+    "module": "user32",
+    "export": "GetDlgCtrlID"
+  },
+  {
+    "module": "user32",
+    "export": "GetDoubleClickTime"
+  },
+  {
+    "module": "user32",
+    "export": "GetFocus"
+  },
+  {
+    "module": "user32",
+    "export": "GetForegroundWindow"
+  },
+  {
+    "module": "user32",
+    "export": "GetKBCodePage"
+  },
+  {
+    "module": "user32",
+    "export": "GetKeyboardLayout"
+  },
+  {
+    "module": "user32",
+    "export": "GetKeyboardLayoutList"
+  },
+  {
+    "module": "user32",
+    "export": "GetKeyboardType"
+  },
+  {
+    "module": "user32",
+    "export": "GetLastActivePopup"
+  },
+  {
+    "module": "user32",
+    "export": "GetMenuCheckMarkDimensions"
+  },
+  {
+    "module": "user32",
+    "export": "GetMenuInfo"
+  },
+  {
+    "module": "user32",
+    "export": "GetMessage"
+  },
+  {
+    "module": "user32",
+    "export": "GetMonitorInfo"
+  },
+  {
+    "module": "user32",
+    "export": "GetNextDlgTabItem"
+  },
+  {
+    "module": "user32",
+    "export": "GetOpenClipboardWindow"
+  },
+  {
+    "module": "user32",
+    "export": "GetParent"
+  },
+  {
+    "module": "user32",
+    "export": "GetProcessWindowStation"
+  },
+  {
+    "module": "user32",
+    "export": "GetRawInputDeviceList"
+  },
+  {
+    "module": "user32",
+    "export": "GetSysColor"
+  },
+  {
+    "module": "user32",
+    "export": "GetSysColorBrush"
+  },
+  {
+    "module": "user32",
+    "export": "GetSystemMetrics"
+  },
+  {
+    "module": "user32",
+    "export": "GetThreadDesktop"
+  },
+  {
+    "module": "user32",
+    "export": "GetUpdateRect"
+  },
+  {
+    "module": "user32",
+    "export": "GetUpdateRgn"
+  },
+  {
+    "module": "user32",
+    "export": "GetUserObjectInformation"
+  },
+  {
+    "module": "user32",
+    "export": "GetWindowLong"
+  },
+  {
+    "module": "user32",
+    "export": "GetWindowTextA"
+  },
+  {
+    "module": "user32",
+    "export": "GetWindowTextW"
+  },
+  {
+    "module": "user32",
+    "export": "IsClipboardFormatAvailable"
+  },
+  {
+    "module": "user32",
+    "export": "IsWindow"
+  },
+  {
+    "module": "user32",
+    "export": "IsWindowVisible"
+  },
+  {
+    "module": "user32",
+    "export": "KillTimer"
+  },
+  {
+    "module": "user32",
+    "export": "LoadAccelerators"
+  },
+  {
+    "module": "user32",
+    "export": "LoadBitmap"
+  },
+  {
+    "module": "user32",
+    "export": "LoadCursor"
+  },
+  {
+    "module": "user32",
+    "export": "LoadIcon"
+  },
+  {
+    "module": "user32",
+    "export": "LoadStringA"
+  },
+  {
+    "module": "user32",
+    "export": "LoadStringW"
+  },
+  {
+    "module": "user32",
+    "export": "LookupIconIdFromDirectory"
+  },
+  {
+    "module": "user32",
+    "export": "MessageBoxA"
+  },
+  {
+    "module": "user32",
+    "export": "MessageBoxEx"
+  },
+  {
+    "module": "user32",
+    "export": "MessageBoxW"
+  },
+  {
+    "module": "user32",
+    "export": "MsgWaitForMultipleObjects"
+  },
+  {
+    "module": "user32",
+    "export": "OemToCharA"
+  },
+  {
+    "module": "user32",
+    "export": "OpenDesktopA"
+  },
+  {
+    "module": "user32",
+    "export": "OpenDesktopW"
+  },
+  {
+    "module": "user32",
+    "export": "OpenWindowStation"
+  },
+  {
+    "module": "user32",
+    "export": "PaintDesktop"
+  },
+  {
+    "module": "user32",
+    "export": "PeekMessage"
+  },
+  {
+    "module": "user32",
+    "export": "PostMessage"
+  },
+  {
+    "module": "user32",
+    "export": "PostQuitMessage"
+  },
+  {
+    "module": "user32",
+    "export": "RegisterClassExA"
+  },
+  {
+    "module": "user32",
+    "export": "RegisterClassExW"
+  },
+  {
+    "module": "user32",
+    "export": "RegisterClipboardFormatA"
+  },
+  {
+    "module": "user32",
+    "export": "RegisterWindowMessageA"
+  },
+  {
+    "module": "user32",
+    "export": "RegisterWindowMessageW"
+  },
+  {
+    "module": "user32",
+    "export": "ReleaseDC"
+  },
+  {
+    "module": "user32",
+    "export": "SendMessage"
+  },
+  {
+    "module": "user32",
+    "export": "SetCursorPos"
+  },
+  {
+    "module": "user32",
+    "export": "SetLayeredWindowAttributes"
+  },
+  {
+    "module": "user32",
+    "export": "SetProcessWindowStation"
+  },
+  {
+    "module": "user32",
+    "export": "SetThreadDesktop"
+  },
+  {
+    "module": "user32",
+    "export": "SetTimer"
+  },
+  {
+    "module": "user32",
+    "export": "SetWindowLong"
+  },
+  {
+    "module": "user32",
+    "export": "SetWindowsHookEx"
+  },
+  {
+    "module": "user32",
+    "export": "ShowWindow"
+  },
+  {
+    "module": "user32",
+    "export": "SystemParametersInfoA"
+  },
+  {
+    "module": "user32",
+    "export": "TranslateMessage"
+  },
+  {
+    "module": "user32",
+    "export": "UnhookWindowsHookEx"
+  },
+  {
+    "module": "user32",
+    "export": "UnregisterClass"
+  },
+  {
+    "module": "user32",
+    "export": "UpdateWindow"
+  },
+  {
+    "module": "user32",
+    "export": "wsprintfA"
+  },
+  {
+    "module": "user32",
+    "export": "wsprintfW"
+  },
+  {
+    "module": "user32",
+    "export": "wvsprintfA"
+  },
+  {
+    "module": "user32",
+    "export": "wvsprintfW"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoA"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoExA"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoExW"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoSizeA"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoSizeExA"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoSizeExW"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoSizeW"
+  },
+  {
+    "module": "version",
+    "export": "GetFileVersionInfoW"
+  },
+  {
+    "module": "version",
+    "export": "VerQueryValueA"
+  },
+  {
+    "module": "version",
+    "export": "VerQueryValueW"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpAddRequestHeaders"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpCloseHandle"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpConnect"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpCrackUrl"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpGetIEProxyConfigForCurrentUser"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpGetProxyForUrl"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpOpen"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpOpenRequest"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpQueryDataAvailable"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpQueryHeaders"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpReadData"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpReceiveResponse"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpSendRequest"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpSetOption"
+  },
+  {
+    "module": "winhttp",
+    "export": "WinHttpWriteData"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpEndRequestA"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpEndRequestW"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpOpenRequestA"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpOpenRequestW"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpQueryInfoA"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpQueryInfoW"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpSendRequest"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpSendRequestA"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpSendRequestExA"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpSendRequestExW"
+  },
+  {
+    "module": "wininet",
+    "export": "HttpSendRequestW"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetCloseHandle"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetConnectA"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetConnectW"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetCrackUrlA"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetCrackUrlW"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetErrorDlg"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetGetConnectedState"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetOpenA"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetOpenUrlA"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetOpenUrlW"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetOpenW"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetQueryDataAvailable"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetQueryOption"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetReadFile"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetSetOption"
+  },
+  {
+    "module": "wininet",
+    "export": "InternetWriteFile"
+  },
+  {
+    "module": "winmm",
+    "export": "timeBeginPeriod"
+  },
+  {
+    "module": "winmm",
+    "export": "timeEndPeriod"
+  },
+  {
+    "module": "winmm",
+    "export": "timeGetTime"
+  },
+  {
+    "module": "wkscli",
+    "export": "NetGetJoinInformation"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#1"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#10"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#11"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#112"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#115"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#116"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#12"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#13"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#14"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#15"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#151"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#16"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#177"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#178"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#18"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#180"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#181"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#19"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#2"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#21"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#22"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#23"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#3"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#4"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#52"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#57"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#7"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#8"
+  },
+  {
+    "module": "ws2_32",
+    "export": "#9"
+  },
+  {
+    "module": "ws2_32",
+    "export": "GetHostNameW"
+  },
+  {
+    "module": "ws2_32",
+    "export": "InetNtopW"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSACleanup"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSAConnect"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSAIoctl"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSASetLastError"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSASocket"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSASocketA"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSASocketW"
+  },
+  {
+    "module": "ws2_32",
+    "export": "WSAStartup"
+  },
+  {
+    "module": "ws2_32",
+    "export": "__WSAFDIsSet"
+  },
+  {
+    "module": "ws2_32",
+    "export": "accept"
+  },
+  {
+    "module": "ws2_32",
+    "export": "bind"
+  },
+  {
+    "module": "ws2_32",
+    "export": "closesocket"
+  },
+  {
+    "module": "ws2_32",
+    "export": "connect"
+  },
+  {
+    "module": "ws2_32",
+    "export": "freeaddrinfo"
+  },
+  {
+    "module": "ws2_32",
+    "export": "getaddrinfo"
+  },
+  {
+    "module": "ws2_32",
+    "export": "gethostbyname"
+  },
+  {
+    "module": "ws2_32",
+    "export": "gethostname"
+  },
+  {
+    "module": "ws2_32",
+    "export": "getsockopt"
+  },
+  {
+    "module": "ws2_32",
+    "export": "htonl"
+  },
+  {
+    "module": "ws2_32",
+    "export": "htons"
+  },
+  {
+    "module": "ws2_32",
+    "export": "inet_addr"
+  },
+  {
+    "module": "ws2_32",
+    "export": "inet_ntoa"
+  },
+  {
+    "module": "ws2_32",
+    "export": "inet_ntop"
+  },
+  {
+    "module": "ws2_32",
+    "export": "inet_pton"
+  },
+  {
+    "module": "ws2_32",
+    "export": "ioctlsocket"
+  },
+  {
+    "module": "ws2_32",
+    "export": "listen"
+  },
+  {
+    "module": "ws2_32",
+    "export": "ntohl"
+  },
+  {
+    "module": "ws2_32",
+    "export": "ntohs"
+  },
+  {
+    "module": "ws2_32",
+    "export": "recv"
+  },
+  {
+    "module": "ws2_32",
+    "export": "select"
+  },
+  {
+    "module": "ws2_32",
+    "export": "send"
+  },
+  {
+    "module": "ws2_32",
+    "export": "setsockopt"
+  },
+  {
+    "module": "ws2_32",
+    "export": "shutdown"
+  },
+  {
+    "module": "ws2_32",
+    "export": "socket"
+  },
+  {
+    "module": "wtsapi32",
+    "export": "WTSEnumerateSessionsA"
+  },
+  {
+    "module": "wtsapi32",
+    "export": "WTSEnumerateSessionsW"
+  },
+  {
+    "module": "wtsapi32",
+    "export": "WTSFreeMemory"
+  }
+]

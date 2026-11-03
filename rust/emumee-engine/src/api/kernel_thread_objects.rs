@@ -1,11 +1,14 @@
 //! Actual scheduler thread identities and references. Only the documented
-//! Type/Size/Signal bytes are readable; mirrors are bounded privileged effects.
+//! Type/Size/Signal bytes and explicitly profiled fields are readable; mirrors
+//! are bounded privileged effects. Other private bytes remain inaccessible.
 use super::*;
 use emumee_core::{
     kernel_objects::{Kind, Objects, Operation},
     kernel_thread_objects::{Effect, Lifetimes, Plan, PrivateAccess},
 };
 use std::cell::{Cell, RefCell};
+mod fields;
+pub(crate) use fields::sync_critical;
 #[derive(Default)]
 pub(crate) struct State {
     model: RefCell<Option<Lifetimes>>,
@@ -15,6 +18,7 @@ pub(crate) struct State {
     read_guard_installed: bool,
     native_failure: bool,
     last_effect: Option<NativeEffect>,
+    critical_mirrors: BTreeMap<u64, fields::CriticalMirror>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct NativeEffect {
@@ -32,6 +36,11 @@ pub struct HandleEvidence {
 }
 #[derive(Debug, Serialize)]
 pub struct Report {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_process_field: Option<emumee_core::kernel_thread_objects::SystemProcessField>,
+    pub stack_fields: Vec<emumee_core::kernel_thread_objects::StackFields>,
+    pub thread_fields: Vec<fields::FieldEvidence>,
+    pub quiescent_parked_fields: Vec<emumee_core::kernel_thread_objects::ParkedPairFields>,
     pub threads: Vec<emumee_core::kernel_thread_objects::Lifetime>,
     pub handles: Vec<HandleEvidence>,
     pub private_accesses: Vec<PrivateAccess>,
@@ -45,6 +54,36 @@ pub struct Report {
 pub(crate) fn report(engine: &Unicorn<Trace>) -> Report {
     let state = &engine.get_data().apis.thread_objects;
     Report {
+        thread_fields: fields::report(engine),
+        quiescent_parked_fields: fields::parked_report(engine),
+        stack_fields: state
+            .model
+            .borrow()
+            .as_ref()
+            .map(|model| {
+                engine
+                    .get_data()
+                    .apis
+                    .objects
+                    .model
+                    .as_ref()
+                    .map(|objects| {
+                        model
+                            .entries
+                            .keys()
+                            .filter_map(|address| {
+                                model.stack_fields(objects, *address).ok().flatten()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default(),
+        system_process_field: state
+            .model
+            .borrow()
+            .as_ref()
+            .and_then(|m| m.system_process_field()),
         threads: state
             .model
             .borrow()
@@ -58,7 +97,7 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Report {
         read_guard_installed: state.read_guard_installed,
         native_effect_failure: state.native_failure,
         last_native_effect: state.last_effect.clone(),
-        scope: "Actual scheduler thread slots/handles, System owner4, execution/handle/API lifetime anchors and persistent termination signals. Initial caller remains borrowed across DriverEntry return. Eight Type/Size/Signal bytes readable; private tails stop. KernelMode handle desired access follows legacy trusted-kernel behavior; UserMode/foreign process/file/security profiles remain unsupported.",
+        scope: "Actual scheduler thread slots/handles, System owner4, execution/handle/API lifetime anchors and persistent termination signals. Initial caller remains borrowed across DriverEntry return. Eight Type/Size/Signal bytes readable; configured x64 build26200 exposes ApcState.Process at0xb8 for every modeled thread and StackLimit/StackBase at0x30/0x38 for owned ordinary thread stacks. Pinned fields also expose KernelMode byte0x232, owned CLIENT_ID at0x508 and a read-only KernelApcDisable SHORT at0x1e4 synchronized with authoritative critical-region depth. No CombinedApcDisable DWORD, SpecialApcDisable, native inline counter mutation or APC delivery. Parked IPI callback stacks do not imply ordinary thread stack fields. Unknown private bytes, writes, crossing reads and retired bodies stop. No EPROCESS body, process attach or foreign process ownership is synthesized. KernelMode handle desired access follows legacy trusted-kernel behavior; UserMode/foreign process/file/security profiles remain unsupported.",
     }
 }
 pub(crate) fn read_guard_installed(engine: &Unicorn<Trace>) -> bool {
@@ -106,7 +145,20 @@ fn denial(
 ) -> Result<Option<PrivateAccess>> {
     let state = engine.get_data().apis.thread_objects.model.borrow();
     match state.as_ref() {
-        Some(model) => Ok(model.private_access(address, size, access)?),
+        Some(model) => {
+            let denied = model.private_access(address, size, access)?;
+            if denied.is_none()
+                && access == "read"
+                && let Some(field) = model.parked_pair_for_read(address, size)
+            {
+                ensure!(
+                    uc(engine.mem_read_as_vec(field.thread + u64::from(field.offset), 8))?
+                        == field.bytes(),
+                    "Quiescent parked field mirror diverged; refusing repair"
+                );
+            }
+            Ok(denied)
+        }
         None => Ok(None),
     }
 }
@@ -168,12 +220,10 @@ fn install_read_guard(engine: &mut Unicorn<Trace>) -> Result<()> {
                     });
                     let _ = engine.emu_stop();
                 }
-                Err(_) => {
-                    engine
-                        .get_data_mut()
-                        .apis
-                        .fault
-                        .get_or_insert_with(|| "Kernel thread read range overflow".into());
+                Err(error) => {
+                    engine.get_data_mut().apis.fault.get_or_insert_with(|| {
+                        format!("Kernel thread read validation failed: {error}")
+                    });
                     let _ = engine.emu_stop();
                 }
             }
@@ -243,6 +293,36 @@ fn apply(engine: &mut Unicorn<Trace>, plan: Plan) -> Result<()> {
         match *effect {
             Effect::Initialize { address } => {
                 mirror_header(engine, &plan, address, false)?;
+                if let Some(field) = plan.lifetimes.system_process_field() {
+                    ensure!(
+                        field.process == plan.objects.system_process,
+                        "Thread System process projection diverged from owned Process"
+                    );
+                    let at = address + u64::from(field.offset);
+                    super::reference_mapping::require_api_access(engine, at, 8, P::WRITE)?;
+                    uc(engine.mem_write(at, &field.process.to_le_bytes()))?;
+                }
+                if let Some(field) = plan.lifetimes.stack_fields(&plan.objects, address)? {
+                    ensure!(
+                        engine.get_data().apis.memory.allows(
+                            field.limit,
+                            field.base - field.limit,
+                            P::RW
+                        ),
+                        "Thread stack fields lack owned readable/writable stack backing"
+                    );
+                    let at = address + u64::from(field.limit_offset);
+                    super::reference_mapping::require_api_access(engine, at, 16, P::WRITE)?;
+                    let mut bytes = [0; 16];
+                    bytes[..8].copy_from_slice(&field.limit.to_le_bytes());
+                    bytes[8..].copy_from_slice(&field.base.to_le_bytes());
+                    uc(engine.mem_write(at, &bytes))?;
+                }
+                fields::initialize(engine, &plan, address)?;
+                super::kernel_pushlocks::initialize_thread(
+                    engine,
+                    &plan.lifetimes.entries[&address],
+                )?;
                 uc(engine.mem_protect(address, 4096, Prot::READ))?;
                 engine
                     .get_data_mut()
@@ -250,8 +330,12 @@ fn apply(engine: &mut Unicorn<Trace>, plan: Plan) -> Result<()> {
                     .memory
                     .protect(address, 4096, P::READ)?;
             }
-            Effect::Signal { address } => mirror_header(engine, &plan, address, true)?,
+            Effect::Signal { address } => {
+                super::kernel_pushlocks::finish_thread(engine, &plan.lifetimes.entries[&address])?;
+                mirror_header(engine, &plan, address, true)?;
+            }
             Effect::Retire { address } => {
+                super::kernel_pushlocks::finish_thread(engine, &plan.lifetimes.entries[&address])?;
                 uc(engine.mem_protect(address, 4096, Prot::NONE))?;
                 engine
                     .get_data_mut()
@@ -277,7 +361,17 @@ pub(crate) fn initialize_root(engine: &mut Unicorn<Trace>) -> Result<()> {
             .is_none(),
         "Initial System caller identity already initialized"
     );
-    let plan = Lifetimes::initialize(engine.get_data().architecture, objects(engine)?)?;
+    let mut plan = Lifetimes::initialize(engine.get_data().architecture, objects(engine)?)?;
+    if engine.get_data().architecture == Architecture::X64
+        && engine.get_data().machine.windows_build() == 26200
+    {
+        plan.lifetimes
+            .configure_system_process_26200(&plan.objects)?;
+    }
+    if engine.get_data().quiescent_parked_requested {
+        plan.lifetimes
+            .configure_quiescent_parked_26200(&plan.objects)?;
+    }
     // Install before any published body may be used by the guest. Native hook
     // installation failure is fatal, even when no page has yet changed.
     engine.get_data_mut().apis.thread_objects.native_failure = true;
@@ -396,6 +490,16 @@ pub(crate) fn current_thread(engine: &Unicorn<Trace>) -> Result<u64> {
     );
     Ok(address)
 }
+pub(crate) fn ordinary_stack_fields(
+    engine: &Unicorn<Trace>,
+    address: u64,
+) -> Result<Option<emumee_core::kernel_thread_objects::StackFields>> {
+    let lives = engine.get_data().apis.thread_objects.model.borrow();
+    Ok(lives
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Thread stack lifetime model missing"))?
+        .stack_fields(objects(engine)?, address)?)
+}
 fn guest_id(engine: &Unicorn<Trace>, address: u64) -> Result<u64> {
     let lives = engine.get_data().apis.thread_objects.model.borrow();
     Ok(lives
@@ -493,6 +597,10 @@ pub(crate) fn validate_owned_thread(engine: &Unicorn<Trace>, address: u64) -> Re
     Ok(())
 }
 pub(crate) fn register_parked_processor(engine: &mut Unicorn<Trace>, processor: u32) -> Result<()> {
+    let address = emumee_core::ipi::processor_layout(engine.get_data().architecture, processor)
+        .and_then(|layout| layout.parked_thread)
+        .ok_or_else(|| anyhow::anyhow!("Parked processor identity missing"))?;
+    validate_quiescent(engine, address)?;
     let plan = {
         let lives = engine.get_data().apis.thread_objects.model.borrow();
         lives
@@ -500,7 +608,50 @@ pub(crate) fn register_parked_processor(engine: &mut Unicorn<Trace>, processor: 
             .ok_or_else(|| anyhow::anyhow!("Initial caller identity missing"))?
             .register_parked_processor(objects(engine)?, processor)?
     };
-    apply(engine, plan)
+    apply(engine, plan)?;
+    validate_quiescent(engine, address)
+}
+
+pub(crate) fn validate_quiescent(engine: &Unicorn<Trace>, address: u64) -> Result<()> {
+    let model = engine.get_data().apis.thread_objects.model.borrow();
+    let Some(model) = model.as_ref() else {
+        return Ok(());
+    };
+    if !model.entries.contains_key(&address) {
+        return Ok(());
+    }
+    if let Some(field) = model.parked_pair_fields(objects(engine)?, address)? {
+        ensure!(
+            uc(engine.mem_read_as_vec(address + u64::from(field.offset), 8))? == field.bytes(),
+            "Quiescent parked field mirror diverged; refusing repair"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn require_quiescent_callback_api(engine: &Unicorn<Trace>) -> Result<()> {
+    if !engine.get_data().quiescent_parked_requested {
+        return Ok(());
+    }
+    let Some(thread) = crate::ipi::current_thread(engine) else {
+        return Ok(());
+    };
+    let model = engine.get_data().apis.thread_objects.model.borrow();
+    let model = model
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Quiescent IPI identity missing"))?;
+    let life = model
+        .entries
+        .get(&thread)
+        .ok_or_else(|| anyhow::anyhow!("Quiescent IPI identity foreign"))?;
+    ensure!(
+        !matches!(
+            life.role,
+            emumee_core::kernel_thread_objects::Ownership::ParkedProcessor { .. }
+        ),
+        "Quiescent parked profile refuses remote IPI callback API effects"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -581,6 +732,142 @@ mod tests {
         crate::cpu::write(engine, 0x101000, b"COLD").unwrap();
         code
     }
+    fn parked_engine(enabled: bool) -> (crate::NativeEngine, u64) {
+        let mut engine = engine(Architecture::X64);
+        let address = emumee_core::ipi::processor_layout(Architecture::X64, 3)
+            .unwrap()
+            .parked_thread
+            .unwrap();
+        if enabled {
+            let mut model = engine
+                .get_data()
+                .apis
+                .thread_objects
+                .model
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .clone();
+            if model
+                .thread_fields(objects(&engine).unwrap(), current_thread(&engine).unwrap())
+                .unwrap()
+                .is_none()
+            {
+                model
+                    .configure_system_process_26200(objects(&engine).unwrap())
+                    .unwrap();
+            }
+            model
+                .configure_quiescent_parked_26200(objects(&engine).unwrap())
+                .unwrap();
+            *engine.get_data().apis.thread_objects.model.borrow_mut() = Some(model);
+            engine.get_data_mut().quiescent_parked_requested = true;
+        }
+        uc(engine.mem_map(address, 4096, Prot::READ | Prot::WRITE)).unwrap();
+        engine
+            .get_data_mut()
+            .apis
+            .memory
+            .map(address, 4096, P::RW, Some(4), "owned test parked page")
+            .unwrap();
+        register_parked_processor(&mut engine, 3).unwrap();
+        (engine, address)
+    }
+    #[test]
+    fn quiescent_native_pair_is_opt_in_and_preserves_the_legacy_refusal() {
+        for enabled in [false, true] {
+            let (mut engine, address) = parked_engine(enabled);
+            assert_eq!(engine.mem_read_as_vec(address + 0x5d8, 8).unwrap(), [0; 8]);
+            let code = probe(&mut engine, address + 0x5d8, false);
+            let _ = engine.emu_start(0x100000, 0x100000 + code.len() as u64, 0, 20);
+            assert_eq!(
+                engine.mem_read_as_vec(0x101000, 4).unwrap(),
+                if enabled { b"DONE" } else { b"COLD" }
+            );
+            let evidence = report(&engine);
+            assert_eq!(evidence.quiescent_parked_fields.len(), usize::from(enabled));
+            if enabled {
+                assert!(
+                    evidence.quiescent_parked_fields[0]
+                        .provenance
+                        .contains("not captured memory")
+                );
+                assert!(evidence.private_accesses.is_empty());
+                register_parked_processor(&mut engine, 3).unwrap();
+            } else {
+                assert_eq!(evidence.private_accesses.len(), 1);
+            }
+        }
+    }
+    #[test]
+    fn quiescent_native_pair_keeps_adjacent_bytes_and_api_writes_private() {
+        for offset in [0x5d7, 0x5d9, 0x5e0] {
+            let (mut engine, address) = parked_engine(true);
+            let code = probe(&mut engine, address + offset, false);
+            let _ = engine.emu_start(0x100000, 0x100000 + code.len() as u64, 0, 20);
+            assert_eq!(engine.mem_read_as_vec(0x101000, 4).unwrap(), b"COLD");
+            assert!(!report(&engine).private_accesses.is_empty());
+            assert!(require_api_access(&engine, address + 0x5d8, 8, P::WRITE).is_err());
+            assert!(require_api_access(&engine, address + 0x5d8, 8, P::EXECUTE).is_err());
+            assert!(crate::cpu::write(&mut engine, address + 0x5d8, &[1; 8]).is_err());
+            assert_eq!(engine.mem_read_as_vec(address + 0x5d8, 8).unwrap(), [0; 8]);
+        }
+    }
+    #[test]
+    fn quiescent_native_pair_divergence_refuses_reuse_and_read_without_repair() {
+        let (mut engine, address) = parked_engine(true);
+        uc(engine.mem_write(address + 0x5d8, &[0x31; 8])).unwrap();
+        assert!(
+            register_parked_processor(&mut engine, 3)
+                .unwrap_err()
+                .to_string()
+                .contains("refusing repair")
+        );
+        let code = probe(&mut engine, address + 0x5d8, false);
+        let _ = engine.emu_start(0x100000, 0x100000 + code.len() as u64, 0, 20);
+        assert_eq!(engine.mem_read_as_vec(0x101000, 4).unwrap(), b"COLD");
+        assert!(
+            engine
+                .get_data()
+                .apis
+                .fault
+                .as_deref()
+                .unwrap()
+                .contains("mirror diverged")
+        );
+        assert_eq!(
+            engine.mem_read_as_vec(address + 0x5d8, 8).unwrap(),
+            [0x31; 8]
+        );
+    }
+    #[test]
+    fn quiescent_remote_ipi_api_policy_refuses_before_model_effects() {
+        let (mut engine, _) = parked_engine(true);
+        let caller = current_thread(&engine).unwrap();
+        let model = engine
+            .get_data()
+            .ipi
+            .model
+            .begin(0x100000, 0, 4, 0, caller, 0)
+            .unwrap();
+        engine.get_data_mut().ipi.model = model.clone().dispatch(0, 0).unwrap();
+        assert!(require_quiescent_callback_api(&engine).is_ok());
+        let mut remote = model;
+        for processor in 0..3 {
+            remote = remote
+                .dispatch(processor, u64::from(processor))
+                .unwrap()
+                .return_member(processor, u64::from(processor) + 1, 0, remote.level())
+                .unwrap();
+        }
+        engine.get_data_mut().ipi.model = remote.dispatch(3, 3).unwrap();
+        assert!(
+            require_quiescent_callback_api(&engine)
+                .unwrap_err()
+                .to_string()
+                .contains("callback API effects")
+        );
+    }
     #[test]
     fn native_interval_reads_stop_before_any_successor_and_public_header_remains_readable() {
         for architecture in [Architecture::X86, Architecture::X64] {
@@ -631,5 +918,48 @@ mod tests {
             assert_eq!(engine.mem_read_as_vec(body, 8).unwrap(), before);
             assert_eq!(current_thread(&engine).unwrap(), body);
         }
+    }
+    #[test]
+    fn critical_mirror_rejects_native_divergence_instead_of_repairing_it() {
+        let mut engine = engine(Architecture::X64);
+        let address = emumee_core::kernel_layout::KernelLayout::for_architecture(Architecture::X64)
+            .root_thread;
+        if report(&engine).thread_fields.is_empty() {
+            let mut lives = engine
+                .get_data()
+                .apis
+                .thread_objects
+                .model
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .clone();
+            lives
+                .configure_system_process_26200(objects(&engine).unwrap())
+                .unwrap();
+            let plan = Plan {
+                lifetimes: lives,
+                objects: objects(&engine).unwrap().clone(),
+                effects: Vec::new(),
+            };
+            fields::initialize(&mut engine, &plan, address).unwrap();
+            *engine.get_data().apis.thread_objects.model.borrow_mut() = Some(plan.lifetimes);
+        }
+        engine.get_data_mut().apis.kernel.restore((0, 2));
+        sync_critical(&mut engine, address).unwrap();
+        assert_eq!(
+            engine.mem_read_as_vec(address + 0x1e4, 2).unwrap(),
+            0xfffeu16.to_le_bytes()
+        );
+        assert!(crate::cpu::write(&mut engine, address + 0x1e4, &[0, 0]).is_err());
+        uc(engine.mem_write(address + 0x1e4, &[0x34, 0x12])).unwrap(); // Deliberate host-side corruption.
+        let error = sync_critical(&mut engine, address).unwrap_err();
+        assert!(error.to_string().contains("refusing repair"));
+        assert_eq!(
+            engine.mem_read_as_vec(address + 0x1e4, 2).unwrap(),
+            [0x34, 0x12]
+        );
+        assert!(completion_error(&engine).is_some());
+        assert_eq!(report(&engine).thread_fields[0].critical_depth, 2);
     }
 }

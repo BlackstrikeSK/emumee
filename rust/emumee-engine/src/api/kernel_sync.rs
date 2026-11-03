@@ -93,6 +93,11 @@ pub(super) fn call(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> Res
     use Call::*;
     let irql = observe_irql(engine)?;
     let critical = engine.get_data().apis.kernel.save().1;
+    if super::kernel_pushlocks::enabled(engine)
+        && matches!(call, PushInitialize | PushAcquire | PushRelease)
+    {
+        return super::kernel_pushlocks::call(engine, call, args);
+    }
     match call {
         Raise => {
             let new = args[0] as u8;

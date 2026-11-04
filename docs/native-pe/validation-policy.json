@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "scope": "Safe native PE source validation only; no legacy pipeline, submitted samples or release qualification",
+  "suites": ["partition", "accounting", "inventory", "syntax", "rust-tests", "rust-lint", "whitespace"],
+  "rules": [
+    {"patterns": ["tools/native_pe_validation.py", "tests/test_native_pe_validation.py", "tools/native_pe_baseline.py", "tests/test_native_pe_baseline.py", "tools/native_pe_registration.py", "tests/test_native_pe_registration.py", "tools/package_rust.ps1", "tools/verify_rust_user_pe.ps1", "tests/test_native_pe_package.py", "docs/native-pe/registration-policy.json", "docs/native-pe/validation-policy.json"], "suites": "all", "reason": "Validation policy, package/registration/dependency verifier or receipt machinery changed"},
+    {"patterns": ["tools/native_pe_*.py", "tools/native_api_parity_ledger.py", "tools/inventory_native_api.py", "tools/audit_native_surface.py", "tests/test_native_pe_*.py", "tests/test_native_api_inventory.py", "docs/native-pe/*.json"], "suites": ["partition", "accounting", "inventory", "syntax", "whitespace"], "reason": "Native accounting, inventory or partition controls changed"},
+    {"patterns": ["docs/*.md", "docs/**/*.md", "rust/api-parity/*.md", "README.md"], "suites": ["whitespace"], "reason": "Documentation-only change"}
+  ],
+  "unknown_change": "all",
+  "timing_policy": "Record measured elapsed seconds and environment; no performance thresholds are inferred"
+}

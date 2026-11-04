@@ -200,6 +200,13 @@ def native_closure(root):
     return sorted(files)
 
 
+def baseline_sources(root):
+    paths = sorted((root / '.venv/Lib/site-packages/speakeasy/winenv/api/usermode').glob('*.py'))
+    if not paths:
+        raise ValueError('Legacy Speakeasy baseline is missing or empty; refusing a reduced inventory')
+    return paths
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, type=Path)
@@ -207,7 +214,11 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     inventory = Inventory(root)
-    for path in sorted((root / '.venv/Lib/site-packages/speakeasy/winenv/api/usermode').glob('*.py')):
+    try:
+        baseline = baseline_sources(root)
+    except ValueError as error:
+        parser.error(str(error))
+    for path in baseline:
         inventory.speakeasy(path)
     for path in native_closure(root):
         inventory.extension(path)

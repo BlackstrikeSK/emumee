@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "scope": "Reviewed successful-initialization static registration semantics; no legacy execution or semantic parity",
+  "inventory_fingerprint": "0fd485da3a4bfca7693647f582105a5973c7b708f81a19156bda282d079fb9bf",
+  "reviewed_sources": {
+    ".venv/Lib/site-packages/speakeasy/binemu.py": "82839652a20f204a7c5a602f17374748e10136ab2c6cc1fe84bc2288565fbb89",
+    ".venv/Lib/site-packages/speakeasy/speakeasy.py": "7fa49f06dfc16b806fab8bd172469dfb7918313698b94645a0062ddb79ffd0b0",
+    ".venv/Lib/site-packages/speakeasy/windows/winemu.py": "a0c855bc7b80c8557e5dd2bb1bb9b7b3f8c758d9cf7cea37e3192d8ce1fd3580",
+    ".venv/Lib/site-packages/speakeasy/windows/common.py": "d47d56c65d4c0c7f22c2309280d8a4f07aa97c4fe508221fc9b394660a62f8eb",
+    ".venv/Lib/site-packages/speakeasy/winenv/api/api.py": "20e27073f1601f44421c57fcfa56c8858716c440dc802359c2a65ea4e67076df",
+    ".venv/Lib/site-packages/speakeasy/winenv/api/winapi.py": "5c2f386183bcf689745fd655e940ad5c375eb811a3bc9539154ab1c522a5bf28",
+    ".venv/Lib/site-packages/speakeasy/winenv/api/kernelmode/ntoskrnl.py": "8e0d492bc43c4f0d4ba1e86a669b39a76b66323f4144af2b91d4e7aee2e577cb"
+  },
+  "kernel_normalization_source": ".venv/Lib/site-packages/speakeasy/winenv/api/kernelmode/ntoskrnl.py",
+  "conditional_table_patch": "ntdll.funcs['LdrUnloadDll'] = ('LdrUnloadDll', unsupported_ldr_unload, 1, CALL_CONV_STDCALL, None)",
+  "dispatch_rules": [
+    "dir(self) sorts Python attribute names; duplicate method names retain only the final class definition",
+    "baseline functions and data use separate case-sensitive export tables; ordinals alias the same baseline tuple",
+    "hook identities are lowercased; exact module/API buckets precede insertion-ordered matching wildcard buckets",
+    "supported baseline executes all matching hooks; each original targets the baseline handler; final matched return is retained",
+    "unsupported baseline invokes only the final matching hook; original is None; argc/convention come from that hook",
+    "ordinal baseline resolution rewrites the hook lookup name to the baseline declared export",
+    "A/W generic, CRT/API-set/socket aliases and ntdll-to-kernel fallback follow reviewed normalize_import_miss",
+    "run_native queues installs before successful load_module; later module/toolhelp hooks are active only after load",
+    "conditional LdrUnloadDll table addition supplies the normal supported-handler dispatch path after load",
+    "registration review never promotes literal placeholders, uninstantiated modules, data slots or hook names into behavioral parity"
+  ]
+}

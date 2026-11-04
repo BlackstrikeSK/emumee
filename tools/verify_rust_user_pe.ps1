@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Bundle,
     [Parameter(Mandatory=$true)][string]$Fixtures,
-    [Parameter(Mandatory=$true)][string]$OutputRoot
+    [Parameter(Mandatory=$true)][string]$OutputRoot,
+    [switch]$Layout
 )
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
@@ -53,11 +54,69 @@ foreach($arch in @('X86','X64')) {
     $request=Get-Content -LiteralPath (Join-Path $run 'request.json') -Raw | ConvertFrom-Json
     if($manifest.result.execution.configuration.input_json_sha256 -ne (Get-FileHash -LiteralPath $persona -Algorithm SHA256).Hash.ToLowerInvariant() -or $request.clock_utc_filetime -le 0){throw 'Persona/clock binding changed'}
     $records+=@{architecture=$arch;case='persona';verified=$true}
+    if($Layout) {
+        foreach($case in @('RawTail','VirtualTail','RawAlias','WriteData','WriteText','WriteHeaders','ExecuteData','ReadGap')) {
+            $source=Join-Path $fixturesPath ($arch+'-layout-'+$case+'/layout.exe')
+            $run=Join-Path $root ($arch+'-layout-'+$case)
+            & $exe run $source --output $run --max-instructions 1000 *> ($run+'.console.log')
+            $code=$LASTEXITCODE
+            $manifest=Get-Content -LiteralPath (Join-Path $run 'manifest.json') -Raw | ConvertFrom-Json
+            $e=$manifest.result.execution
+            $c=$manifest.result.containment
+            if(-not $c.app_container -or -not $c.job_object -or -not $c.child_process_blocked -or $c.network_capabilities -ne 0){throw 'Layout containment missing'}
+            if($manifest.cleanup -ne 'restored' -or $manifest.result.input_sha256 -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()){throw 'Layout binding/cleanup changed'}
+            if($e.configuration.generated_only -or -not $e.configuration.initialized -or $e.configuration.guest_image_path -ne 'C:\emumee\layout.exe'){throw 'Layout submitted identity absent'}
+            $fault=switch($case) {
+                'WriteText' {'WRITE_PROT'}
+                'WriteHeaders' {'WRITE_PROT'}
+                'ExecuteData' {'FETCH_PROT'}
+                'ReadGap' {'READ_PROT'}
+                default {$null}
+            }
+            if($fault) {
+                if($code -ne 1 -or $null -ne $e.guest_entry_return -or $e.error -notmatch $fault){throw "Layout CPU protection failed: $arch/$case"}
+            } else {
+                $expectedReturn=if($case -eq 'VirtualTail'){0}else{42}
+                if($code -ne 0 -or $e.completion_reason -ne 'entry_return' -or $null -ne $e.error -or $e.guest_entry_return -ne $expectedReturn){throw "Layout materialization failed: $arch/$case"}
+            }
+            $records+=@{architecture=$arch;case=('layout-'+$case);completion=$e.completion_reason;instructions=$e.instruction_count;verified=$true}
+        }
+    }
 }
 # Direct worker execution must refuse to read submitted bytes outside confinement.
 $worker=Join-Path (Split-Path -Parent $exe) 'emumee-worker.exe'
-& $worker --submitted-user $root ('a'*64) *> (Join-Path $root 'uncontained.log')
-if($LASTEXITCODE -eq 0){throw 'Uncontained worker accepted submitted role'}
+$refusalErrorPreference=$ErrorActionPreference
+try {
+    $ErrorActionPreference='Continue'
+    $LASTEXITCODE=$null
+    & $worker --submitted-user $root ('a'*64) *> (Join-Path $root 'uncontained.log')
+    $code=$LASTEXITCODE
+} finally {$ErrorActionPreference=$refusalErrorPreference}
+if($null -eq $code -or $code -ne 2){throw 'Uncontained worker did not return the expected refusal status'}
+if((Get-Content -LiteralPath (Join-Path $root 'uncontained.log') -Raw) -notmatch 'outside AppContainer'){throw 'Uncontained worker failed for an unexpected reason'}
+$refusals=@(@{case='uncontained-worker';exit_code=$code;verified=$true})
+if($Layout) {
+    foreach($arch in @('X86','X64')) {
+        foreach($case in @('Headers','Raw','Overlap')) {
+            $source=Join-Path $fixturesPath ($arch+'-layout-invalid-'+$case+'/layout.exe')
+            $run=Join-Path $root ($arch+'-layout-invalid-'+$case)
+            try {
+                $ErrorActionPreference='Continue'
+                $LASTEXITCODE=$null
+                & $exe run $source --output $run *> ($run+'.log')
+                $code=$LASTEXITCODE
+            } finally {$ErrorActionPreference=$refusalErrorPreference}
+            $reason=switch($case) {
+                'Headers' {'misaligned image/header size'}
+                'Raw' {'misaligned section file offset'}
+                'Overlap' {'overlapping sections'}
+            }
+            if($null -eq $code -or $code -ne 2 -or (Test-Path -LiteralPath $run)){throw "Malformed layout published a run: $arch/$case"}
+            if((Get-Content -LiteralPath ($run+'.log') -Raw) -notmatch [regex]::Escape($reason)){throw "Layout refusal reason changed: $arch/$case"}
+            $refusals+=@{architecture=$arch;case=('layout-'+$case);exit_code=$code;verified=$true}
+        }
+    }
+}
 $source=Join-Path $fixturesPath 'X64-exe/sample.exe'
 foreach($case in @('zero-budget','duplicate-budget','unknown-option')) {
     $run=Join-Path $root $case
@@ -66,8 +125,21 @@ foreach($case in @('zero-budget','duplicate-budget','unknown-option')) {
         'duplicate-budget' {@('--max-instructions','1','--max-instructions','2')}
         'unknown-option' {@('--bogus','value')}
     }
-    & $exe run $source --output $run @options *> ($run+'.log')
-    if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $run)){throw "Rejected CLI input published a run: $case"}
+    try {
+        $ErrorActionPreference='Continue'
+        $LASTEXITCODE=$null
+        & $exe run $source --output $run @options *> ($run+'.log')
+        $code=$LASTEXITCODE
+    } finally {$ErrorActionPreference=$refusalErrorPreference}
+    if($null -eq $code -or $code -ne 2 -or (Test-Path -LiteralPath $run)){throw "Rejected CLI input returned the wrong status or published a run: $case"}
+    $expectedReason=switch($case) {
+        'zero-budget' {'Submitted PE execution budget outside profile'}
+        'duplicate-budget' {'--max-instructions given twice'}
+        'unknown-option' {'Unknown run option: --bogus'}
+    }
+    if((Get-Content -LiteralPath ($run+'.log') -Raw) -notmatch [regex]::Escape($expectedReason)){throw "CLI refusal reason changed: $case"}
+    $refusals+=@{case=$case;exit_code=$code;verified=$true}
 }
-$records | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root 'verification.json') -Encoding utf8NoBOM
+[IO.File]::WriteAllText((Join-Path $root 'verification.json'),($records | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $root 'refusal-verification.json'),($refusals | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
 Write-Output "Verified $($records.Count) contained submitted PE cases and direct-worker refusal."

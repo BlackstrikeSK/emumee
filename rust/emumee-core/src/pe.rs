@@ -3,6 +3,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 mod exports;
+#[cfg(test)]
+mod tests;
 mod tls;
 pub use exports::{Export, ExportTarget};
 pub use tls::{MAX_TLS_CALLBACKS, TlsCallbackPlan, TlsError, TlsMirrorCheck};
@@ -168,6 +170,9 @@ impl PeImage {
         {
             return Err(PeError("unsupported PE alignment"));
         }
+        if image_size % section_alignment != 0 || headers_size % file_alignment != 0 {
+            return Err(PeError("misaligned image/header size"));
+        }
         let subsystem = u16_at(opt, 68)?;
         if name.to_ascii_lowercase().ends_with(".sys") && subsystem != 1 {
             return Err(PeError("driver requires native subsystem"));
@@ -231,6 +236,9 @@ impl PeImage {
                 return Err(PeError("invalid section virtual bounds"));
             }
             if section.raw_size != 0 {
+                if section.raw_offset % file_alignment != 0 {
+                    return Err(PeError("misaligned section file offset"));
+                }
                 bytes(data, section.raw_offset as usize, section.raw_size as usize)?;
             }
             if sections.iter().any(|s| {
@@ -397,13 +405,34 @@ impl PeImage {
     }
 
     pub fn materialize(&self, data: &[u8], base: u64) -> Result<Vec<u8>> {
+        if self.image_size == 0
+            || self.image_size > MAX_IMAGE
+            || self.image_size % 4096 != 0
+            || self.headers_size == 0
+            || self.headers_size > self.image_size
+            || base == 0
+            || base % 4096 != 0
+        {
+            return Err(PeError("invalid materialization bounds/alignment"));
+        }
         let end = base
             .checked_add(self.image_size as u64)
             .ok_or(PeError("image address overflow"))?;
         if self.sample.architecture == Architecture::X86 && end > 1u64 << 32 {
             return Err(PeError("x86 image exceeds address space"));
         }
-        let mut image = vec![0; self.image_size as usize];
+        for section in &self.sections {
+            if section.rva as u64 + section.raw_size.max(section.virtual_size) as u64
+                > self.image_size as u64
+            {
+                return Err(PeError("section materialization exceeds image"));
+            }
+        }
+        let mut image = Vec::new();
+        image
+            .try_reserve_exact(self.image_size as usize)
+            .map_err(|_| PeError("image allocation failed"))?;
+        image.resize(self.image_size as usize, 0);
         image[..self.headers_size as usize].copy_from_slice(bytes(
             data,
             0,
@@ -414,11 +443,17 @@ impl PeImage {
                 continue;
             }
             let start = section.rva as usize;
-            image[start..start + section.raw_size as usize].copy_from_slice(bytes(
-                data,
-                section.raw_offset as usize,
-                section.raw_size as usize,
-            )?);
+            let end = start
+                .checked_add(section.raw_size as usize)
+                .ok_or(PeError("section materialization overflow"))?;
+            image
+                .get_mut(start..end)
+                .ok_or(PeError("section materialization exceeds image"))?
+                .copy_from_slice(bytes(
+                    data,
+                    section.raw_offset as usize,
+                    section.raw_size as usize,
+                )?);
         }
         if base == self.image_base {
             return Ok(image);
@@ -429,13 +464,17 @@ impl PeImage {
         }
         let mut offset = 0u32;
         while offset < directory.size {
-            let header = self.rva(data, directory.rva + offset, 8)?;
+            let block_rva = directory
+                .rva
+                .checked_add(offset)
+                .ok_or(PeError("relocation directory overflow"))?;
+            let header = self.rva(data, block_rva, 8)?;
             let page = u32_at(header, 0)?;
             let block_size = u32_at(header, 4)?;
             if block_size < 8 || block_size % 2 != 0 || block_size > directory.size - offset {
                 return Err(PeError("invalid relocation block"));
             }
-            let block = self.rva(data, directory.rva + offset, block_size as usize)?;
+            let block = self.rva(data, block_rva, block_size as usize)?;
             for at in (8..block_size as usize).step_by(2) {
                 let entry = u16_at(block, at)?;
                 let kind = entry >> 12;

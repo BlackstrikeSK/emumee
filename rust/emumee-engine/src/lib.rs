@@ -28,6 +28,8 @@ mod configured;
 #[cfg(test)]
 mod console_tests;
 mod cpu;
+#[cfg(test)]
+mod pe_layout_tests;
 pub mod plan_runtime;
 pub mod user;
 pub use capture::run_owned as run_driver_runtime_fixture;
@@ -71,7 +73,6 @@ mod kernel_environment_tests;
 #[cfg(test)]
 mod kernel_files_tests;
 mod kernel_loader;
-pub mod linux;
 #[cfg(test)]
 mod kernel_modules_tests;
 #[cfg(test)]
@@ -111,6 +112,7 @@ mod kernel_time_tests;
 mod kernel_timer_tests;
 #[cfg(test)]
 mod kernel_waits_tests;
+pub mod linux;
 #[cfg(test)]
 mod mdl_tests;
 #[cfg(test)]

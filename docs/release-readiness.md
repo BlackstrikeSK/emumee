@@ -31,6 +31,24 @@ automatically.
 
 ## Outstanding stable-release gates
 
+The subsequent M2 PE layout audit adds six core and four engine controls;
+the full workspace passes 1,034 Rust tests. The source audit and reproduction
+are recorded in [M2 layout evidence](native-pe/m2-pe-layout.md). Its fresh
+same-build layout/regression smoke passes 32 contained guest cases and ten refusal
+controls and is separate from the historical M0 bundle.
+Neither this audit nor source-only integration closes M2's remaining staging,
+import and ABI work or establishes a stable release.
+
+The 2026-11-04 native PE M0 baseline now has a fresh trusted-source release build
+and bounded same-build package smoke: 16 contained guest cases and four refusal
+controls. [M0 package evidence](native-pe/m0-package-smoke.md) records exact hashes,
+commands, failures and limits. Packaging now works on Windows PowerShell 5 using
+equivalent hashing/encoding primitives; no runtime installation was needed.
+The operator authorized fresh build/testing after reporting an exclusion; no
+protection setting was changed and no quarantined artifact was restored. This
+does not retroactively clear the recorded incident or qualify a stable release.
+M0 is closed, while full native semantic parity and M10 qualification remain open.
+
 The new PFN model's earlier source qualification passed998 tests, strict lint
 and a release build. Only22 of82 required contained package controls completed;
 all14 parent admission-refusal controls passed. Host security then quarantined

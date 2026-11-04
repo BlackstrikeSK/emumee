@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "scope": "Sparse reviewed native PE behavioral evidence; empty means no qualified contracts",
+  "entries": [],
+  "required_gates": {
+    "effective_registration_review": {
+      "status": "verified",
+      "scope_fingerprint": "2944858b347c91f61976df8ff15b484e3abb10150ed1abd28594ff85f1899549",
+      "history": [{
+        "status": "verified",
+        "scope_fingerprint": "7e2f6f7a689cc0dc6434f1679672083055df47221c82bf6b78ba6c542395047d",
+        "review_fingerprint": "b1ca1266f5b6cc31de0154b107d6aa7c95dfdff4ac6972612cf717e645f972df",
+        "review": "docs/native-pe/m0-package-smoke.md"
+      }],
+      "scope": "Successful-initialization source registration review only; not constructor execution, guest reachability or API semantics",
+      "evidence": [
+        {
+          "kind": "maintained_static_source_review",
+          "review": "docs/native-pe/effective-registration-review.md",
+          "policy": "docs/native-pe/registration-policy.json",
+          "collector": "tools/native_pe_registration.py",
+          "controls": "tests/test_native_pe_registration.py",
+          "review_fingerprint": "0b638642d203dcb3c426931eb0ef032af1a69d18e0e08d4ea5584f0d2779491e",
+          "contracts": 2590,
+          "architectures": ["x86", "x64"]
+        }
+      ]
+    },
+    "package": {
+      "status": "unreviewed",
+      "scope": "Comprehensive M10 native package qualification remains open; bounded M0 smoke is not full parity",
+      "m0_smoke": {
+        "status": "verified",
+        "review": "docs/native-pe/m0-package-smoke.md",
+        "source_tree_sha256": "3f097074775dcabe45e7be377c02cb110103bae0bf56a9441eaa56525dc63d3e",
+        "guest_cases": 16,
+        "refusal_cases": 4,
+        "artifact_index": "output/rust-pe-m0-smoke/qualified-smoke.json"
+      },
+      "m2_layout_smoke": {
+        "status": "verified",
+        "review": "docs/native-pe/m2-pe-layout.md",
+        "source_tree_sha256": "706327dc0e92a6be0d86c3c35a0eb0f4ff85cf7f5280b9eef99b5b79eb76e405",
+        "guest_cases": 32,
+        "refusal_cases": 10,
+        "artifact_index": "output/rust-pe-m2-layout/qualified-smoke.json"
+      },
+      "next_action": "Complete the M2-M10 semantic, safety and operational obligations before promoting the global package gate",
+      "evidence": [{"kind": "bounded_m0_smoke_only", "review": "docs/native-pe/m0-package-smoke.md"}]
+    }
+  }
+}

@@ -11,6 +11,18 @@ inventory = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(inventory)
 
 class NativeApiInventoryTests(unittest.TestCase):
+    def test_absent_or_empty_baseline_never_silently_reduces_inventory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with self.assertRaisesRegex(ValueError, 'missing or empty'):
+                inventory.baseline_sources(root)
+            baseline = root / '.venv/Lib/site-packages/speakeasy/winenv/api/usermode'
+            baseline.mkdir(parents=True)
+            with self.assertRaisesRegex(ValueError, 'missing or empty'):
+                inventory.baseline_sources(root)
+            (baseline / 'synthetic.py').write_text('', encoding='utf-8')
+            self.assertEqual(len(inventory.baseline_sources(root)), 1)
+
     def scan(self, source, extension=False):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

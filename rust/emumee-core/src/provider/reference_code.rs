@@ -152,7 +152,7 @@ fn project_file_backed_code(
         return Err(ProviderError("kernel code reference has writable code"));
     }
     let image = pe
-        .materialize(data, target_base)
+        .materialize_with_relocation_types(data, target_base, &[10])
         .map_err(|_| ProviderError("kernel code reference relocation invalid"))?;
     let mut sections = Vec::with_capacity(view.sections.len());
     for section in view.sections {
@@ -325,9 +325,11 @@ mod tests {
         assert!(project_file_backed_code(&raw, u64::MAX - 4094).is_err());
         assert!(relocate_pinned_nt22631(&raw, 22631, target).is_err());
 
-        let mut unsupported = raw.clone();
-        unsupported[0x488..0x48a].copy_from_slice(&0x3100u16.to_le_bytes());
-        assert!(project_file_backed_code(&unsupported, target).is_err());
+        for kind in [1u16, 2, 3, 4, 5, 15] {
+            let mut unsupported = raw.clone();
+            unsupported[0x488..0x48a].copy_from_slice(&((kind << 12) | 0x100).to_le_bytes());
+            assert!(project_file_backed_code(&unsupported, target).is_err());
+        }
         let mut writable = raw;
         let table = 0x98 + 0xf0;
         writable[table + 36..table + 40].copy_from_slice(&0xe0000020u32.to_le_bytes());

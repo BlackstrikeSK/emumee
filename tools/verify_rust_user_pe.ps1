@@ -2,7 +2,9 @@ param(
     [Parameter(Mandatory=$true)][string]$Bundle,
     [Parameter(Mandatory=$true)][string]$Fixtures,
     [Parameter(Mandatory=$true)][string]$OutputRoot,
-    [switch]$Layout
+    [switch]$Layout,
+    [switch]$Imports,
+    [switch]$Abi
 )
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
@@ -83,7 +85,76 @@ foreach($arch in @('X86','X64')) {
         }
     }
 }
+if($Abi) {
+    $abiCases=@('Pow','Floor','FloorZero','Sin','SinZero','PowDomain','PowZero','PowOverflow','FloorNan','FloorInfinity','SinInfinity','Variadic','Variadic64','CrtCallback','CrtStack','CrtGpr','CrtVector','CrtDirection','CrtMxcsr','CrtFpcw','LoaderCallback','LoaderStack','LoaderGpr','LoaderVector','LoaderDirection','LoaderMxcsr','LoaderFpcw')
+    $positive=@('Pow','Floor','FloorZero','Sin','SinZero','Variadic','Variadic64','CrtCallback','LoaderCallback')
+    foreach($arch in @('X86','X64')) {
+        foreach($case in $abiCases) {
+            if($arch -eq 'X86' -and $case -in @('CrtVector','LoaderVector')){continue}
+            $source=Join-Path $fixturesPath ($arch+'-abi-'+$case+'/abi.exe')
+            $run=Join-Path $root ($arch+'-abi-'+$case)
+            & $exe run $source --output $run --max-instructions 4000 *> ($run+'.console.log')
+            $code=$LASTEXITCODE
+            $manifest=Get-Content -LiteralPath (Join-Path $run 'manifest.json') -Raw | ConvertFrom-Json
+            $e=$manifest.result.execution
+            $c=$manifest.result.containment
+            if(-not $c.app_container -or -not $c.job_object -or -not $c.child_process_blocked -or $c.network_capabilities -ne 0){throw 'ABI containment missing'}
+            if($manifest.cleanup -ne 'restored' -or $manifest.result.input_sha256 -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()){throw 'ABI binding/cleanup changed'}
+            if($e.configuration.generated_only -or -not $e.configuration.initialized -or $e.configuration.guest_image_path -ne 'C:\emumee\abi.exe'){throw 'ABI submitted identity absent'}
+            if($case -in $positive) {
+                $expected=if($case -eq 'LoaderCallback'){42}elseif($case -in @('Variadic','Variadic64')){17}else{1}
+                if($code -ne 0 -or $e.completion_reason -ne 'entry_return' -or $null -ne $e.error -or $e.guest_entry_return -ne $expected){throw "ABI guest control failed: $arch/$case : $($e.error)"}
+            } else {
+                $reason=switch -Regex ($case) {
+                    '^CrtStack$' {'return frame'}
+                    '^LoaderStack$' {'stack return contract'}
+                    'Gpr$' {'nonvolatile register'}
+                    'Vector$' {'vector register'}
+                    'Direction$' {'flags'}
+                    'Mxcsr$' {'MXCSR'}
+                    'Fpcw$' {'FPCW'}
+                    '^PowDomain$' {'complex'}
+                    '^PowZero$' {'negative power'}
+                    '^PowOverflow$' {'overflow'}
+                    '^Floor' {'nonfinite'}
+                    '^SinInfinity$' {'domain'}
+                }
+                if($code -ne 1 -or $null -ne $e.guest_entry_return -or -not $reason -or $e.error -notmatch [regex]::Escape($reason)){throw "ABI refusal failed: $arch/$case : $($e.error)"}
+            }
+            $records+=@{architecture=$arch;case=('abi-'+$case);completion=$e.completion_reason;instructions=$e.instruction_count;verified=$true}
+        }
+    }
+}
 # Direct worker execution must refuse to read submitted bytes outside confinement.
+if($Imports) {
+    foreach($arch in @('X86','X64')) {
+        foreach($case in @('ApiSet','DelayPid','DelayMissing','DelayUnused','DelayFlags','DelayAttributes','DelayModule','DelayDescriptor','DelayDll','DelayIat','DelayUnaligned','DelayLimit','DelayNames','DelayEmpty','DelayOrdinal','DelayHint','DelayName','DelayWrite')) {
+            $source=Join-Path $fixturesPath ($arch+'-imports-'+$case+'/imports.exe')
+            $run=Join-Path $root ($arch+'-imports-'+$case)
+            & $exe run $source --output $run --max-instructions 2000 *> ($run+'.console.log')
+            $code=$LASTEXITCODE
+            $manifest=Get-Content -LiteralPath (Join-Path $run 'manifest.json') -Raw | ConvertFrom-Json
+            $e=$manifest.result.execution
+            $c=$manifest.result.containment
+            if(-not $c.app_container -or -not $c.job_object -or -not $c.child_process_blocked -or $c.network_capabilities -ne 0){throw 'Imports containment missing'}
+            if($manifest.cleanup -ne 'restored' -or $manifest.result.input_sha256 -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()){throw 'Imports binding/cleanup changed'}
+            if($e.configuration.generated_only -or -not $e.configuration.initialized -or $e.configuration.guest_image_path -ne 'C:\emumee\imports.exe'){throw 'Imports submitted identity absent'}
+            $expectedReturn=switch($case){'DelayPid'{1024};'ApiSet'{42};'DelayUnused'{42};default{0}}
+            if($code -ne 0 -or $e.completion_reason -ne 'entry_return' -or $null -ne $e.error -or $e.guest_entry_return -ne $expectedReturn){throw "Imports execution failed: $arch/$case"}
+            if($case -in @('ApiSet','DelayUnused')) {
+                if(@($e.delay_imports).Count -ne 0){throw 'Imports were resolved eagerly'}
+            } else {
+                if(@($e.delay_imports).Count -ne 1){throw 'Delay observation absent'}
+                $row=$e.delay_imports[0]
+                if($case -eq 'DelayPid') {
+                    if($null -ne $row.error -or $null -eq $row.target -or $row.target -eq 0){throw 'Delay target not resolved'}
+                } elseif($null -eq $row.error -or $null -ne $row.target){throw 'Delay refusal evidence absent'}
+            }
+            if($e.delay_imports_omitted -ne 0){throw 'Unexpected delay observation loss'}
+            $records+=@{architecture=$arch;case=('imports-'+$case);completion=$e.completion_reason;instructions=$e.instruction_count;verified=$true}
+        }
+    }
+}
 $worker=Join-Path (Split-Path -Parent $exe) 'emumee-worker.exe'
 $refusalErrorPreference=$ErrorActionPreference
 try {
@@ -114,6 +185,33 @@ if($Layout) {
             if($null -eq $code -or $code -ne 2 -or (Test-Path -LiteralPath $run)){throw "Malformed layout published a run: $arch/$case"}
             if((Get-Content -LiteralPath ($run+'.log') -Raw) -notmatch [regex]::Escape($reason)){throw "Layout refusal reason changed: $arch/$case"}
             $refusals+=@{architecture=$arch;case=('layout-'+$case);exit_code=$code;verified=$true}
+        }
+    }
+}
+if($Imports) {
+    foreach($arch in @('X86','X64')) {
+        foreach($case in @('module','empty','hint','ordinal','iat_gap','iat_end','descriptor','alias','partial_alias')) {
+            $source=Join-Path $fixturesPath ($arch+'-imports-invalid-'+$case+'/imports.exe')
+            $run=Join-Path $root ($arch+'-imports-invalid-'+$case)
+            try {
+                $ErrorActionPreference='Continue'
+                $LASTEXITCODE=$null
+                & $exe run $source --output $run *> ($run+'.log')
+                $code=$LASTEXITCODE
+            } finally {$ErrorActionPreference=$refusalErrorPreference}
+            if($null -eq $code -or $code -ne 2 -or (Test-Path -LiteralPath $run)){throw "Malformed imports published a run: $arch/$case"}
+            $reason=switch($case) {
+                'module' {'invalid import module/IAT'}
+                'empty' {'empty import name'}
+                'hint' {'RVA exceeds image'}
+                'ordinal' {'reserved ordinal thunk bits'}
+                'iat_gap' {'IAT is outside mapped image ranges'}
+                'iat_end' {'IAT exceeds image'}
+                'descriptor' {'unterminated import descriptors'}
+                default {'overlapping import IAT slots'}
+            }
+            if((Get-Content -LiteralPath ($run+'.log') -Raw) -notmatch [regex]::Escape($reason)){throw "Import admission reason changed: $arch/$case"}
+            $refusals+=@{architecture=$arch;case=('imports-'+$case);exit_code=$code;verified=$true}
         }
     }
 }

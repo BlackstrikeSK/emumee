@@ -30,6 +30,10 @@ mod console_tests;
 mod cpu;
 #[cfg(test)]
 mod pe_layout_tests;
+#[cfg(test)]
+mod pe_import_tests;
+#[cfg(test)]
+mod pe_abi_tests;
 pub mod plan_runtime;
 pub mod user;
 pub use capture::run_owned as run_driver_runtime_fixture;
@@ -486,6 +490,8 @@ pub struct Execution {
     pub synthetic_providers: Vec<ProviderEvidence>,
     pub provider_denials: Vec<ProviderDenial>,
     pub provider_denials_omitted: u64,
+    pub delay_imports: Vec<api::DelayImportObservation>,
+    pub delay_imports_omitted: u64,
     pub kernel_pool: Option<emumee_core::pool::Pool>,
     pub kernel_pool_scope: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1632,6 +1638,8 @@ fn run_generated_with_fixture_configuration(
         synthetic_providers: trace.apis.providers.clone(),
         provider_denials:trace.apis.provider_denials.clone(),
         provider_denials_omitted:trace.apis.provider_denials_omitted,
+        delay_imports: trace.apis.delay_imports.clone(),
+        delay_imports_omitted: trace.apis.delay_imports_omitted,
         kernel_pool: trace.apis.kernel_mode.then(|| trace.apis.pool.clone()),
         kernel_pool_scope: trace.apis.kernel_mode.then_some("Bounded guest-only allocations with page backing. Uninitialized legacy/opt-out contents use deterministic 0xcd bytes. Physical paging, pool headers, NUMA, quota and verifier layouts are not modeled."),
         modeled_guest_regions: submitted_driver_service.as_ref().map(|_| {

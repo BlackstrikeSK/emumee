@@ -1,9 +1,13 @@
 //! Harmless deterministic PE fixtures, generated without any external input.
 use crate::pe::Architecture;
+mod abi;
+pub use abi::{AbiFixture, abi_probe};
 mod callback;
 mod dynamic_loader;
 mod native_loader;
 mod pe_layout;
+mod imports;
+pub use imports::{ImportFixture, import_probe};
 pub use dynamic_loader::{DynamicLoaderFixture, dynamic_loader_probe};
 pub use native_loader::{LoaderFixture, native_loader_probe};
 pub use pe_layout::{PeLayoutFixture, pe_layout_probe};

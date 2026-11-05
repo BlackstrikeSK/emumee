@@ -1,4 +1,4 @@
-//! Windows integer/pointer calling conventions. Guest addresses never become
+//! Windows integer/pointer and frozen floating calling conventions. Guest addresses never become
 //! host function pointers, including when an import name matches a host DLL.
 use crate::pe::Architecture;
 use serde::Serialize;
@@ -10,6 +10,7 @@ pub enum CallingConvention {
     Stdcall,
     Cdecl,
     Fastcall,
+    Float,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Register {
@@ -19,6 +20,10 @@ pub enum Register {
     Sp,
     R8,
     R9,
+    Xmm0,
+    Xmm1,
+    Xmm2,
+    Xmm3,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReturnType {
@@ -26,6 +31,7 @@ pub enum ReturnType {
     U32,
     Pointer,
     U64,
+    F64,
 }
 #[derive(Debug, Error)]
 #[error("Windows ABI: {0}")]
@@ -66,6 +72,20 @@ pub fn arguments_into(
         return Err(AbiError("argument count exceeds modeled limit"));
     }
     let arch = guest.architecture();
+    if convention == CallingConvention::Float {
+        if count > 4 {
+            return Err(AbiError("floating argument count exceeds modeled limit"));
+        }
+        for (slot, register) in output.iter_mut().zip([
+            Register::Xmm0,
+            Register::Xmm1,
+            Register::Xmm2,
+            Register::Xmm3,
+        ]) {
+            *slot = guest.register(register)?;
+        }
+        return Ok(());
+    }
     let width = arch.width();
     let sp = guest.register(Register::Sp)?;
     if arch == Architecture::X86 && sp > u32::MAX as u64 {
@@ -134,15 +154,25 @@ pub fn return_register_values(
     } else {
         value
     };
-    [(Register::Ax, ax), (Register::Dx, value >> 32)]
-        .into_iter()
-        .take(if kind == ReturnType::Void {
-            0
-        } else if architecture == Architecture::X86 && kind == ReturnType::U64 {
-            2
-        } else {
-            1
-        })
+    [
+        (
+            if kind == ReturnType::F64 {
+                Register::Xmm0
+            } else {
+                Register::Ax
+            },
+            if kind == ReturnType::F64 { value } else { ax },
+        ),
+        (Register::Dx, value >> 32),
+    ]
+    .into_iter()
+    .take(if kind == ReturnType::Void {
+        0
+    } else if architecture == Architecture::X86 && kind == ReturnType::U64 {
+        2
+    } else {
+        1
+    })
 }
 pub fn return_stub(
     architecture: Architecture,
@@ -172,6 +202,115 @@ pub fn return_stub(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    #[test]
+    fn abi_transport_matches_isolated_frozen_decoder_and_cleanup() {
+        let reference: serde_json::Value =
+            serde_json::from_str(include_str!("../../api-parity/abi-float-reference.json"))
+                .unwrap();
+        struct Frozen<'a>(&'a serde_json::Value);
+        impl GuestRead for Frozen<'_> {
+            fn architecture(&self) -> Architecture {
+                if self.0["architecture"] == "x64" {
+                    Architecture::X64
+                } else {
+                    Architecture::X86
+                }
+            }
+            fn register(&self, register: Register) -> Result<u64, AbiError> {
+                Ok(self.0["registers"][format!("{register:?}")]
+                    .as_u64()
+                    .unwrap())
+            }
+            fn memory(&self, address: u64, size: usize) -> Result<Vec<u8>, AbiError> {
+                Ok(self.0["stack"][address.to_string()]
+                    .as_u64()
+                    .unwrap()
+                    .to_le_bytes()[..size]
+                    .to_vec())
+            }
+        }
+        let vectors = reference["transport"]["vectors"].as_array().unwrap();
+        assert_eq!(vectors.len(), 56);
+        for vector in vectors {
+            let guest = Frozen(vector);
+            let arch = guest.architecture();
+            let convention = match vector["convention"].as_str().unwrap() {
+                "stdcall" => CallingConvention::Stdcall,
+                "cdecl" => CallingConvention::Cdecl,
+                "fastcall" => CallingConvention::Fastcall,
+                "float" => CallingConvention::Float,
+                _ => unreachable!(),
+            };
+            let count = vector["count"].as_u64().unwrap() as usize;
+            let expected: Vec<u64> = vector["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_u64().unwrap())
+                .collect();
+            assert_eq!(
+                arguments(&guest, convention, count).unwrap(),
+                expected,
+                "{vector}"
+            );
+            let stub = return_stub(arch, convention, count).unwrap();
+            let popped = if stub[0] == 0xc2 {
+                u16::from_le_bytes(stub[1..].try_into().unwrap()) as u64
+            } else {
+                0
+            };
+            assert_eq!(
+                0x2000 + arch.width() as u64 + popped,
+                vector["returned_sp"].as_u64().unwrap(),
+                "{vector}"
+            );
+        }
+    }
+    #[test]
+    fn floating_slots_preserve_all_bits_on_both_architectures() {
+        struct Floats(Architecture);
+        impl GuestRead for Floats {
+            fn architecture(&self) -> Architecture {
+                self.0
+            }
+            fn register(&self, register: Register) -> Result<u64, AbiError> {
+                Ok(match register {
+                    Register::Xmm0 => 0x8000000000000000,
+                    Register::Xmm1 => 0x7ff8000012345678,
+                    Register::Xmm2 => 0xfff0000000000000,
+                    Register::Xmm3 => 0x400921fb54442d18,
+                    _ => panic!("floating decode must not read GP state"),
+                })
+            }
+            fn memory(&self, _: u64, _: usize) -> Result<Vec<u8>, AbiError> {
+                panic!("floating decode must not read stack")
+            }
+        }
+        for arch in [Architecture::X86, Architecture::X64] {
+            assert_eq!(
+                arguments(&Floats(arch), CallingConvention::Float, 4).unwrap(),
+                [
+                    0x8000000000000000,
+                    0x7ff8000012345678,
+                    0xfff0000000000000,
+                    0x400921fb54442d18
+                ]
+            );
+            assert!(arguments(&Floats(arch), CallingConvention::Float, 5).is_err());
+            assert_eq!(
+                return_registers(arch, ReturnType::F64, 0x8000000000000000),
+                [(Register::Xmm0, 0x8000000000000000)]
+            );
+            assert_eq!(
+                return_stub(arch, CallingConvention::Float, 2).unwrap(),
+                if arch == Architecture::X86 {
+                    vec![0xc2, 8, 0]
+                } else {
+                    vec![0xc3]
+                }
+            );
+        }
+    }
     struct Probe {
         arch: Architecture,
         sp: u64,

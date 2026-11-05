@@ -2,38 +2,57 @@
 
 ## Current continuation checkpoint
 
-2026-11-04 M2 PE layout batch: the parser/mapping implementation and six core/
-four engine controls are complete. The first full run caught an exact raw-length
-managed-EH compatibility contract; that behavior was preserved, its existing test
-was not changed, and the next full workspace run passed 1,034 Rust tests.
-New source-generated x86/x64 submitted guests exercise tails, independent raw
-aliases, RW writes and RX/header/NX/gap faults; malformed layout admission and
-runtime-address collisions refuse. `docs/native-pe/m2-pe-layout.md` records the
-invariants, regression diagnosis and clone-safe reproduction.
+2026-11-04 M2 ABI batch: **the first three M2 checkboxes are complete**.
+The frozen XMM floating convention and msvcrt pow/floor/sin are implemented;
+x86 preserves 64-bit payloads and its frozen argc*4 cleanup quirk. Direct CPU
+controls qualify stdcall/cdecl/fastcall, x64 home/stack arguments, return widths
+and nonvolatile state. CRT CDECL and loader STDCALL3/Win64 callbacks have
+separate positive, nested-import and stack/GPR/vector/flags/MXCSR/FPCW controls.
+The x86 loader MXCSR preservation gap is fixed, not waived.
 
-Current release/qualification root: `output/rust-pe-m2-layout/`. Fresh offline
-release (227.077s), freeze (1.072s), 32-guest/10-refusal `-Layout` smoke (5.708s)
-and independent 344-file seal pass. Build-source hash is
-`706327dc0e92a6be0d86c3c35a0eb0f4ff85cf7f5280b9eef99b5b79eb76e405`.
-The exact binary hashes are in the audit document. Final current-source receipt:
-`final-validation/index.json`; dependency report `dependencies/report.json`;
-registration `registration-final/review.json`; ledger/status `final-ledger.json`
-and `final-status.json`. Missing ignored output after a clone requires recapture.
-M0's old bundle remains historical. Preserve all old outputs and match the
-recorded environment when checking receipts: dependency audit with
-`CARGO_NET_OFFLINE` unset, source validation with it set to `true`.
+All **1,047 Rust tests** pass (494 core, 477 engine, 76 other), strict all-target
+Clippy passes, and **199 independent frozen references** pass (143 math plus
+56 transport/cleanup vectors), with four Python reference integrity controls.
+The initial parallel full compile exhausted LLVM memory; serial one-job build
+and all tests pass. Failed development captures remain preserved with their
+corrected root causes in docs/native-pe/m2-abi.md.
 
-Only the first M2 checkbox is being completed; all staging/import/ABI obligations
-and M2's overall exit remain open, with zero API semantic closures. Next action:
-admission-negative controls and submitted companion/env reproducer, then bounded
-versioned staging and parent/worker binding. M3 bootstrap and M4 scheduling
-remain dependent, not parallel work. Preserve historical security boundaries.
+Fresh offline release (468.792s), freeze (1.155s) and **120 contained executions
+plus 28 admission/direct-worker refusals** (21.799s) pass. Those 120 include
+52 new ABI controls: 18 required returns and 34 required failure outcomes.
+Independent **1,320-file** sealing verifies current canonical build inputs,
+exact binaries, raw floating API observations, request/result/input bindings,
+AppContainer/job/child/network restrictions and cleanup. Build-source SHA-256:
+a85e653ccb26a4c3324f44cd81535bc52cee5b015860f6f20387cc70d7d3b56b.
+Seal fingerprint: 3b80c4bdbdf9261ca17cf2100ec62241f19760481e9f3d1d5c674907e91b5cb3.
 
-The operator requested source-only commit/push to the existing main branch.
-Check Git history/remote for the resulting integration; do not add local plans,
-generated evidence, binaries, samples, captures or build trees. Global API
-accounting remains 2,590 open contracts and 151 batches; only the refreshed source
-registration gate is verified. The bounded M2 smoke does not promote M10.
+Current root: output/rust-pe-m2-abi/. Generated fixtures are under
+fixtures-closed-serial/; fresh release bundle/, submitted qualification/,
+qualified-smoke.json, final-validation/index.json, dependencies/report.json,
+registration-final/review.json, packaged dispatch.log, final-ledger.json and
+final-status.json anchor this checkpoint. The final full safe-source receipt
+must be captured after maintained text/evidence stabilize and independently
+checked before closure. Every receipt must be rechecked before reuse; missing
+ignored captures after a clone require recapture. Previous M0/layout/import
+captures and failed attempts remain historical. Dependency audit/check must
+unset BOTH CARGO_NET_OFFLINE and RUST_TEST_THREADS; source validation uses
+CARGO_NET_OFFLINE=true and RUST_TEST_THREADS=1.
+
+Next executable action: **M2 bounded versioned staging**. Audit user_input.rs,
+user_controller.rs and user_worker.rs against the frozen companion/VFS,
+environment/quoting/export option contract, then implement strict hashed
+admission, collision/architecture/quota/path/reparse/race refusals and actual
+contained controls. Never search host DLL directories. Next two ready batches
+are exact parent/worker byte/option binding with total bounds/rollback, then M3
+bootstrap/loader/static-TLS qualification after M2's exit gate. No ABI work is
+deferred to those items. M2 as a whole and the later milestones remain open.
+
+Global accounting preserves **2,590 open semantic contracts and 151 batches**;
+new binding availability is 1,819 missing/771 unverified. One source-registration
+gate is freshly verified and the seven other global gates stay open. ABI
+mechanism/package controls do not invent API semantic closures or M10 completion.
+No commit, push, branch, security-setting change, quarantine restoration or
+supplied-sample execution occurred. Preserve all inherited edits and captures.
 
 ### Historical M0 completion checkpoint
 

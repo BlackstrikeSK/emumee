@@ -111,6 +111,27 @@ impl PeImage {
     pub fn accepted_headers(&self) -> AcceptedHeaders {
         self.accepted_headers
     }
+    fn contains_image_range(&self, start: u32, size: u32) -> bool {
+        let end = u64::from(start) + u64::from(size);
+        let mut cursor = u64::from(start);
+        for _ in 0..=self.sections.len() {
+            let covered = if cursor < u64::from(self.headers_size) {
+                Some(u64::from(self.headers_size))
+            } else {
+                self.sections.iter().find_map(|section| {
+                    let first = u64::from(section.rva);
+                    let last = first + u64::from(section.virtual_size.max(section.raw_size));
+                    (cursor >= first && cursor < last).then_some(last)
+                })
+            };
+            let Some(covered) = covered else { return false };
+            if end <= covered {
+                return true;
+            }
+            cursor = covered;
+        }
+        false
+    }
     pub fn parse(data: &[u8], name: &str) -> Result<Self> {
         if data.len() > MAX_INPUT {
             return Err(PeError("input exceeds 128 MiB"));
@@ -319,6 +340,7 @@ impl PeImage {
         Err(PeError("unterminated import name"))
     }
     fn parse_imports(&mut self, data: &[u8]) -> Result<()> {
+        let mut slots = std::collections::BTreeSet::new();
         let directory = self.directories[1];
         if directory.rva == 0 {
             return Ok(());
@@ -342,7 +364,13 @@ impl PeImage {
             let original = u32_at(row, 0)?;
             let iat = u32_at(row, 16)?;
             let module = self.ascii(data, u32_at(row, 12)?)?;
-            if module.is_empty() || module.contains(['/', '\\', ':']) || iat == 0 {
+            if module.is_empty()
+                || module.len() > 128
+                || !module
+                    .bytes()
+                    .all(|unit| unit.is_ascii_alphanumeric() || b"._-".contains(&unit))
+                || iat == 0
+            {
                 return Err(PeError("invalid import module/IAT"));
             }
             self.sample.imports.push(module.clone());
@@ -371,10 +399,18 @@ impl PeImage {
                     break;
                 }
                 let name = if value & (1u64 << (width * 8 - 1)) != 0 {
+                    if value & !((1u64 << (width * 8 - 1)) | 0xffff) != 0 {
+                        return Err(PeError("reserved ordinal thunk bits"));
+                    }
                     ImportName::Ordinal {
                         ordinal: value as u16,
                     }
                 } else {
+                    self.rva(
+                        data,
+                        u32::try_from(value).map_err(|_| PeError("import RVA exceeds32 bits"))?,
+                        2,
+                    )?;
                     ImportName::Name(
                         self.ascii(
                             data,
@@ -385,12 +421,26 @@ impl PeImage {
                         )?,
                     )
                 };
+                if matches!(&name, ImportName::Name(value) if value.is_empty()) {
+                    return Err(PeError("empty import name"));
+                }
                 let iat_rva = iat
                     .checked_add(displacement)
                     .ok_or(PeError("IAT overflow"))?;
                 if iat_rva as u64 + width as u64 > self.image_size as u64 {
                     return Err(PeError("IAT exceeds image"));
                 }
+                if !self.contains_image_range(iat_rva, width as u32) {
+                    return Err(PeError("IAT is outside mapped image ranges"));
+                }
+                if slots
+                    .range(iat_rva.saturating_sub(width as u32 - 1)..iat_rva + width as u32)
+                    .next()
+                    .is_some()
+                {
+                    return Err(PeError("overlapping import IAT slots"));
+                }
+                slots.insert(iat_rva);
                 self.imports.push(Import {
                     module: module.clone(),
                     name,
@@ -405,6 +455,15 @@ impl PeImage {
     }
 
     pub fn materialize(&self, data: &[u8], base: u64) -> Result<Vec<u8>> {
+        self.materialize_with_relocation_types(data, base, &[1, 2, 3, 4, 10])
+    }
+
+    pub(crate) fn materialize_with_relocation_types(
+        &self,
+        data: &[u8],
+        base: u64,
+        allowed_types: &[u16],
+    ) -> Result<Vec<u8>> {
         if self.image_size == 0
             || self.image_size > MAX_IMAGE
             || self.image_size % 4096 != 0
@@ -471,30 +530,71 @@ impl PeImage {
             let header = self.rva(data, block_rva, 8)?;
             let page = u32_at(header, 0)?;
             let block_size = u32_at(header, 4)?;
-            if block_size < 8 || block_size % 2 != 0 || block_size > directory.size - offset {
+            if page % 4096 != 0
+                || block_size < 8
+                || block_size % 4 != 0
+                || block_size > directory.size - offset
+            {
                 return Err(PeError("invalid relocation block"));
             }
             let block = self.rva(data, block_rva, block_size as usize)?;
-            for at in (8..block_size as usize).step_by(2) {
+            let mut at = 8;
+            while at < block_size as usize {
                 let entry = u16_at(block, at)?;
+                at += 2;
                 let kind = entry >> 12;
                 if kind == 0 {
                     continue;
                 }
+                if !allowed_types.contains(&kind) {
+                    return Err(PeError("unsupported relocation type"));
+                }
                 let target =
-                    page.checked_add((entry & 0xfff) as u32)
+                    page.checked_add(u32::from(entry & 0xfff))
                         .ok_or(PeError("relocation target overflow"))? as usize;
                 let delta = base.wrapping_sub(self.image_base);
-                match (kind, self.sample.architecture) {
-                    (10, Architecture::X64) => {
-                        let value = u64_at(&image, target)?.wrapping_add(delta);
-                        image[target..target + 8].copy_from_slice(&value.to_le_bytes());
+                let width = match kind {
+                    1 | 2 | 4 => 2,
+                    3 => 4,
+                    10 => 8,
+                    _ => return Err(PeError("unsupported relocation type")),
+                };
+                if !self.contains_image_range(target as u32, width) {
+                    return Err(PeError("relocation target is outside mapped image ranges"));
+                }
+                match kind {
+                    1 => {
+                        let value =
+                            (u64::from(u16_at(&image, target)?).wrapping_add(delta) >> 16) as u16;
+                        image[target..target + 2].copy_from_slice(&value.to_le_bytes());
                     }
-                    (3, Architecture::X86) => {
+                    2 => {
+                        let value = u16_at(&image, target)?.wrapping_add(delta as u16);
+                        image[target..target + 2].copy_from_slice(&value.to_le_bytes());
+                    }
+                    3 => {
                         let value = u32_at(&image, target)?.wrapping_add(delta as u32);
                         image[target..target + 4].copy_from_slice(&value.to_le_bytes());
                     }
-                    _ => return Err(PeError("unsupported relocation type")),
+                    4 => {
+                        if at >= block_size as usize {
+                            return Err(PeError("HIGHADJ relocation has no addend"));
+                        }
+                        let addend = page
+                            .checked_add(u32::from(u16_at(block, at)? & 0xfff))
+                            .ok_or(PeError("HIGHADJ addend overflow"))?;
+                        at += 2;
+                        let value = ((u64::from(u16_at(&image, target)?) << 16)
+                            .wrapping_add(u64::from(addend))
+                            .wrapping_add(delta)
+                            >> 16) as u16;
+                        image[target..target + 2].copy_from_slice(&value.to_le_bytes());
+                    }
+                    10 => {
+                        let value = u64_at(&image, target)?.wrapping_add(delta);
+                        image[target..target + 8].copy_from_slice(&value.to_le_bytes());
+                    }
+                    _ => unreachable!(),
                 }
             }
             offset += block_size;

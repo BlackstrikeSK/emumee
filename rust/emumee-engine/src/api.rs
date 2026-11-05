@@ -11,8 +11,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use unicorn_engine::{RegisterX86, Unicorn, unicorn_const::Prot};
 mod allocation;
+mod delay_imports;
+pub use delay_imports::Observation as DelayImportObservation;
 pub(crate) mod callbacks;
 mod crt;
+mod crt_math;
+#[cfg(test)]
+mod abi_tests;
 pub(crate) mod crt_startup;
 pub(crate) mod dynamic_loader;
 mod files;
@@ -103,6 +108,7 @@ enum Model {
     ModuleHandleA,
     ModuleHandleW,
     Procedure,
+    DelayImport,
     Pid,
     LastError,
     SetError,
@@ -168,6 +174,7 @@ enum Model {
     Internet(internet::Call),
     Heap(heap::Call),
     Crt(crt::Call),
+    CrtMath(crt_math::Call),
 }
 #[derive(Clone)]
 pub(super) struct Binding {
@@ -268,6 +275,8 @@ pub(super) struct ApiState {
     protected_catalog: Option<providers::CatalogStorage>,
     pub provider_denials: Vec<ProviderDenial>,
     pub provider_denials_omitted: u64,
+    pub delay_imports: Vec<delay_imports::Observation>,
+    pub delay_imports_omitted: u64,
     pub pool: emumee_core::pool::Pool,
     pub providers: Vec<ProviderEvidence>,
     pub memory: AddressSpace,
@@ -327,6 +336,8 @@ impl ApiState {
     ) -> Self {
         Self {
             broker: None,
+            delay_imports: Vec::new(),
+            delay_imports_omitted: 0,
             network: NetworkReport::default(),
             heaps: emumee_core::heap::Heaps::default(),
             callbacks: callbacks::State::new(architecture),
@@ -658,7 +669,19 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
             return binding;
         }
     }
+    if module == "msvcrt" {
+        if let Some((call, count)) = crt_math::definition(name) {
+            binding.model = Model::CrtMath(call);
+            binding.count = count;
+            binding.convention = C::Float;
+            binding.returns = T::F64;
+            return binding;
+        }
+    }
     let definition = match (module, name) {
+        ("api-ms-win-core-delayload-l1-1-1" | "kernelbase", "ResolveDelayLoadedAPI") => {
+            (Model::DelayImport, 6, C::Stdcall, T::Pointer)
+        }
         ("urlmon", "URLDownloadToFileA") => (Model::UrlDownloadA, 5, C::Stdcall, T::U32),
         ("kernel32" | "kernelbase", "GetProcessHeap") => {
             (Model::Heap(heap::Call::Process), 0, C::Stdcall, T::Pointer)
@@ -813,13 +836,13 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         ("ntoskrnl", "MmGetSystemRoutineAddress") => {
             (Model::SystemRoutine, 1, C::Stdcall, T::Pointer)
         }
-        ("kernel32" | "kernelbase", "GetModuleHandleA") => {
+        ("kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0", "GetModuleHandleA") => {
             (Model::ModuleHandleA, 1, C::Stdcall, T::Pointer)
         }
-        ("kernel32" | "kernelbase", "GetModuleHandleW") => {
+        ("kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0", "GetModuleHandleW") => {
             (Model::ModuleHandleW, 1, C::Stdcall, T::Pointer)
         }
-        ("kernel32" | "kernelbase", "GetProcAddress") => {
+        ("kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0", "GetProcAddress") => {
             (Model::Procedure, 2, C::Stdcall, T::Pointer)
         }
         ("kernel32" | "kernelbase", "GetCurrentProcessId") => (Model::Pid, 0, C::Stdcall, T::U32),
@@ -927,87 +950,49 @@ pub(crate) fn describe(architecture: Architecture, module: &str, name: &str) -> 
     };
     serde_json::json!({"module":module,"export":name,"architecture":architecture,
         "dispatch":class,"argc":binding.count,"convention":binding.convention,
-        "return_type":match binding.returns {T::Void=>"void",T::U32=>"u32",T::Pointer=>"pointer",T::U64=>"u64"},
+        "return_type":match binding.returns {T::Void=>"void",T::U32=>"u32",T::Pointer=>"pointer",T::U64=>"u64",T::F64=>"f64"},
         "semantic_parity_verified":false})
 }
-pub(super) fn bind(engine: &mut Unicorn<Trace>, pe: &PeImage) -> Result<()> {
-    if pe.imports.is_empty() {
-        return Ok(());
-    }
-    ensure!(
-        pe.imports.len() <= 4096,
-        "Generated import table exceeds the current4096-import model bound"
-    );
-    let size = 65536;
+fn install_binding(engine: &mut Unicorn<Trace>, binding: Binding) -> Result<u64> {
     let base = engine.get_data().apis.base;
+    if let Some(index) = engine.get_data().apis.bindings.iter().position(|row| row.name == binding.name) {
+        return Ok(base + index as u64 * 16);
+    }
+    let index = engine.get_data().apis.bindings.len();
+    ensure!(index < 4096, "Windows API binding count exceeds 4096");
     if engine.get_data().apis.end == base {
-        // Gate bytes are populated through paused host writes; guest writes
-        // were never part of the declared RX stub mapping.
-        uc(engine.mem_map(base, size, Prot::READ | Prot::EXEC))?;
-        engine.get_data_mut().apis.memory.map(
-            base,
-            size,
-            P::RX,
-            None,
-            "generated Windows API stubs",
-        )?;
-        engine.get_data_mut().apis.end = base + size;
+        uc(engine.mem_map(base, 65536, Prot::READ | Prot::EXEC))?;
+        engine.get_data_mut().apis.memory.map(base, 65536, P::RX, None, "generated Windows API stubs")?;
+        engine.get_data_mut().apis.end = base + 65536;
     }
-    let mut addresses = BTreeMap::new();
-    for (index, binding) in engine.get_data().apis.bindings.iter().enumerate() {
-        addresses.insert(binding.name.clone(), base + index as u64 * 16);
-    }
-    for import in &pe.imports {
-        match engine
-            .get_data()
-            .apis
-            .modules
-            .resolve(&import.module, &import.name)?
-        {
-            emumee_core::modules::Resolution::Found { address, .. } => {
-                crate::cpu::write(
-                    engine,
-                    pe.image_base + import.iat_rva as u64,
-                    &address.to_le_bytes()[..pe.sample.architecture.width()],
-                )?;
-                continue;
-            }
-            emumee_core::modules::Resolution::MissingExport { module, .. } => {
-                bail!("Guest export is missing from loaded module {module}")
-            }
-            emumee_core::modules::Resolution::MissingModule { .. } => {}
+    let address = base + index as u64 * 16;
+    crate::cpu::write(engine, address, &return_stub(engine.get_data().architecture, &binding)?)?;
+    engine.get_data_mut().apis.bindings.push(Arc::new(binding));
+    Ok(address)
+}
+fn import_target(engine: &mut Unicorn<Trace>, module: &str, symbol: &ImportName) -> Result<u64> {
+    match engine.get_data().apis.modules.resolve(module, symbol)? {
+        emumee_core::modules::Resolution::Found { address, .. } => Ok(address),
+        emumee_core::modules::Resolution::MissingExport { module, .. } => {
+            bail!("Guest export is missing from loaded module {module}")
         }
-        let name = match &import.name {
-            ImportName::Name(name) => name.clone(),
-            ImportName::Ordinal { ordinal } => format!("#{ordinal}"),
-        };
-        let binding = definition(pe.sample.architecture, &import.module, &name);
-        let key = binding.name.clone();
-        let address = if let Some(address) = addresses.get(&key) {
-            *address
-        } else {
-            ensure!(
-                addresses.len() < 4096,
-                "Windows API binding count exceeds 4096"
-            );
-            let address = base + addresses.len() as u64 * 16;
-            crate::cpu::write(
-                engine,
-                address,
-                &return_stub(pe.sample.architecture, &binding)?,
-            )?;
-            engine.get_data_mut().apis.bindings.push(Arc::new(binding));
-            addresses.insert(key, address);
-            address
-        };
-        let pointer = address.to_le_bytes();
-        crate::cpu::write(
-            engine,
-            pe.image_base + import.iat_rva as u64,
-            &pointer[..pe.sample.architecture.width()],
-        )?;
+        emumee_core::modules::Resolution::MissingModule { module, symbol, .. } => {
+            let name = match symbol {
+                ImportName::Name(name) => name,
+                ImportName::Ordinal { ordinal } => format!("#{ordinal}"),
+            };
+            let binding = definition(engine.get_data().architecture, &module, &name);
+            install_binding(engine, binding)
+        }
     }
-    uc(engine.mem_protect(base, size, Prot::READ | Prot::EXEC))?;
+}
+pub(super) fn bind(engine: &mut Unicorn<Trace>, pe: &PeImage) -> Result<()> {
+    ensure!(pe.imports.len() <= 4096, "Generated import table exceeds the current4096-import model bound");
+    for import in &pe.imports {
+        let address = import_target(engine, &import.module, &import.name)?;
+        crate::cpu::write(engine, pe.image_base + import.iat_rva as u64,
+            &address.to_le_bytes()[..pe.sample.architecture.width()])?;
+    }
     Ok(())
 }
 pub(super) fn initialize_metadata_providers(
@@ -1045,6 +1030,10 @@ fn native_register(architecture: Architecture, register: R) -> RegisterX86 {
         (Architecture::X64, R::Sp) => RegisterX86::RSP,
         (_, R::R8) => RegisterX86::R8,
         (_, R::R9) => RegisterX86::R9,
+        (_, R::Xmm0) => RegisterX86::XMM0,
+        (_, R::Xmm1) => RegisterX86::XMM1,
+        (_, R::Xmm2) => RegisterX86::XMM2,
+        (_, R::Xmm3) => RegisterX86::XMM3,
         (_, R::Ax) => RegisterX86::EAX,
         (_, R::Cx) => RegisterX86::ECX,
         (_, R::Dx) => RegisterX86::EDX,
@@ -1057,6 +1046,11 @@ impl GuestRead for Frame<'_, '_> {
         self.0.get_data().architecture
     }
     fn register(&self, register: R) -> std::result::Result<u64, AbiError> {
+        if matches!(register, R::Xmm0 | R::Xmm1 | R::Xmm2 | R::Xmm3) {
+            let bytes = self.0.reg_read_long(native_register(self.architecture(), register))
+                .map_err(|_| AbiError("cannot read floating argument register"))?;
+            return Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()));
+        }
         self.0
             .reg_read(native_register(self.architecture(), register))
             .map_err(|_| AbiError("cannot read argument register"))
@@ -1246,6 +1240,7 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
             providers::call(engine, binding.model, args)?
         }
         Model::DynamicLoader(call) => dynamic_loader::invoke(engine, call, args)?,
+        Model::DelayImport => delay_imports::invoke(engine, args),
         Model::Unsupported => bail!("Unsupported Windows API: {}", binding.name),
         Model::UrlDownloadA => network::download(engine, args, false)?,
         Model::UrlDownloadW => network::download(engine, args, true)?,
@@ -1279,6 +1274,7 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         }
         Model::Mdl(call) => mdl::call(engine, call, args)?,
         Model::Crt(call) => crt::invoke(engine, args, call)?,
+        Model::CrtMath(call) => crt_math::invoke(args, call)?,
         Model::Pid => 1024,
         Model::LastError => engine.get_data().apis.last_error as u64,
         Model::SetError => {
@@ -1546,6 +1542,12 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
     for (register, value) in
         abi::return_register_values(engine.get_data().architecture, binding.returns, value)
     {
+        if register == R::Xmm0 {
+            let mut bytes = [0; 16];
+            bytes[..8].copy_from_slice(&value.to_le_bytes());
+            uc(engine.reg_write_long(RegisterX86::XMM0, &bytes))?;
+            continue;
+        }
         uc(engine.reg_write(
             native_register(engine.get_data().architecture, register),
             value,

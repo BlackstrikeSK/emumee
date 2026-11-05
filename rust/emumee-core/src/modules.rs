@@ -82,7 +82,11 @@ pub struct ModuleCatalog {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Resolution {
     Found { address: u64, chain: Vec<String> },
-    MissingModule { module: String },
+    MissingModule {
+        module: String,
+        symbol: ImportName,
+        chain: Vec<String>,
+    },
     MissingExport { module: String, symbol: ImportName },
 }
 impl ModuleCatalog {
@@ -220,7 +224,11 @@ impl ModuleCatalog {
             }
             chain.push(key);
             let Some(module) = self.modules.get(&name) else {
-                return Ok(Resolution::MissingModule { module: name });
+                return Ok(Resolution::MissingModule {
+                    module: name,
+                    symbol,
+                    chain,
+                });
             };
             let Some(target) = module.target(&symbol) else {
                 return Ok(Resolution::MissingExport {

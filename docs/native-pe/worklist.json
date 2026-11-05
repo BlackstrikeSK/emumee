@@ -5,34 +5,34 @@
   "feature_matrix": "rust/api-parity/native-feature-matrix.md",
   "api_partition": "docs/native-pe/api-batches.json",
   "validation_policy": "docs/native-pe/validation-policy.json",
-  "validation_index": "output/rust-pe-m2-layout/final-validation/index.json",
-  "dependency_integrity_report": "output/rust-pe-m2-layout/dependencies/report.json",
+  "validation_index": "output/rust-pe-m2-abi/final-validation/index.json",
+  "dependency_integrity_report": "output/rust-pe-m2-abi/dependencies/report.json",
   "baseline_failure_classification": "docs/native-pe/baseline-failures.md",
   "bounded_m0_package_smoke": "docs/native-pe/m0-package-smoke.md",
   "effective_registration_review": "docs/native-pe/effective-registration-review.md",
-  "effective_registration_report": "output/rust-pe-m2-layout/registration-final/review.json",
+  "effective_registration_report": "output/rust-pe-m2-abi/registration-final/review.json",
   "architectures": ["x86", "x64"],
   "features": ["N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10", "N11", "N12", "N13", "N14", "N15", "N16", "N17", "N18", "N19", "N20"],
   "batches": [
     {
       "id": "M0-effective-baseline", "status": "closed", "depends_on": [],
       "features": ["N18", "N19", "N20"],
-      "next_action": "M0 source/review/classification and bounded same-build smoke are complete; preserve the exact evidence and proceed to M2 request/staging. M10 qualification and semantic parity remain open",
+      "next_action": "M0 source/review/classification and bounded same-build smoke are complete; preserve the evidence and proceed through M2 foundations. M10 qualification and semantic parity remain open",
       "exit_tests": ["static inventory matches frozen hashes", "effective registration disposition", "serial workspace tests", "strict workspace lint", "same-build contained harmless smoke"],
       "blocker": null
     },
     {
       "id": "M1-closure-accounting", "status": "closed", "depends_on": [],
       "features": [],
-      "next_action": "Source tooling is complete; keep policy and validation receipts current. M0 effective baseline must close before M2",
+      "next_action": "Source tooling and the M0 baseline are complete; keep policy and validation receipts current while closing M2",
       "exit_tests": ["preserved closure", "dependency invalidation", "inventory drift rejection", "independent data and architecture rows", "false completion rejection", "hashed artifact/source receipts", "conservative affected-suite selection", "measured full-suite timing baseline"],
       "blocker": null
     },
     {
       "id": "M2-request-staging", "status": "in_progress", "depends_on": ["M0-effective-baseline", "M1-closure-accounting"],
       "features": ["N01", "N02", "N03", "N04", "N05", "N07", "N09"],
-      "completed_checkboxes": [{"id": "pe-layout-audit", "review": "docs/native-pe/m2-pe-layout.md"}],
-      "next_action": "PE layout audit is complete. Continue request-admission negative controls and a harmless submitted companion/env reproducer before versioning bounded hashed staging; preserve binding and reject host paths",
+      "completed_checkboxes": [{"id": "pe-layout-audit", "review": "docs/native-pe/m2-pe-layout.md"}, {"id": "import-relocation-resolution", "review": "docs/native-pe/m2-import-resolution.md"}, {"id": "abi-qualification", "review": "docs/native-pe/m2-abi.md"}],
+      "next_action": "Layout, import/relocation resolution and ABI qualification are complete. Implement bounded versioned hashed companion/VFS/environment/option staging next, then exact parent/worker binding and rollback",
       "exit_tests": ["versioned admission", "hash-bound staged inputs", "parent verification", "x86 and x64 real guest controls", "contained package regression"],
       "blocker": null
     },

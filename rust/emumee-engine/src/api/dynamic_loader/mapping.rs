@@ -262,8 +262,19 @@ fn bindings(
                 }
                 address
             }
-            Resolution::MissingModule { .. } => {
-                modeled_external(engine, &import.module, &import.name)?
+            Resolution::MissingModule {
+                module,
+                symbol,
+                chain,
+            } => {
+                actual_edges(
+                    engine,
+                    catalog,
+                    owner,
+                    &chain[..chain.len().saturating_sub(1)],
+                    &mut edges,
+                )?;
+                modeled_external(engine, &module, &symbol)?
             }
             Resolution::MissingExport { module, .. } => {
                 bail!("Dynamic DLL import missing from actual loaded {module}")

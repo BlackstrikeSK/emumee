@@ -91,12 +91,36 @@ fn binding_edges(
             Resolution::MissingExport { module, .. } => {
                 bail!("Static dependency export is missing from {module}")
             }
-            Resolution::MissingModule { .. } => {
-                let name = match &import.name {
+            Resolution::MissingModule {
+                module,
+                symbol,
+                chain,
+            } => {
+                let mut previous = owner;
+                for followed in chain.iter().take(chain.len().saturating_sub(1)) {
+                    let name = followed
+                        .split_once('!')
+                        .context("Invalid external forwarder receipt")?
+                        .0;
+                    let id = engine
+                        .get_data()
+                        .apis
+                        .modules
+                        .module(name)?
+                        .context("Forwarder owner absent")?
+                        .identity();
+                    if owned.contains(&id) {
+                        if !dependencies.contains(&(previous, id)) {
+                            dependencies.push((previous, id));
+                        }
+                        previous = id;
+                    }
+                }
+                let name = match &symbol {
                     ImportName::Name(name) => name.clone(),
                     ImportName::Ordinal { ordinal } => format!("#{ordinal}"),
                 };
-                let expected = definition(pe.sample.architecture, &import.module, &name);
+                let expected = definition(pe.sample.architecture, &module, &name);
                 let apis = &engine.get_data().apis;
                 let index = installed
                     .checked_sub(apis.base)
@@ -308,11 +332,7 @@ pub(super) fn invoke_inner(
         Vec::new()
     };
     let flags = uc(engine.reg_read(RegisterX86::EFLAGS))?;
-    let mxcsr = if arch == Architecture::X64 {
-        Some(uc(engine.reg_read(RegisterX86::MXCSR))?)
-    } else {
-        None
-    };
+    let mxcsr = uc(engine.reg_read(RegisterX86::MXCSR))?;
     ensure!(flags & 0x400 == 0, "Loader caller has direction flag set");
     let width = arch.width() as u64;
     let (sp, expected_sp) = if arch == Architecture::X64 {
@@ -387,12 +407,10 @@ pub(super) fn invoke_inner(
                 "Initializer changed nonvolatile vector register {reg:?}"
             );
         }
-        if let Some(saved) = mxcsr {
-            ensure!(
-                (uc(engine.reg_read(RegisterX86::MXCSR))? ^ saved) & 0xffc0 == 0,
-                "Initializer changed nonvolatile MXCSR control bits"
-            );
-        }
+        ensure!(
+            (uc(engine.reg_read(RegisterX86::MXCSR))? ^ mxcsr) & 0xffc0 == 0,
+            "Initializer changed nonvolatile MXCSR control bits"
+        );
         let actual_flags = uc(engine.reg_read(RegisterX86::EFLAGS))?;
         ensure!(
             actual_flags & 0x400 == 0 && (actual_flags ^ flags) & 0x3200 == 0,

@@ -103,6 +103,26 @@ pub(crate) struct Request {
     pub timeout_us: u64,
 }
 impl Prepared {
+    pub(crate) fn seed_submitted_files(
+        &mut self,
+        files: &[emumee_core::filesystem::SeedFile<'_>],
+    ) -> Result<()> {
+        let candidate = self.state.filesystem.with_submitted_files(files)?;
+        for file in files {
+            self.machine.seeded_file_hashes.insert(
+                candidate.path(file.path)?,
+                emumee_core::report_bundle::digest(file.bytes),
+            );
+        }
+        self.machine
+            .receipt
+            .as_mut()
+            .context("Persona receipt absent")?
+            .seeded_files = self.machine.seeded_file_hashes.len();
+        self.state.filesystem = candidate;
+        Ok(())
+    }
+
     pub(crate) fn require_owned_paging(&self) -> Result<()> {
         ensure!(
             self.architecture == Architecture::X64

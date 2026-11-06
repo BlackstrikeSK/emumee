@@ -10,7 +10,8 @@ Build and package the Rust workspace:
 
 `run INPUT --output FRESH_DIRECTORY` admits submitted native x86/x64 EXE and
 DLL images. Options are `--persona JSON`, `--max-instructions N` (default
-100,000,000), and `--timeout-us N` (default 120,000,000). Arguments after `--`
+100,000,000), `--timeout-us N` (default 120,000,000), and `--inputs JSON`.
+Arguments after `--`
 become guest arguments. The output directory must be new and outside the frozen
 bundle. Ordinary build-tree binaries cannot launch this role.
 
@@ -39,8 +40,7 @@ The return/UINT exit-code distinction follows Microsoft's
 the documented detach and full process lifecycle are not claimed by this profile.
 
 This entrypoint does not establish full Python/Speakeasy compatibility. Managed
-assemblies, drivers, export-as-entry execution, general static companion staging,
-storage TLS, arbitrary Windows APIs and a general Windows process runtime remain
+assemblies, drivers, storage TLS, arbitrary Windows APIs and a general Windows process runtime remain
 outside this submitted native profile. Drivers retain `submitted-driver`; managed
 IL retains its separate bounded fixture/interpreter path. Unsupported imports
 stop explicitly. Python is not invoked by this path.
@@ -62,6 +62,83 @@ cases, plus direct-worker and invalid CLI refusal controls. The frozen bundle is
 engine test attempt aborted on a large allocation; the complete serial suite
 passed with unchanged source. This evidence covers the harmless controls, not
 representative malware compatibility.
+
+## Explicit companion, VFS and invocation inputs
+
+`--inputs FILE.json` accepts this strict development/user-authored specification:
+
+```json
+{
+  "schema": 1,
+  "files": [
+    {"kind": "companion", "source": "helper.dll", "guest_path": "C:\\app\\helper.dll"},
+    {"kind": "file", "source": "data.bin", "guest_path": "C:\\app\\data.bin"}
+  ],
+  "invocation": {
+    "environment": [["TOKEN", "value"], ["REMOVE_ME", null]],
+    "force_quotes": [0],
+    "all_exports": false
+  }
+}
+```
+
+Sources are explicit host files; relative sources resolve beside the input JSON.
+There is no recursive host-directory import or DLL search. Companion names come
+from guest basenames and must be same-architecture native DLLs. Their exact guest
+paths and contents are visible through the existing guest VFS/module catalog.
+`file` entries need not be PE files and may be empty. Guest paths are absolute
+DOS paths on a persona-declared volume. Missing intermediate guest directories
+are created before guest startup; explicit files replace persona seed files.
+
+The specification is at most 64 KiB, with at most 128 files, 16 companions,
+32 MiB per staged file, 128 MiB total staged bytes, and 512 MiB summed primary/
+companion mapped-image declarations. The guest VFS also enforces its existing
+128 MiB total including persona seeds. Admission rejects case-insensitive guest
+or companion-name collisions, file/directory aliases, traversal/dot/empty path
+components, UNC/device/ADS paths, reserved DOS names and trailing dots/spaces.
+There are at most 256 unique case-insensitive environment overrides and 32 KiB
+of combined override names/values. `null` removes a variable. Quote indices are
+zero-based positions in arguments after `--`, not the image name. Forced quoting
+preserves the frozen legacy spelling, including a final backslash; quotes inside
+a force-quoted argument are rejected. Ordinary argument quoting remains automatic.
+
+`all_exports` opts into the first ten primary export entries after normal startup,
+skipping the exact name `DllMain`, under the same run-wide instruction/time budgets.
+Entries follow the frozen parser: name-table order (aliases count separately),
+then unnamed nonzero ordinals. Forwarder entries retain their original export
+RVA, not an implicitly resolved target; non-executable forwarder data faults.
+Ordinary
+exports receive four distinct writable guest argument buffers; `ServiceMain*`
+receives argc/argv for the frozen `IPRIP` service name (A is UTF8, W/unsuffixed
+is UTF16). Pointer addresses are guest allocator results, not host pointers or a
+Windows address-layout guarantee. Report `native_loader.export_entries` records
+each attempted entry, arguments, instruction interval and return/failure. Export
+completion does not overwrite the observed primary entry return. An export fault
+or budget stop suppresses later exports. This is not a claim of M3 lifecycle or
+arbitrary exported-function ABI parity.
+
+The controller publishes a schema-2 hashed request; schema-1 requests remain
+accepted only without extensions. Staged host names are fixed ordinal slots
+`inputs/0000.bin`, never guest paths. The worker independently verifies every
+size/hash/kind/architecture before engine publication; the parent rechecks the
+staged inputs and binds the result to the whole request hash. Host capture uses
+one identity-checked no-write/no-delete-share handle per file and rejects active
+writers, hardlinks and reparse/symlink paths. A source changed after capture is
+not reopened: the captured byte snapshot is authoritative. Invalid input/model
+seed admission does not create an output run. A partial host staging write rolls
+back only newly owned files/directories; existing output roots are never replaced.
+Worker admission/load failures retain bounded diagnostic/stop receipts but publish
+no successful manifest. Missing and extra fixed slots are rejected.
+
+The result's `input_receipt` echoes the complete accepted request. The parent
+compares every field, rechecks persona and staged bytes after worker cleanup,
+checks configured persona hashes/clock (including explicit persona-clock priority),
+architecture, budgets, containment and artifacts before publishing a manifest.
+The submitted address space also caps aggregate live guest mappings at 512 MiB;
+the independent 1 GiB job cap covers total worker process memory. Declared image
+admission is not a promise that an image can consume the whole quota in addition
+to runtime backing. See `../docs/native-pe/m2-binding-exit.md` for transaction
+semantics, exact bounds and reproducible M2 exit controls.
 
 ## CRT startup parity
 

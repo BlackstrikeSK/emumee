@@ -405,6 +405,52 @@ pub fn read_regular(path: &Path, limit: usize, root: Option<&Path>) -> Result<Ve
         Ok(data)
     })
 }
+pub fn read_regular_locked(path: &Path, limit: usize, root: Option<&Path>) -> Result<Vec<u8>> {
+    regular_scope(path, limit, root, true, |file, length| {
+        let mut data = Vec::with_capacity(length as usize);
+        file.take(limit as u64 + 1).read_to_end(&mut data)?;
+        ensure!(
+            data.len() as u64 == length,
+            "Input changed during locked capture"
+        );
+        Ok(data)
+    })
+}
+pub fn read_submitted_slots(root: &Path, sizes: &[u64]) -> Result<Vec<Vec<u8>>> {
+    ensure!(
+        sizes.len() <= 128 && sizes.iter().all(|size| *size <= 32 * 1024 * 1024),
+        "Submitted slot bounds"
+    );
+    let directory = root.join("inputs");
+    if !directory.try_exists()? {
+        ensure!(sizes.is_empty(), "Submitted input slots absent");
+        return Ok(vec![]);
+    }
+    let expected = (0..sizes.len())
+        .map(|index| format!("{index:04}.bin"))
+        .collect::<std::collections::BTreeSet<_>>();
+    let actual = std::fs::read_dir(&directory)?
+        .take(129)
+        .map(|entry| -> Result<String> {
+            entry?
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("Invalid submitted slot name"))
+        })
+        .collect::<Result<std::collections::BTreeSet<_>>>()?;
+    ensure!(actual == expected, "Submitted slot inventory differs");
+    sizes
+        .iter()
+        .enumerate()
+        .map(|(index, size)| {
+            read_regular_locked(
+                &directory.join(format!("{index:04}.bin")),
+                usize::try_from(*size)?,
+                Some(root),
+            )
+        })
+        .collect()
+}
 /// Driver128 payload hashing/header reads share one locked, identity-pinned
 /// regular handle. No write/delete sharing; <=8MiB/read and length+1MiB work.
 pub fn with_driver_regular<T>(
@@ -1174,9 +1220,21 @@ mod tests {
         let file = dir.join("input.txt");
         let link = dir.join("linked.txt");
         std::fs::write(&file, b"harmless fixture").unwrap();
+        assert_eq!(
+            read_regular_locked(&file, 64, None).unwrap(),
+            b"harmless fixture"
+        );
+        let writer = OpenOptions::new()
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(&file)
+            .unwrap();
+        assert!(read_regular_locked(&file, 64, None).is_err());
+        drop(writer);
         assert_eq!(read_regular(&file, 64, None).unwrap(), b"harmless fixture");
         assert!(read_regular(&file, 3, None).is_err());
         std::fs::hard_link(&file, &link).unwrap();
+        assert!(read_regular_locked(&file, 64, None).is_err());
         assert!(read_regular(&file, 64, None).is_err());
         std::fs::remove_file(link).unwrap();
         std::fs::remove_file(file).unwrap();

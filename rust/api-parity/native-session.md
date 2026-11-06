@@ -2,6 +2,96 @@
 
 ## Current continuation checkpoint
 
+2026-11-06: **all five M2 checkboxes and the bounded M2 exit are qualified**.
+Exact request/primary/persona/slot identity, full accepted-option receipts,
+parent artifact/result verification, transactional staging and a 512 MiB
+aggregate live guest-mapping ceiling are implemented. Existing 1 GiB worker job,
+module/VFS/output authorities remain independent limits. No M2 work is deferred.
+See `docs/native-pe/m2-binding-exit.md` for the complete final outcome.
+
+Fresh strict all-target Clippy, serial workspace tests, release and freeze pass.
+The same-build package passes **294 required outcomes**: 120 prior contained
+runs/28 refusals, 52 staging runs/30 refusals, and 64 new binding/rollback/staged
+EXE/DLL import controls. Required failures are verified, not fabricated returns.
+The independently rechecked seals bind 2,083 prior-matrix and 789 new-control
+files, with the latter chaining the former's hash. Build-source SHA-256:
+`befbc76f4edbf71372056b2fdec5852f9e9ad3051556fc008fadf01f27a9ff2c`.
+
+Current evidence root: `output/rust-pe-m2-binding/`. Use `bundle/`,
+`fixtures-final/`, `qualification/`, `staging/`, `binding/`, `qualified-smoke.json`,
+`qualified-m2.json`, `dependencies-complete/report.json`,
+`registration-complete/review.json`, `dispatch.log`, `final-ledger.json`,
+`final-status.json` and `final-validation/index.json`. Require independent source
+index and M2 seal checks before reuse. The final index records the exact source
+fingerprint and suite timings; this checkpoint is itself hashed there. Missing
+ignored captures require recapture. Failed development evidence is preserved.
+Dependency checks unset both CARGO_NET_OFFLINE and RUST_TEST_THREADS; source
+validation uses offline=true, threads=1 and one-job Cargo commands.
+
+**Next: M3-user-bootstrap**, direct PEB/TEB/LDR/static-TLS/lifecycle audits against
+the owned process/module authority, not bulk API binding expansion.
+The 2,590 semantic contracts remain open (1,819 missing/771 unverified bindings).
+Only the source-registration global gate is verified. Comprehensive M10 package
+qualification and API semantics are not implied by bounded M2 completion.
+No commit/push/branch, supplied-sample execution, host DLL search, quarantine or
+security change occurred. HEAD: `d3962057d01ae2064f51244aa90a6f6293dbf092`.
+
+## Historical fourth-checkbox checkpoint
+
+2026-11-05 M2 versioned input staging: **the first four M2 checkboxes are
+complete**. `run --inputs` captures explicit bounded companion/VFS bytes and
+environment/zero-based quoting/export options in a strict schema-2 hashed request.
+Schema 1 remains valid without extended inputs. Parent preflight and independent
+worker checks use the existing configured process/VFS/module authorities; no
+host DLL search or fixture-only alternative model was introduced.
+
+All **1,053 Rust tests** pass (497 core, 480 engine, 76 other), strict all-target
+Clippy passes, and **152 Python accounting plus four inventory controls** and
+the exact partition pass. Six independent static pefile vectors check export
+selection, separate aliases/name-table/unnamed ordinal order and original
+forwarder RVAs. Failed development captures remain preserved; see
+docs/native-pe/m2-input-staging.md for each corrected root cause and reproduction.
+The source validator now actually uses and records one build job.
+
+Fresh release (425.435s), freeze (1.655s), **120 prior contained runs/28 refusals**
+(28.538s) and **52 staging contained runs/30 refusals** (11.015s) pass. Required
+budget/fault cases must fail, not fabricate entry returns. The independent
+maintained sealer binds **2,019 files**, canonical build inputs, both build-info
+identities, exact binaries, all input/request/result/staged bytes and specs,
+artifact bytes, containment and cleanup. Build-source SHA-256:
+a73d281bf249e307dc5c262e0b0c2439025408b934f3f244f9bdc45e8bb9d08f.
+Seal: 047e126c67557160be2179024abd022965a513b584dcf0ffcbdb80ef961fcf76.
+
+Current root: output/rust-pe-m2-staging/. Use fixtures-final/, bundle/,
+qualification/, staging/, qualified-smoke.json, export-reference.json,
+dependencies-closed/report.json, registration-qualified/review.json,
+dispatch.log, final-ledger.json, final-status.json and final-validation/index.json.
+Require the independent source-index check and seal --check before reusing
+captures. The source fingerprint/timings are in that index, not this file (which
+the index itself hashes). Missing ignored captures require recapture. Earlier
+ABI/import/layout/M0 checkpoints and unsuccessful attempts remain historical.
+Dependency audit/check must unset BOTH CARGO_NET_OFFLINE and RUST_TEST_THREADS;
+source validation uses offline=true/threads=1 and one-job Cargo commands.
+
+Next executable action: **the fifth M2 binding/bounds/rollback checkbox**. Audit
+all staged-byte/option/result substitutions at the real worker/parent boundaries,
+aggregate runtime dependency/memory accounting and partial-load/admission
+rollback, then prove M2's overall exit. Start from the live controller, worker,
+core contract, static/dynamic loader and configured authorities, not another
+bulk API binding expansion. No staging implementation, test or package item is
+deferred there. M3 bootstrap/loader/static-TLS follows only after M2's exit.
+
+The denominator remains **2,590 open semantic contracts and 151 batches**;
+binding availability is 1,819 missing/771 unverified. One source-registration
+global gate is verified and the seven other global gates remain open. This is
+not M10 or broad Windows/legacy parity. No commit, push, branch, supplied-sample
+execution, host DLL search, quarantine restoration or security change occurred.
+Starting/current HEAD: d3962057d01ae2064f51244aa90a6f6293dbf092. Preserve inherited
+source edits and raw evidence. The detailed authority remains
+.codex/plans/rust-pe-completion.md and docs/native-pe/worklist.json.
+
+### Historical ABI continuation checkpoint
+
 2026-11-04 M2 ABI batch: **the first three M2 checkboxes are complete**.
 The frozen XMM floating convention and msvcrt pow/floor/sin are implemented;
 x86 preserves 64-bit payloads and its frozen argc*4 cleanup quirk. Direct CPU

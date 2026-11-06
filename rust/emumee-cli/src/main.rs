@@ -561,6 +561,33 @@ fn execute() -> Result<()> {
             "{}",
             serde_json::json!({"source_tree_sha256":env!("EMUMEE_BUILD_SOURCE_SHA256"),"source_files":env!("EMUMEE_BUILD_SOURCE_FILES"),"backend":emumee_engine::backend(),"unicorn_version":"2.1.5"})
         ),
+        #[cfg(windows)]
+        Some("user-binding-fixture") => {
+            let case = args
+                .next()
+                .context("user-binding-fixture requires a case")?;
+            let root = PathBuf::from(
+                args.next()
+                    .context("user-binding-fixture requires a fresh root")?,
+            );
+            let architecture = match args.next().as_deref() {
+                Some("x86") => Architecture::X86,
+                Some("x64") | None => Architecture::X64,
+                _ => bail!("Invalid binding fixture architecture"),
+            };
+            anyhow::ensure!(
+                args.next().is_none(),
+                "Unexpected binding fixture arguments"
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&user_controller::binding_fixture(
+                    &case,
+                    &root,
+                    architecture
+                )?)?
+            );
+        }
         Some("inspect-network-fixtures") => {
             let path = PathBuf::from(
                 args.next()
@@ -1442,6 +1469,7 @@ fn execute() -> Result<()> {
             let mut budget = None;
             let mut timeout = None;
             let mut arguments = Vec::new();
+            let mut inputs = None;
             while let Some(flag) = args.next() {
                 if flag == "--" {
                     arguments.extend(args);
@@ -1455,6 +1483,10 @@ fn execute() -> Result<()> {
                     .next()
                     .with_context(|| format!("{flag} needs a value"))?;
                 match flag.as_str() {
+                    "--inputs" => {
+                        ensure_once(&inputs, &flag)?;
+                        inputs = Some(PathBuf::from(value));
+                    }
                     "--output" | "-o" => {
                         ensure_once(&root, &flag)?;
                         root = Some(PathBuf::from(value));
@@ -1485,6 +1517,7 @@ fn execute() -> Result<()> {
                         timeout_us: timeout.unwrap_or(120_000_000),
                         persona,
                         arguments,
+                        inputs,
                     },
                 )?;
                 let complete = matches!(
@@ -1498,7 +1531,7 @@ fn execute() -> Result<()> {
             }
             #[cfg(not(windows))]
             {
-                let _ = (source, root, persona, budget, timeout, arguments);
+                let _ = (source, root, persona, budget, timeout, arguments, inputs);
                 bail!("Submitted PE execution requires Windows containment");
             }
         }

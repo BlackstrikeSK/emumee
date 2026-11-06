@@ -6,7 +6,11 @@ persona/process state, existing native TLS/DllMain loader and Rust API models.
 `ExitProcess`/`RtlExitUserProcess` publish an explicit full-width process exit code.
 See [USER_PE.md](USER_PE.md) for invocation, qualification and remaining limits.
 This is bounded native execution, not a claim of complete legacy model parity;
-managed user admission and general companion staging remain separate work.
+managed user admission remains separate work. Explicit bounded companion/VFS
+staging and environment/quoting/export options are available through `--inputs`;
+see `../docs/native-pe/m2-input-staging.md` for qualification and scope. Exact
+worker/parent receipts, persona rechecks, aggregate live guest-memory bounds and
+transactional staging are documented in `../docs/native-pe/m2-binding-exit.md`.
 
 The next native API batch models CRT startup:MSVCRT mainargs, UCRT argument
 globals and initial environment/configuration, MSVCRT x86 global accessors, and

@@ -6,7 +6,7 @@ mod exports;
 #[cfg(test)]
 mod tests;
 mod tls;
-pub use exports::{Export, ExportTarget};
+pub use exports::{Export, ExportCall, ExportTarget};
 pub use tls::{MAX_TLS_CALLBACKS, TlsCallbackPlan, TlsError, TlsMirrorCheck};
 
 pub const MAX_INPUT: usize = 128 * 1024 * 1024;
@@ -105,6 +105,7 @@ pub struct PeImage {
     pub directories: [Directory; 16],
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
+    export_calls: Vec<ExportCall>,
 }
 
 impl PeImage {
@@ -295,6 +296,7 @@ impl PeImage {
             directories,
             imports: Vec::new(),
             exports: Vec::new(),
+            export_calls: Vec::new(),
         };
         pe.parse_imports(data)?;
         pe.parse_exports(data)?;

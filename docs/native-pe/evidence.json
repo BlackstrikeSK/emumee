@@ -5,7 +5,7 @@
   "required_gates": {
     "effective_registration_review": {
       "status": "verified",
-      "scope_fingerprint": "a01fa4ceb41418712c1f9af8b1326162c39461ae636fa7fd2c05207a50a7a698",
+      "scope_fingerprint": "a1bc6311c17c6c15f45a5f7096f828c4741c89585ca3a3c343ad6357ebcb60e1",
       "history": [{
         "status": "verified",
         "scope_fingerprint": "7e2f6f7a689cc0dc6434f1679672083055df47221c82bf6b78ba6c542395047d",
@@ -21,6 +21,16 @@
         "scope_fingerprint": "15f4a78a4415c6de06ef1b6e0c004c865f13010015fa7b2511184db9a406d9b5",
         "review_fingerprint": "f98fb16f125a60bee1478b6b681157dea1ee533aa8d4dea367ffb6a0f52b1757",
         "review": "docs/native-pe/m2-import-resolution.md"
+      }, {
+        "status": "verified",
+        "scope_fingerprint": "a01fa4ceb41418712c1f9af8b1326162c39461ae636fa7fd2c05207a50a7a698",
+        "review_fingerprint": "3ee5e1011d948dec130671aa61407b19b2a1575384a41ebcdda9f3b7bdf71593",
+        "review": "docs/native-pe/m2-abi.md"
+      }, {
+        "status": "verified",
+        "scope_fingerprint": "5a0785a67ef42d8d7437dd0ed33c89acffe6ad2ca3aa9292a99eb9b45b26d960",
+        "review_fingerprint": "5cb609e690bb7253a3825a345d40a746fda7b70093488922fe65f762bbc51b28",
+        "review": "docs/native-pe/m2-input-staging.md"
       }],
       "scope": "Successful-initialization source registration review only; not constructor execution, guest reachability or API semantics",
       "evidence": [
@@ -30,7 +40,7 @@
           "policy": "docs/native-pe/registration-policy.json",
           "collector": "tools/native_pe_registration.py",
           "controls": "tests/test_native_pe_registration.py",
-          "review_fingerprint": "3ee5e1011d948dec130671aa61407b19b2a1575384a41ebcdda9f3b7bdf71593",
+          "review_fingerprint": "da40e16184d956924876a5947b9ccafda16e6d2e6dee5ce4c2a6d8543e410014",
           "contracts": 2590,
           "architectures": ["x86", "x64"]
         }
@@ -71,7 +81,26 @@
         "refusal_cases": 28,
         "artifact_index": "output/rust-pe-m2-abi/qualified-smoke.json"
       },
-      "next_action": "Complete the M2-M10 semantic, safety and operational obligations before promoting the global package gate",
+      "m2_staging_smoke": {
+        "status": "verified",
+        "review": "docs/native-pe/m2-input-staging.md",
+        "source_tree_sha256": "a73d281bf249e307dc5c262e0b0c2439025408b934f3f244f9bdc45e8bb9d08f",
+        "guest_cases": 172,
+        "refusal_cases": 58,
+        "artifact_index": "output/rust-pe-m2-staging/qualified-smoke.json"
+      },
+      "m2_complete_exit": {
+        "status": "verified",
+        "review": "docs/native-pe/m2-binding-exit.md",
+        "source_tree_sha256": "befbc76f4edbf71372056b2fdec5852f9e9ad3051556fc008fadf01f27a9ff2c",
+        "required_outcomes": 294,
+        "contained_executions": 236,
+        "prior_refusal_controls": 58,
+        "binding_exit_controls": 64,
+        "artifact_index": "output/rust-pe-m2-binding/qualified-m2.json",
+        "prior_matrix_index": "output/rust-pe-m2-binding/qualified-smoke.json"
+      },
+      "next_action": "Complete the M3-M10 semantic, safety and operational obligations before promoting the global package gate",
       "evidence": [{"kind": "bounded_m0_smoke_only", "review": "docs/native-pe/m0-package-smoke.md"}]
     }
   }

@@ -25,6 +25,8 @@ fn request(bytes: &[u8], kind: F, budget: u64) -> Request {
         timeout_us: 30_000_000,
         persona_sha256: None,
         clock_utc_filetime: 134377488000000000,
+        staged: vec![],
+        invocation: Default::default(),
     }
 }
 fn run(arch: Architecture, kind: F, budget: u64) -> Execution {

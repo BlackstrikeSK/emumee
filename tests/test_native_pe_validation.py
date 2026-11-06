@@ -16,10 +16,19 @@ import native_pe_validation as validation
 
 POLICY = validation.load_policy(ROOT)
 ENVIRONMENT = {'python_executable': sys.executable, 'tools': {'rustc': 'synthetic'},
-               'test_environment': {'RUST_TEST_THREADS': '1', 'CARGO_BUILD_JOBS': '2'}}
+               'test_environment': {'RUST_TEST_THREADS': '1', 'CARGO_BUILD_JOBS': '1'}}
 
 
 class NativePeValidationTests(unittest.TestCase):
+    def test_rust_commands_and_recorded_environment_both_compile_serially(self):
+        with patch.object(validation.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='tool')):
+            environment = validation.environment_snapshot()
+        self.assertEqual(environment['test_environment']['CARGO_BUILD_JOBS'], '1')
+        commands = validation.suite_commands(ROOT, sources={})
+        for suite in ('rust-tests', 'rust-lint'):
+            command = commands[suite]
+            self.assertEqual(command[command.index('-Jobs') + 1], '1')
+
     def sources(self, *names):
         return {name: 'a' * 64 for name in names}
 
@@ -43,6 +52,7 @@ class NativePeValidationTests(unittest.TestCase):
 
     def test_changes_additions_deletions_and_unknown_dependencies_select_full(self):
         for relative in ('Cargo.lock', 'rust/emumee-engine/src/user.rs', 'tools/build_rust.ps1',
+                         'tools/native_pe_staging.py', 'tools/native_pe_staging_seal.py', 'tools/native_pe_m2.py', 'tests/test_native_pe_staging.py',
                          '.venv/Lib/site-packages/speakeasy/handler.py', 'new-unclassified.fixture'):
             original = self.sources(relative)
             changed = {relative: 'c' * 64}

@@ -31,6 +31,8 @@ fn submitted_abi_imports_and_callbacks_are_independently_qualified() {
                 timeout_us: 1_000_000,
                 persona_sha256: None,
                 clock_utc_filetime: 134377488000000000,
+                staged: vec![],
+                invocation: Default::default(),
             };
             let execution = user::run(&request, &bytes, None)
                 .unwrap_or_else(|error| panic!("{architecture:?}/{kind:?}: {error:#}"));

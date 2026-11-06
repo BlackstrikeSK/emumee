@@ -213,6 +213,8 @@ fn winstrings_native_pe_callers_observe_both_abis_buffer_counts_and_failure_atom
                 timeout_us: 30_000_000,
                 persona_sha256: None,
                 clock_utc_filetime: 134377488000000000,
+                staged: vec![],
+                invocation: Default::default(),
             };
             let result = user::run(&request, &bytes, None).unwrap();
             assert_eq!(result.error, None, "{arch:?}/{unicode}: {result:#?}");

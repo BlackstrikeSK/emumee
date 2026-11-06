@@ -6,6 +6,9 @@ use emumee_core::{
     modules::{LoaderInvocation, LoaderRoutine, ModuleId, Resolution, StaticImage, StaticStartup},
     pe::Kind,
 };
+mod export_calls;
+pub use export_calls::ExportEntry;
+pub(crate) use export_calls::execute_exports;
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub profile: &'static str,
@@ -15,6 +18,7 @@ pub struct Report {
     pub events: Vec<emumee_core::modules::LoaderEvent>,
     pub native_effect_failure: Option<String>,
     pub preparation_error: Option<String>,
+    pub export_entries: Vec<ExportEntry>,
     pub scope: &'static str,
 }
 pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
@@ -22,6 +26,7 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
     if !c.modules().any(|m| m.lifecycle().is_some())
         && c.retired_images().is_empty()
         && engine.get_data().loader_preparation_error.is_none()
+        && engine.get_data().export_entries.is_empty()
     {
         return None;
     }
@@ -37,7 +42,8 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
         events: c.loader_events().to_vec(),
         native_effect_failure: engine.get_data().loader_native_effect_failure.clone(),
         preparation_error: engine.get_data().loader_preparation_error.clone(),
-        scope: "Actual bounded static dependency/TLS-callback/DllMain initialization and returned-FALSE cleanup on the sole guest module catalog. Callback-only TLS has no template, index or user-thread storage. No dynamic loads, exports-as-entrypoint, process-exit cleanup, general unload, child loader state or full Windows loader lock/TLS semantics.",
+        export_entries: engine.get_data().export_entries.clone(),
+        scope: "Actual bounded static dependency/TLS-callback/DllMain initialization and returned-FALSE cleanup on the sole guest module catalog. Optional first-ten export entries execute after startup under the same instruction/wall horizon, with separate observations. Callback-only TLS has no template, index or user-thread storage. No process-exit cleanup, general unload, child loader state or full Windows loader lock/TLS semantics.",
     })
 }
 fn pointer(engine: &Unicorn<Trace>, address: u64) -> Result<u64> {

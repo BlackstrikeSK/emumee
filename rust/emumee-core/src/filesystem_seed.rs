@@ -5,6 +5,62 @@ pub struct SeedFile<'a> {
     pub bytes: &'a [u8],
 }
 impl VirtualFileSystem {
+    pub fn with_submitted_files(&self, files: &[SeedFile<'_>]) -> Result<Self> {
+        if !self.handles.is_empty() || files.len() > crate::user_input::MAX_STAGED_FILES {
+            return Err(error(
+                87,
+                "submitted VFS seeds require unpublished handles and bounded files",
+            ));
+        }
+        let mut candidate = self.clone();
+        let mut names = BTreeSet::new();
+        for file in files {
+            if !crate::user_input::guest_path_valid(file.path) {
+                return Err(error(123, "invalid submitted VFS path"));
+            }
+            let path = candidate.path(file.path)?;
+            if !names.insert(path.clone()) || candidate.directories.contains(&path) {
+                return Err(error(183, "submitted VFS name collision"));
+            }
+            let mut directory = file.path[..3].to_owned();
+            if !candidate.directories.contains(&directory.to_lowercase()) {
+                return Err(error(3, "submitted VFS volume must be declared by persona"));
+            }
+            let components = file.path[3..].split('\\').collect::<Vec<_>>();
+            for component in &components[..components.len() - 1] {
+                directory.push_str(component);
+                if candidate.files.contains_key(&candidate.path(&directory)?) {
+                    return Err(error(183, "submitted VFS parent is a file"));
+                }
+                if !candidate.directories.contains(&candidate.path(&directory)?) {
+                    candidate.create_directory(&directory)?;
+                }
+                directory.push('\\');
+            }
+            let previous = candidate.files.get(&path).map_or(0, Vec::len);
+            let total = candidate
+                .total
+                .checked_sub(previous)
+                .and_then(|total| total.checked_add(file.bytes.len()))
+                .filter(|total| *total <= MAX_TOTAL)
+                .ok_or_else(|| error(8, "submitted VFS aggregate capacity"))?;
+            if file.bytes.len() > MAX_FILE
+                || candidate.files.len()
+                    + usize::from(previous == 0 && !candidate.files.contains_key(&path))
+                    > 4096
+            {
+                return Err(error(8, "submitted VFS file capacity"));
+            }
+            let display = candidate.normalize_path(file.path, false, false)?;
+            candidate.metadata.require_display(&path, &display)?;
+            candidate.metadata.record_display(path.clone(), display);
+            candidate.metadata.native_seeded.insert(path.clone());
+            candidate.files.insert(path, file.bytes.to_vec());
+            candidate.total = total;
+        }
+        Ok(candidate)
+    }
+
     pub fn from_seed(
         filetime: u64,
         current_directory: &str,
@@ -94,6 +150,67 @@ impl VirtualFileSystem {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn submitted_vfs_candidate_has_real_bytes_override_empty_files_and_atomic_refusal() {
+        use super::*;
+        let original = VirtualFileSystem::from_seed(
+            0,
+            r"C:\",
+            &[],
+            &[SeedFile {
+                path: r"C:\seed.bin",
+                bytes: b"old",
+            }],
+        )
+        .unwrap();
+        let candidate = original
+            .with_submitted_files(&[
+                SeedFile {
+                    path: r"C:\seed.bin",
+                    bytes: b"new",
+                },
+                SeedFile {
+                    path: r"C:\nested\empty.bin",
+                    bytes: b"",
+                },
+            ])
+            .unwrap();
+        assert_eq!(
+            candidate.contents(r"C:\seed.bin").unwrap(),
+            Some(b"new".as_slice())
+        );
+        assert_eq!(
+            candidate.contents(r"C:\nested\empty.bin").unwrap(),
+            Some(b"".as_slice())
+        );
+        assert_eq!(
+            original.contents(r"C:\seed.bin").unwrap(),
+            Some(b"old".as_slice())
+        );
+        assert!(
+            original
+                .with_submitted_files(&[
+                    SeedFile {
+                        path: r"C:\first.bin",
+                        bytes: b"first"
+                    },
+                    SeedFile {
+                        path: r"C:\seed.bin\child",
+                        bytes: b"bad"
+                    },
+                ])
+                .is_err()
+        );
+        assert_eq!(original.contents(r"C:\first.bin").unwrap(), None);
+        assert!(
+            original
+                .with_submitted_files(&[SeedFile {
+                    path: r"D:\file",
+                    bytes: b"bad"
+                }])
+                .is_err()
+        );
+    }
     use super::*;
     #[test]
     fn production_import_has_no_fixture_path_or_issued_handles_and_keeps_case_and_preset_lifetime()

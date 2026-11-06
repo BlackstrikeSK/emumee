@@ -51,6 +51,8 @@ pub struct AddressSpace {
     next_mapping_id: u64,
     #[serde(skip)]
     epoch: u64,
+    #[serde(skip)]
+    mapped_byte_limit: Option<u64>,
 }
 impl AddressSpace {
     pub fn epoch(&self) -> u64 {
@@ -65,7 +67,18 @@ impl AddressSpace {
             regions: BTreeMap::new(),
             next_mapping_id: 1,
             epoch: 0,
+            mapped_byte_limit: None,
         }
+    }
+    pub fn limit_mapped_bytes(&mut self, limit: u64) -> Result<()> {
+        if limit == 0 || self.regions.values().map(|region| region.size).sum::<u64>() > limit {
+            return Err(MemoryError("mapped memory exceeds byte bound"));
+        }
+        self.mapped_byte_limit = Some(
+            self.mapped_byte_limit
+                .map_or(limit, |current| current.min(limit)),
+        );
+        Ok(())
     }
     fn end(&self, address: u64, size: u64) -> Result<u64> {
         if address == 0 || size == 0 {
@@ -99,6 +112,16 @@ impl AddressSpace {
         }
         if self.regions.len() >= MAX_REGIONS {
             return Err(MemoryError("region count exceeds bound"));
+        }
+        if self.mapped_byte_limit.is_some_and(|limit| {
+            self.regions
+                .values()
+                .map(|region| region.size)
+                .sum::<u64>()
+                .checked_add(size)
+                .is_none_or(|total| total > limit)
+        }) {
+            return Err(MemoryError("mapped memory exceeds byte bound"));
         }
         if self
             .regions
@@ -219,6 +242,42 @@ impl AddressSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn total_mapping_bound_is_atomic_survives_splits_and_releases_on_unmap() {
+        for architecture in [Architecture::X86, Architecture::X64] {
+            let mut memory = AddressSpace::new(architecture);
+            memory.limit_mapped_bytes(3 * PAGE).unwrap();
+            memory
+                .map(0x10000, 3 * PAGE, Permissions::RW, None, "image")
+                .unwrap();
+            memory.protect(0x11000, PAGE, Permissions::RX).unwrap();
+            let before = memory.clone();
+            assert!(
+                memory
+                    .map(0x20000, PAGE, Permissions::RW, None, "dependency")
+                    .is_err()
+            );
+            assert_eq!(memory, before);
+            assert!(memory.limit_mapped_bytes(2 * PAGE).is_err());
+            assert_eq!(memory, before);
+            memory.limit_mapped_bytes(100 * PAGE).unwrap();
+            assert!(
+                memory
+                    .map(0x20000, PAGE, Permissions::RW, None, "heap")
+                    .is_err()
+            );
+            memory.unmap(0x11000, PAGE).unwrap();
+            memory
+                .map(0x20000, PAGE, Permissions::RW, None, "replacement")
+                .unwrap();
+            assert!(
+                memory
+                    .clone()
+                    .map(0x30000, PAGE, Permissions::RW, None, "overflow")
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn partial_protection_preserves_neighbors_and_allocation_identity() {
         let mut memory = AddressSpace::new(Architecture::X64);

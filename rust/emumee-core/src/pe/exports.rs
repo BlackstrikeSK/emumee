@@ -14,7 +14,17 @@ pub struct Export {
     pub names: Vec<String>,
     pub target: ExportTarget,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ExportCall {
+    pub ordinal: u32,
+    pub name: Option<String>,
+    pub rva: u32,
+}
 impl PeImage {
+    pub fn export_calls(&self) -> &[ExportCall] {
+        &self.export_calls
+    }
+
     pub(super) fn parse_exports(&mut self, data: &[u8]) -> Result<()> {
         let directory = self.directories[0];
         if directory.rva == 0 {
@@ -51,6 +61,11 @@ impl PeImage {
                 if name.is_empty() || !seen.insert(name.clone()) {
                     return Err(PeError("empty or duplicate export name"));
                 }
+                self.export_calls.push(ExportCall {
+                    ordinal: ordinal_base + slot as u32,
+                    name: Some(name.clone()),
+                    rva: u32_at(addresses, slot * 4)?,
+                });
                 aliases[slot].push(name);
             }
         }
@@ -115,6 +130,13 @@ impl PeImage {
             } else {
                 ExportTarget::Address { rva }
             };
+            if names.is_empty() {
+                self.export_calls.push(ExportCall {
+                    ordinal: ordinal_base + index as u32,
+                    name: None,
+                    rva,
+                });
+            }
             self.exports.push(Export {
                 ordinal: ordinal_base + index as u32,
                 names,

@@ -5,7 +5,7 @@ use emumee_core::{
     report_bundle::{bounded_json, digest},
     user_input::{MAX_REQUEST, MAX_RESULT, Request},
 };
-use emumee_platform::windows::{prepare_worker, read_regular};
+use emumee_platform::windows::prepare_worker;
 use serde_json::json;
 use std::path::Path;
 
@@ -17,17 +17,32 @@ pub fn execute(root: &Path, expected: &str) -> Result<()> {
         &serde_json::to_vec(&containment)?,
     )?;
     let result = (|| -> Result<()> {
-        let raw = read_regular(&root.join("request.json"), MAX_REQUEST, Some(root))?;
+        let raw = emumee_platform::windows::read_regular_locked(
+            &root.join("request.json"),
+            MAX_REQUEST,
+            Some(root),
+        )?;
         ensure!(digest(&raw) == expected, "Submitted user request changed");
         let request = Request::parse(&raw).map_err(anyhow::Error::msg)?;
-        let bytes = read_regular(
+        let bytes = emumee_platform::windows::read_regular_locked(
             &root.join("input.pe"),
             emumee_core::pe::MAX_INPUT,
             Some(root),
         )?;
         request.verify_input(&bytes).map_err(anyhow::Error::msg)?;
+        let staged = emumee_platform::windows::read_submitted_slots(
+            root,
+            &request
+                .staged
+                .iter()
+                .map(|file| file.size)
+                .collect::<Vec<_>>(),
+        )?;
+        request
+            .verify_staged(&bytes, &staged)
+            .map_err(anyhow::Error::msg)?;
         let persona = if let Some(hash) = &request.persona_sha256 {
-            let raw = read_regular(
+            let raw = emumee_platform::windows::read_regular_locked(
                 &root.join("persona.json"),
                 emumee_core::driver_input::MAX_PERSONA,
                 Some(root),
@@ -41,10 +56,12 @@ pub fn execute(root: &Path, expected: &str) -> Result<()> {
             );
             None
         };
-        let execution = emumee_engine::user::run(&request, &bytes, persona.as_deref())?;
+        let execution =
+            emumee_engine::user::run_staged(&request, &bytes, persona.as_deref(), &staged)?;
         save_artifacts(&output, &execution.artifacts)?;
         let result = json!({"schema":1,"profile":request.profile,"run_id":request.run_id,
             "request_sha256":expected,"input_sha256":request.input_sha256,
+            "input_receipt":request,
             "containment":containment,"execution":execution});
         save_new(
             &output.join("result.json"),

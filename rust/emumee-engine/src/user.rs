@@ -3,11 +3,71 @@ use super::*;
 use emumee_core::{fullpersona, persona::ProcessConfig, user_input::Request};
 
 pub fn run(request: &Request, bytes: &[u8], persona: Option<&[u8]>) -> Result<Execution> {
+    run_staged(request, bytes, persona, &[])
+}
+
+pub fn run_staged(
+    request: &Request,
+    bytes: &[u8],
+    persona: Option<&[u8]>,
+    staged: &[Vec<u8>],
+) -> Result<Execution> {
+    let prepared = prepare(request, bytes, persona, staged)?;
+    let companions = request
+        .staged
+        .iter()
+        .zip(staged)
+        .filter(|(file, _)| file.kind == emumee_core::user_input::InputKind::Companion)
+        .map(|(file, bytes)| {
+            (
+                file.guest_path.rsplit('\\').next().unwrap().to_owned(),
+                bytes.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let companion_paths = request
+        .staged
+        .iter()
+        .filter(|file| file.kind == emumee_core::user_input::InputKind::Companion)
+        .map(|file| file.guest_path.clone())
+        .collect();
+    run_generated_with_fixture_configuration(
+        bytes,
+        &companions,
+        request.max_instructions,
+        request.timeout_us,
+        GeneratedConfiguration {
+            submitted_user: true,
+            all_exports: request.invocation.all_exports,
+            submitted_companion_paths: companion_paths,
+            configured: Some(prepared),
+            ..Default::default()
+        },
+    )
+}
+
+pub fn preflight(
+    request: &Request,
+    bytes: &[u8],
+    persona: Option<&[u8]>,
+    staged: &[Vec<u8>],
+) -> Result<()> {
+    prepare(request, bytes, persona, staged).map(drop)
+}
+
+fn prepare(
+    request: &Request,
+    bytes: &[u8],
+    persona: Option<&[u8]>,
+    staged: &[Vec<u8>],
+) -> Result<configured::Prepared> {
+    request
+        .verify_staged(bytes, staged)
+        .map_err(anyhow::Error::msg)?;
     let pe = request.verify_input(bytes).map_err(anyhow::Error::msg)?;
-    ensure!(
-        persona.map(emumee_core::report_bundle::digest) == request.persona_sha256,
-        "Submitted user persona binding differs"
-    );
+    request
+        .verify_persona(persona)
+        .map_err(anyhow::Error::msg)?;
     let validated = request
         .resolve_persona(persona.unwrap_or_else(|| fullpersona::default_document().as_bytes()))?;
     let mut prepared = configured::Prepared::new(
@@ -19,27 +79,27 @@ pub fn run(request: &Request, bytes: &[u8], persona: Option<&[u8]>) -> Result<Ex
             process: Some(ProcessConfig {
                 image_path: request.guest_path(),
                 arguments: request.arguments.clone(),
-                force_quotes: vec![],
+                force_quotes: request.invocation.force_quotes.clone(),
                 command_line: None,
                 current_directory: None,
-                environment_overrides: vec![],
+                environment_overrides: request.invocation.environment.clone(),
             }),
             budget: request.max_instructions,
             timeout_us: request.timeout_us,
         },
     )?;
     prepared.bind_submitted_user()?;
-    run_generated_with_fixture_configuration(
-        bytes,
-        &[],
-        request.max_instructions,
-        request.timeout_us,
-        GeneratedConfiguration {
-            submitted_user: true,
-            configured: Some(prepared),
-            ..Default::default()
-        },
-    )
+    let files = request
+        .staged
+        .iter()
+        .zip(staged)
+        .map(|(file, bytes)| emumee_core::filesystem::SeedFile {
+            path: &file.guest_path,
+            bytes,
+        })
+        .collect::<Vec<_>>();
+    prepared.seed_submitted_files(&files)?;
+    Ok(prepared)
 }
 
 #[cfg(test)]
@@ -63,6 +123,8 @@ mod tests {
             timeout_us: 30_000_000,
             persona_sha256: None,
             clock_utc_filetime: 134377488000000000,
+            staged: vec![],
+            invocation: Default::default(),
         }
     }
     fn fixture(arch: Architecture, kind: &str) -> (Vec<u8>, &'static str) {
@@ -186,3 +248,7 @@ mod tests {
         assert!(run(&r, &driver, None).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "user_staging_tests.rs"]
+mod staging_tests;

@@ -14,23 +14,35 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
 };
+mod binding_fixture;
+mod staging;
+pub use binding_fixture::run as binding_fixture;
 
 pub struct Options {
     pub budget: u64,
     pub timeout_us: u64,
     pub persona: Option<PathBuf>,
     pub arguments: Vec<String>,
+    pub inputs: Option<PathBuf>,
 }
 
 pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
-    let bytes = read_regular(source, emumee_core::pe::MAX_INPUT, None)?;
+    let bytes =
+        emumee_platform::windows::read_regular_locked(source, emumee_core::pe::MAX_INPUT, None)?;
+    let (staged, payloads, invocation) = staging::capture(options.inputs.as_deref())?;
     let persona = options
         .persona
         .as_ref()
-        .map(|p| read_regular(p, emumee_core::driver_input::MAX_PERSONA, None))
+        .map(|p| {
+            emumee_platform::windows::read_regular_locked(
+                p,
+                emumee_core::driver_input::MAX_PERSONA,
+                None,
+            )
+        })
         .transpose()?;
     let request = Request {
-        schema: 1,
+        schema: 2,
         profile: PROFILE.into(),
         run_id: run_id()?,
         input_sha256: digest(&bytes),
@@ -52,8 +64,13 @@ pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
         )?
         .checked_add(116444736000000000)
         .context("Guest clock seed overflow")?,
+        staged,
+        invocation,
     };
-    request.verify_input(&bytes).map_err(anyhow::Error::msg)?;
+    request
+        .verify_staged(&bytes, &payloads)
+        .map_err(anyhow::Error::msg)?;
+    emumee_engine::user::preflight(&request, &bytes, persona.as_deref(), &payloads)?;
     if let Some(raw) = &persona {
         request.resolve_persona(raw)?;
     }
@@ -62,13 +79,7 @@ pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
     let verified = verified_bundle()?;
     let root = std::path::absolute(root)?;
     verify_output_location(&verified.path, &root)?;
-    std::fs::create_dir(&root).context("Output directory must be new")?;
-    std::fs::create_dir(root.join("worker"))?;
-    save_new(&root.join("input.pe"), &bytes)?;
-    save_new(&root.join("request.json"), &raw)?;
-    if let Some(raw) = &persona {
-        save_new(&root.join("persona.json"), raw)?;
-    }
+    staging::publish(&root, &bytes, &raw, persona.as_deref(), &payloads)?;
     let stopped = launch_user(
         &verified,
         &root,
@@ -110,23 +121,40 @@ pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
             Some(&root),
         )?)
         .map_err(anyhow::Error::msg)?;
+    request
+        .verify_staged(&bytes, &staging::read_staged(&root, &request)?)
+        .map_err(anyhow::Error::msg)?;
+    let final_persona = if request.persona_sha256.is_some() {
+        Some(emumee_platform::windows::read_regular_locked(
+            &root.join("persona.json"),
+            emumee_core::driver_input::MAX_PERSONA,
+            Some(&root),
+        )?)
+    } else {
+        ensure!(
+            !root.join("persona.json").exists(),
+            "Unexpected submitted persona"
+        );
+        None
+    };
+    request
+        .verify_persona(final_persona.as_deref())
+        .map_err(anyhow::Error::msg)?;
     let result_raw = read_regular(&root.join("worker/result.json"), MAX_RESULT, Some(&root))?;
     let result: Value = serde_json::from_slice(&result_raw)?;
+    request
+        .verify_result(&result, &expected, final_persona.as_deref())
+        .map_err(anyhow::Error::msg)?;
     ensure!(
-        result["schema"] == 1
-            && result["profile"] == PROFILE
-            && result["run_id"] == request.run_id
-            && result["request_sha256"] == expected
-            && result["input_sha256"] == request.input_sha256,
-        "Submitted PE report binding differs"
-    );
-    let containment = &result["containment"];
-    ensure!(
-        containment["app_container"] == true
-            && containment["job_object"] == true
-            && containment["child_process_blocked"] == true
-            && containment["network_capabilities"] == 0,
-        "Submitted PE containment absent"
+        result["execution"]["architecture"]
+            == serde_json::to_value(
+                request
+                    .verify_input(&bytes)
+                    .map_err(anyhow::Error::msg)?
+                    .sample
+                    .architecture,
+            )?,
+        "Submitted PE report architecture differs"
     );
     verify_artifacts(&root.join("worker"), &result["execution"]["artifacts"])?;
     let manifest = json!({"schema":1,"request_sha256":expected,"result_sha256":digest(&result_raw),

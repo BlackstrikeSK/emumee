@@ -5,12 +5,12 @@
   "feature_matrix": "rust/api-parity/native-feature-matrix.md",
   "api_partition": "docs/native-pe/api-batches.json",
   "validation_policy": "docs/native-pe/validation-policy.json",
-  "validation_index": "output/rust-pe-m2-abi/final-validation/index.json",
-  "dependency_integrity_report": "output/rust-pe-m2-abi/dependencies/report.json",
+  "validation_index": "output/rust-pe-m2-binding/final-validation/index.json",
+  "dependency_integrity_report": "output/rust-pe-m2-binding/dependencies-complete/report.json",
   "baseline_failure_classification": "docs/native-pe/baseline-failures.md",
   "bounded_m0_package_smoke": "docs/native-pe/m0-package-smoke.md",
   "effective_registration_review": "docs/native-pe/effective-registration-review.md",
-  "effective_registration_report": "output/rust-pe-m2-abi/registration-final/review.json",
+  "effective_registration_report": "output/rust-pe-m2-binding/registration-complete/review.json",
   "architectures": ["x86", "x64"],
   "features": ["N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10", "N11", "N12", "N13", "N14", "N15", "N16", "N17", "N18", "N19", "N20"],
   "batches": [
@@ -29,10 +29,10 @@
       "blocker": null
     },
     {
-      "id": "M2-request-staging", "status": "in_progress", "depends_on": ["M0-effective-baseline", "M1-closure-accounting"],
+      "id": "M2-request-staging", "status": "closed", "depends_on": ["M0-effective-baseline", "M1-closure-accounting"],
       "features": ["N01", "N02", "N03", "N04", "N05", "N07", "N09"],
-      "completed_checkboxes": [{"id": "pe-layout-audit", "review": "docs/native-pe/m2-pe-layout.md"}, {"id": "import-relocation-resolution", "review": "docs/native-pe/m2-import-resolution.md"}, {"id": "abi-qualification", "review": "docs/native-pe/m2-abi.md"}],
-      "next_action": "Layout, import/relocation resolution and ABI qualification are complete. Implement bounded versioned hashed companion/VFS/environment/option staging next, then exact parent/worker binding and rollback",
+      "completed_checkboxes": [{"id": "pe-layout-audit", "review": "docs/native-pe/m2-pe-layout.md"}, {"id": "import-relocation-resolution", "review": "docs/native-pe/m2-import-resolution.md"}, {"id": "abi-qualification", "review": "docs/native-pe/m2-abi.md"}, {"id": "versioned-input-staging", "review": "docs/native-pe/m2-input-staging.md"}, {"id": "binding-bounds-rollback", "review": "docs/native-pe/m2-binding-exit.md"}],
+      "next_action": "All five M2 checkboxes and the bounded x86/x64 EXE/DLL exit are complete; preserve source and same-build package seals and proceed to M3 bootstrap, loader lifecycle and static TLS",
       "exit_tests": ["versioned admission", "hash-bound staged inputs", "parent verification", "x86 and x64 real guest controls", "contained package regression"],
       "blocker": null
     },

@@ -21,6 +21,8 @@ fn user_runtime_real_guest_calls_validate_both_abis_and_owned_memory() {
                 timeout_us: 30_000_000,
                 persona_sha256: None,
                 clock_utc_filetime: 134377488000000000,
+                staged: vec![],
+                invocation: Default::default(),
             };
             let result = user::run(&request, &bytes, None).unwrap();
             if kind == F::OwnedProtect {

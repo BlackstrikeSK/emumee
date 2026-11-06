@@ -29,11 +29,11 @@ mod configured;
 mod console_tests;
 mod cpu;
 #[cfg(test)]
-mod pe_layout_tests;
+mod pe_abi_tests;
 #[cfg(test)]
 mod pe_import_tests;
 #[cfg(test)]
-mod pe_abi_tests;
+mod pe_layout_tests;
 pub mod plan_runtime;
 pub mod user;
 pub use capture::run_owned as run_driver_runtime_fixture;
@@ -323,6 +323,7 @@ struct Trace {
     native_exceptions: native_exceptions::State,
     loader_native_effect_failure: Option<String>,
     loader_preparation_error: Option<String>,
+    export_entries: Vec<api::native_loader::ExportEntry>,
 }
 impl Trace {
     fn new(architecture: Architecture) -> Self {
@@ -391,6 +392,7 @@ impl Trace {
             native_exceptions: native_exceptions::State::default(),
             loader_native_effect_failure: None,
             loader_preparation_error: None,
+            export_entries: vec![],
         }
     }
     #[inline]
@@ -794,6 +796,8 @@ enum KernelReferenceInput {
 #[derive(Default)]
 struct GeneratedConfiguration {
     submitted_user: bool,
+    all_exports: bool,
+    submitted_companion_paths: Vec<String>,
     owned_paging_requested: bool,
     owned_pfn_requested: bool,
     quiescent_parked_requested: bool,
@@ -823,6 +827,8 @@ fn run_generated_with_fixture_configuration(
 ) -> Result<Execution> {
     let GeneratedConfiguration {
         submitted_user,
+        all_exports,
+        submitted_companion_paths,
         owned_paging_requested,
         owned_pfn_requested,
         quiescent_parked_requested,
@@ -865,6 +871,14 @@ fn run_generated_with_fixture_configuration(
     ensure!(
         companions.len() <= 16,
         "Generated companion count exceeds 16"
+    );
+    ensure!(
+        if submitted_user {
+            submitted_companion_paths.len() == companions.len()
+        } else {
+            submitted_companion_paths.is_empty()
+        },
+        "Submitted companion path authority mismatch"
     );
     ensure!(
         submitted_driver_service
@@ -923,7 +937,6 @@ fn run_generated_with_fixture_configuration(
         !submitted_user
             || (configured.is_some()
                 && submitted_driver_service.is_none()
-                && companions.is_empty()
                 && kernel_reference.is_none()
                 && !owned_callback_namespace
                 && !unavailable_callback_namespace),
@@ -984,6 +997,13 @@ fn run_generated_with_fixture_configuration(
     };
     // Set before any guest start. The readback is published with the run so
     // long bounded replays can distinguish this native resource profile.
+    if submitted_user {
+        engine
+            .get_data_mut()
+            .apis
+            .memory
+            .limit_mapped_bytes(emumee_core::user_input::MAX_MAPPED_TOTAL)?;
+    }
     let tcg_buffer_size = submitted_driver_service
         .as_ref()
         .map(|_| tcg::configure_submitted_driver(&mut engine))
@@ -1081,7 +1101,7 @@ fn run_generated_with_fixture_configuration(
     map_image(&mut engine, &pe, bytes, base)?;
     pe.image_base = base;
     let mut parsed = Vec::new();
-    for (name, bytes) in companions {
+    for (index, (name, bytes)) in companions.iter().enumerate() {
         let companion = PeImage::parse(bytes, name)?;
         ensure!(
             !companion.sample.managed,
@@ -1091,8 +1111,16 @@ fn run_generated_with_fixture_configuration(
             name,
             companion.image_base,
             &companion,
-            &format!(r"C:\emumee\{}", name),
-            emumee_core::modules::ModuleOrigin::OwnedGenerated,
+            &if submitted_user {
+                submitted_companion_paths[index].clone()
+            } else {
+                format!(r"C:\emumee\{}", name)
+            },
+            if submitted_user {
+                emumee_core::modules::ModuleOrigin::SubmittedUser
+            } else {
+                emumee_core::modules::ModuleOrigin::OwnedGenerated
+            },
         )?;
         map_image(&mut engine, &companion, bytes, companion.image_base)?;
         parsed.push(companion);
@@ -1447,6 +1475,13 @@ fn run_generated_with_fixture_configuration(
             stack + STACK_SIZE - 0x200,
             &horizon,
         ) {
+            Ok(outcome) if all_exports && outcome.returned => api::native_loader::execute_exports(
+                &mut engine,
+                &pe,
+                stack + STACK_SIZE - 0x200,
+                &horizon,
+                outcome,
+            )?,
             Ok(outcome) => outcome,
             Err(error) => threads::Outcome {
                 returned: false,

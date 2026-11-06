@@ -70,7 +70,7 @@ def environment_snapshot():
         versions[name] = result.stdout.strip()
     return {'platform': platform.platform(), 'machine': platform.machine(),
             'python': sys.version, 'python_executable': sys.executable, 'tools': versions,
-            'test_environment': {'RUST_TEST_THREADS': '1', 'CARGO_BUILD_JOBS': '2'},
+            'test_environment': {'RUST_TEST_THREADS': '1', 'CARGO_BUILD_JOBS': '1'},
             'build_environment_hashes': {
                 name: hashlib.sha256(value.encode('utf-8')).hexdigest()
                 for name, value in sorted(os.environ.items())
@@ -140,8 +140,8 @@ def suite_commands(root, python=None, sources=None):
         'accounting': [python, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_native_pe_*.py', '-v'],
         'inventory': [python, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_native_api_inventory.py', '-v'],
         'syntax': [python, '-m', 'py_compile', *syntax_paths],
-        'rust-tests': [*shell, '-Test', '-Validation', '-Jobs', '2'],
-        'rust-lint': [*shell, '-Lint', '-Jobs', '2'],
+        'rust-tests': [*shell, '-Test', '-Validation', '-Jobs', '1'],
+        'rust-lint': [*shell, '-Lint', '-Jobs', '1'],
         'whitespace': ['git', 'diff', '--check'],
     }
 

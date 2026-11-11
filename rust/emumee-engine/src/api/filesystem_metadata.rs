@@ -378,6 +378,7 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 return failure(engine, error, 0);
             }
             engine.get_data_mut().apis.persona.model = persona;
+            super::user_bootstrap::refresh_process(engine)?;
             engine.get_data_mut().apis.last_error = 0;
             Ok(1)
         }

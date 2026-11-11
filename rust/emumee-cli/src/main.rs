@@ -562,6 +562,31 @@ fn execute() -> Result<()> {
             serde_json::json!({"source_tree_sha256":env!("EMUMEE_BUILD_SOURCE_SHA256"),"source_files":env!("EMUMEE_BUILD_SOURCE_FILES"),"backend":emumee_engine::backend(),"unicorn_version":"2.1.5"})
         ),
         #[cfg(windows)]
+        Some("user-bootstrap-boundary-fixture") => {
+            let source = PathBuf::from(args.next().context("Bootstrap fixture requires a source")?);
+            let root = PathBuf::from(
+                args.next()
+                    .context("Bootstrap fixture requires a fresh root")?,
+            );
+            let architecture = match args.next().as_deref() {
+                Some("x86") => Architecture::X86,
+                Some("x64") => Architecture::X64,
+                _ => bail!("Invalid bootstrap fixture architecture"),
+            };
+            anyhow::ensure!(
+                args.next().is_none(),
+                "Unexpected bootstrap fixture arguments"
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&user_controller::bootstrap_boundary(
+                    &source,
+                    &root,
+                    architecture
+                )?)?
+            );
+        }
+        #[cfg(windows)]
         Some("user-binding-fixture") => {
             let case = args
                 .next()

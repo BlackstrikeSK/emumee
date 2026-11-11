@@ -64,6 +64,7 @@ fn crt_startup_real_guest_arrays_snapshots_and_initializer_effects_match_both_ab
                     | F::InitializersError
                     | F::InitializersMutate
                     | F::InitializersFail
+                    | F::InitializersReentrant
             ) {
                 assert_eq!(
                     report.initializers.len(),
@@ -104,17 +105,20 @@ fn crt_startup_invalid_memory_mapping_ownership_and_callback_contracts_stop_expl
                 F::InitializersFault
                     | F::InitializersBadStack
                     | F::InitializersNonvolatile
-                    | F::InitializersReentrant
                     | F::InitializersNx
             ) {
-                assert!(result.crt_startup.as_ref().unwrap().initializer_pending);
+                let report = result.crt_startup.as_ref().unwrap();
+                assert!(!report.initializer_pending && report.suspended_initializers == 0);
+                assert_eq!(report.interrupted_initializers.len(), 1);
                 assert!(
                     result
                         .api_events
                         .iter()
                         .any(|e| e.api.ends_with("._initterm_e")
-                            && e.pending
-                            && e.result.is_none())
+                            && !e.pending
+                            && e.result.is_none()
+                            && e.effect == Some("crt_initializers_aborted")
+                            && e.error.is_some())
                 );
             }
         }
@@ -138,7 +142,16 @@ fn crt_startup_every_initializer_budget_prefix_retains_only_executed_effects() {
         let infinite = run(arch, F::InitializersInfinite, 100);
         assert_eq!(infinite.instruction_count, 100);
         assert_eq!(infinite.completion_reason, "instruction_budget");
-        assert!(infinite.crt_startup.as_ref().unwrap().initializer_pending);
+        assert!(!infinite.crt_startup.as_ref().unwrap().initializer_pending);
+        assert_eq!(
+            infinite
+                .crt_startup
+                .as_ref()
+                .unwrap()
+                .interrupted_initializers
+                .len(),
+            1
+        );
         assert_eq!(
             infinite.crt_startup.as_ref().unwrap().initializers[0].result,
             None

@@ -13,11 +13,11 @@ use unicorn_engine::{RegisterX86, Unicorn, unicorn_const::Prot};
 mod allocation;
 mod delay_imports;
 pub use delay_imports::Observation as DelayImportObservation;
+#[cfg(test)]
+mod abi_tests;
 pub(crate) mod callbacks;
 mod crt;
 mod crt_math;
-#[cfg(test)]
-mod abi_tests;
 pub(crate) mod crt_startup;
 pub(crate) mod dynamic_loader;
 mod files;
@@ -40,7 +40,12 @@ pub(crate) mod native_loader;
 mod network;
 #[cfg(test)]
 mod network_tests;
+pub(crate) mod user_bootstrap;
+pub(crate) mod user_lifecycle;
+pub(crate) mod user_loader;
+pub(crate) mod user_providers;
 pub(crate) mod user_runtime;
+pub(crate) mod user_threads;
 mod winstrings;
 pub use network::Report as NetworkReport;
 mod console;
@@ -81,6 +86,7 @@ enum Model {
     UserRuntime(user_runtime::Call),
     WinStrings(winstrings::Call),
     ExitProcess,
+    UserThread(user_threads::Call),
     OpenSection,
     DynamicLoader(dynamic_loader::Call),
     Objects(kernel_objects::Call),
@@ -292,6 +298,8 @@ pub(super) struct ApiState {
     pub base: u64,
     pub end: u64,
     pub(crate) last_error: u32,
+    pub(crate) user_bootstrap: Option<user_bootstrap::State>,
+    pub(crate) user_loader: user_loader::State,
     pub calls: u64,
     pub events: Vec<ApiEvent>,
     pub kernel_export_queries: Vec<KernelExportQuery>,
@@ -383,6 +391,8 @@ impl ApiState {
             base: BASE,
             end: BASE,
             last_error: 0,
+            user_bootstrap: None,
+            user_loader: user_loader::State::default(),
             calls: 0,
             events: Vec::new(),
             kernel_export_queries: Vec::new(),
@@ -438,6 +448,12 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         convention: C::Stdcall,
         returns: T::U32,
     };
+    if let Some((call, count, returns)) = user_threads::definition(module, name) {
+        binding.model = Model::UserThread(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
     if matches!(module, "kernel32" | "kernelbase") && name == "ExitProcess"
         || module == "ntdll" && name == "RtlExitUserProcess"
     {
@@ -836,12 +852,14 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         ("ntoskrnl", "MmGetSystemRoutineAddress") => {
             (Model::SystemRoutine, 1, C::Stdcall, T::Pointer)
         }
-        ("kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0", "GetModuleHandleA") => {
-            (Model::ModuleHandleA, 1, C::Stdcall, T::Pointer)
-        }
-        ("kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0", "GetModuleHandleW") => {
-            (Model::ModuleHandleW, 1, C::Stdcall, T::Pointer)
-        }
+        (
+            "kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0",
+            "GetModuleHandleA",
+        ) => (Model::ModuleHandleA, 1, C::Stdcall, T::Pointer),
+        (
+            "kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0",
+            "GetModuleHandleW",
+        ) => (Model::ModuleHandleW, 1, C::Stdcall, T::Pointer),
         ("kernel32" | "kernelbase" | "api-ms-win-core-libraryloader-l1-2-0", "GetProcAddress") => {
             (Model::Procedure, 2, C::Stdcall, T::Pointer)
         }
@@ -955,18 +973,34 @@ pub(crate) fn describe(architecture: Architecture, module: &str, name: &str) -> 
 }
 fn install_binding(engine: &mut Unicorn<Trace>, binding: Binding) -> Result<u64> {
     let base = engine.get_data().apis.base;
-    if let Some(index) = engine.get_data().apis.bindings.iter().position(|row| row.name == binding.name) {
+    if let Some(index) = engine
+        .get_data()
+        .apis
+        .bindings
+        .iter()
+        .position(|row| row.name == binding.name)
+    {
         return Ok(base + index as u64 * 16);
     }
     let index = engine.get_data().apis.bindings.len();
     ensure!(index < 4096, "Windows API binding count exceeds 4096");
     if engine.get_data().apis.end == base {
         uc(engine.mem_map(base, 65536, Prot::READ | Prot::EXEC))?;
-        engine.get_data_mut().apis.memory.map(base, 65536, P::RX, None, "generated Windows API stubs")?;
+        engine.get_data_mut().apis.memory.map(
+            base,
+            65536,
+            P::RX,
+            None,
+            "generated Windows API stubs",
+        )?;
         engine.get_data_mut().apis.end = base + 65536;
     }
     let address = base + index as u64 * 16;
-    crate::cpu::write(engine, address, &return_stub(engine.get_data().architecture, &binding)?)?;
+    crate::cpu::write(
+        engine,
+        address,
+        &return_stub(engine.get_data().architecture, &binding)?,
+    )?;
     engine.get_data_mut().apis.bindings.push(Arc::new(binding));
     Ok(address)
 }
@@ -987,11 +1021,17 @@ fn import_target(engine: &mut Unicorn<Trace>, module: &str, symbol: &ImportName)
     }
 }
 pub(super) fn bind(engine: &mut Unicorn<Trace>, pe: &PeImage) -> Result<()> {
-    ensure!(pe.imports.len() <= 4096, "Generated import table exceeds the current4096-import model bound");
+    ensure!(
+        pe.imports.len() <= 4096,
+        "Generated import table exceeds the current4096-import model bound"
+    );
     for import in &pe.imports {
         let address = import_target(engine, &import.module, &import.name)?;
-        crate::cpu::write(engine, pe.image_base + import.iat_rva as u64,
-            &address.to_le_bytes()[..pe.sample.architecture.width()])?;
+        crate::cpu::write(
+            engine,
+            pe.image_base + import.iat_rva as u64,
+            &address.to_le_bytes()[..pe.sample.architecture.width()],
+        )?;
     }
     Ok(())
 }
@@ -1047,7 +1087,9 @@ impl GuestRead for Frame<'_, '_> {
     }
     fn register(&self, register: R) -> std::result::Result<u64, AbiError> {
         if matches!(register, R::Xmm0 | R::Xmm1 | R::Xmm2 | R::Xmm3) {
-            let bytes = self.0.reg_read_long(native_register(self.architecture(), register))
+            let bytes = self
+                .0
+                .reg_read_long(native_register(self.architecture(), register))
                 .map_err(|_| AbiError("cannot read floating argument register"))?;
             return Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()));
         }
@@ -1217,13 +1259,13 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
     crate::threads::timers::require_ready(engine)?;
     kernel_rtl::require_native_ready(engine)?;
     Ok(match binding.model {
+        Model::UserThread(call) => user_threads::invoke(engine, call, args)?,
         Model::ExitProcess => {
             ensure!(
                 !engine.get_data().apis.kernel_mode && engine.get_data().threads.is_none(),
                 "Process exit requires an ordinary modeled user process"
             );
-            engine.get_data_mut().process_exit_code = Some(args[0] as u32);
-            uc(engine.emu_stop())?;
+            user_lifecycle::request_exit(engine, args[0] as u32, false)?;
             0
         }
         Model::Breakpoint => crate::native_exceptions::api_frame::queue(
@@ -1469,7 +1511,8 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
     ) || matches!(
         engine.get_data().ipi_action,
         Some(crate::ipi::Action::Begin)
-    ) || dynamic_loader::queued(engine)
+    ) || user_threads::queued(engine)
+        || dynamic_loader::queued(engine)
         || crt_startup::queued(engine)
         || crate::native_exceptions::queued(engine);
     if engine.get_data().apis.next_event_index().is_some() {
@@ -1512,6 +1555,8 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
                 Some(match binding.model {
                     Model::Ipi => "ipi_broadcast_pending",
                     Model::DynamicLoader(_) => "dynamic_loader_pending",
+                    Model::UserThread(_) => "user_thread_pending",
+                    Model::Procedure if dynamic_loader::queued(engine) => "dynamic_loader_pending",
                     Model::NativeCSpecific => "c_language_handler_pending",
                     Model::Breakpoint => "raises_native_breakpoint",
                     Model::Prompt => "raises_debug_service_exception",

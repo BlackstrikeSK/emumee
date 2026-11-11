@@ -66,6 +66,8 @@ pub struct DynamicOperation {
     pub interrupted: bool,
     pub returning: bool,
     pub active_routine: Option<PendingDynamicRoutine>,
+    pub graph: bool,
+    pub pending_edges: Vec<(ModuleId, ModuleId)>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct DynamicEvent {
@@ -100,6 +102,8 @@ pub struct DynamicRetiredImage {
 pub struct DynamicState {
     pub owner: Option<u64>,
     pub active: Option<DynamicOperation>,
+    pub suspended: Vec<DynamicOperation>,
+    pub interrupted: Vec<DynamicOperation>,
     next_operation: u64,
     pub events: Vec<DynamicEvent>,
     pub events_omitted: u64,
@@ -112,6 +116,8 @@ impl Default for DynamicState {
         Self {
             owner: None,
             active: None,
+            suspended: Vec::new(),
+            interrupted: Vec::new(),
             next_operation: 1,
             events: Vec::new(),
             events_omitted: 0,
@@ -208,7 +214,10 @@ impl ModuleCatalog {
         self.by_identity(id).is_some_and(|m| self.resident(m))
     }
     fn resident(&self, m: &LoadedModule) -> bool {
-        (self.primary == Some(m.id) && m.image_kind == Kind::Exe)
+        m.provenance
+            .as_ref()
+            .is_some_and(|p| p.origin == ModuleOrigin::SyntheticProvider)
+            || (self.primary == Some(m.id) && m.image_kind == Kind::Exe)
             || m.lifecycle
                 .as_ref()
                 .is_some_and(|l| l.phase == ImagePhase::Ready)
@@ -232,6 +241,9 @@ impl ModuleCatalog {
                 .map(|owner| owner.id)
                 .collect(),
             process_anchor: self.primary == Some(id)
+                || m.provenance
+                    .as_ref()
+                    .is_some_and(|p| p.origin == ModuleOrigin::SyntheticProvider)
                 || m.lifecycle.as_ref().is_some_and(|l| l.static_anchor),
             pending_anchor: m
                 .dynamic
@@ -239,7 +251,7 @@ impl ModuleCatalog {
                 .is_some_and(|l| l.phase != DynamicPhase::Ready),
         })
     }
-    fn event(&mut self, kind: &'static str, id: ModuleId, instruction: u64) {
+    pub(super) fn event(&mut self, kind: &'static str, id: ModuleId, instruction: u64) {
         let api_references = self.by_identity(id).map_or(0, |m| m.api_references);
         let dependencies = self
             .by_identity(id)
@@ -265,6 +277,9 @@ impl ModuleCatalog {
         instruction: u64,
     ) -> DynamicResult<u64> {
         self.owner(owner)?;
+        if self.pending_unload(id) {
+            return Err(fail(50, "DLL is in an active unload transaction"));
+        }
         self.available_operation()?;
         let m = self
             .by_identity(id)
@@ -347,7 +362,7 @@ impl ModuleCatalog {
         );
         Ok(())
     }
-    fn start_operation(
+    pub(super) fn start_operation(
         &mut self,
         kind: DynamicOperationKind,
         root: ModuleId,
@@ -368,6 +383,8 @@ impl ModuleCatalog {
             interrupted: false,
             returning: false,
             active_routine: None,
+            graph: false,
+            pending_edges: Vec::new(),
         });
         Ok(id)
     }
@@ -493,6 +510,14 @@ impl ModuleCatalog {
             .dynamic
             .as_ref()
             .ok_or_else(|| fail(50, "module has no dynamic initialization authority"))?;
+        if detach
+            && image.attach_returns == 0
+            && self.dynamic_state.active.as_ref().is_some_and(|operation| {
+                operation.graph && operation.kind == DynamicOperationKind::FailedLoad
+            })
+        {
+            return Ok(vec![]);
+        }
         let mut calls = Vec::new();
         for (i, rva) in image.tls.callback_rvas.iter().enumerate() {
             calls.push(LoaderInvocation {
@@ -571,7 +596,7 @@ impl ModuleCatalog {
                 .dynamic_state
                 .routines
                 .last()
-                .is_some_and(|e| e.stopped_instructions.is_none())
+                .is_some_and(|e| e.operation == operation && e.stopped_instructions.is_none())
         {
             return Err(fail(
                 50,
@@ -677,6 +702,26 @@ impl ModuleCatalog {
     pub fn dynamic_ready(&mut self, id: ModuleId, instruction: u64) -> DynamicResult<u64> {
         self.expect_current(id, DynamicOperationKind::Load)?;
         let expected = self.dynamic_calls(id, false)?.len();
+        let operation = self.dynamic_state.active.as_ref().unwrap();
+        let graph = operation.graph;
+        let root = operation.root;
+        let more = operation.cursor + 1 < operation.modules.len();
+        let edges = if graph && !more {
+            operation.pending_edges.clone()
+        } else {
+            vec![]
+        };
+        for (from, to) in &edges {
+            if self.by_identity(*from).is_none()
+                || self.by_identity(*to).is_none()
+                || *to != id && !self.loader_image_ready(*to)
+            {
+                return Err(fail(
+                    50,
+                    "DLL graph ownership changed during initialization",
+                ));
+            }
+        }
         let m = self.by_id_mut(id)?;
         let image = m.dynamic.as_mut().unwrap();
         if image.attach_failed
@@ -692,9 +737,21 @@ impl ModuleCatalog {
             ));
         }
         image.phase = DynamicPhase::Ready;
-        m.api_references = 1;
+        m.api_references = u32::from(!graph || id == root);
         let base = m.base;
-        self.dynamic_state.active.as_mut().unwrap().returning = true;
+        for (from, to) in edges {
+            let owner = self.by_id_mut(from)?;
+            if !owner.loader_dependencies().any(|old| old == to) {
+                owner.late_dependencies.push(to);
+            }
+        }
+        let operation = self.dynamic_state.active.as_mut().unwrap();
+        if more {
+            operation.cursor += 1;
+        } else {
+            operation.returning = true;
+        }
+        self.ready_order.push(id);
         self.event("actual_initialized_reference_acquired", id, instruction);
         Ok(base)
     }
@@ -746,6 +803,9 @@ impl ModuleCatalog {
         instruction: u64,
     ) -> DynamicResult<bool> {
         self.owner(owner)?;
+        if self.pending_unload(id) {
+            return Err(fail(50, "DLL is in an active unload transaction"));
+        }
         self.available_operation()?;
         let m = self
             .by_identity(id)
@@ -783,9 +843,44 @@ impl ModuleCatalog {
                 "failed-load cleanup needs an actual DllMain FALSE",
             ));
         }
+        let old = self.dynamic_state.active.as_ref().unwrap();
+        let mut cleanup = vec![id];
+        if old.graph {
+            let group = old.modules.iter().copied().collect::<BTreeSet<_>>();
+            let mut reachable = BTreeSet::new();
+            let mut pending = self
+                .modules
+                .values()
+                .filter(|module| {
+                    module.api_references != 0
+                        || self.primary == Some(module.id)
+                        || module
+                            .lifecycle
+                            .as_ref()
+                            .is_some_and(|life| life.static_anchor)
+                })
+                .map(|module| module.id)
+                .collect::<Vec<_>>();
+            while let Some(next) = pending.pop() {
+                if reachable.insert(next) {
+                    if let Some(module) = self.by_identity(next) {
+                        pending.extend(module.loader_dependencies());
+                    }
+                }
+            }
+            cleanup.extend(
+                old.modules[..old.cursor]
+                    .iter()
+                    .rev()
+                    .chain(old.modules[old.cursor + 1..].iter().rev())
+                    .copied()
+                    .filter(|member| group.contains(member) && !reachable.contains(member)),
+            );
+        }
         let op = self.dynamic_state.active.as_mut().unwrap();
         op.kind = DynamicOperationKind::FailedLoad;
-        op.modules = vec![id];
+        op.modules = cleanup;
+        op.pending_edges.clear();
         op.cursor = 0;
         self.event("actual_attach_false_cleanup_started", id, instruction);
         Ok(())
@@ -812,7 +907,17 @@ impl ModuleCatalog {
             DynamicPhase::Detaching | DynamicPhase::AttachRefused
         ) || image.detach_returns != self.dynamic_calls(id, true)?.len()
             || refs.api_references != 0
-            || !refs.incoming_owners.is_empty()
+            || refs.incoming_owners.iter().any(|owner| {
+                !(kind == DynamicOperationKind::FailedLoad
+                    && self.dynamic_state.active.as_ref().unwrap().graph
+                    && self
+                        .dynamic_state
+                        .active
+                        .as_ref()
+                        .unwrap()
+                        .modules
+                        .contains(owner))
+            })
             || refs.process_anchor
         {
             return Err(fail(
@@ -833,13 +938,25 @@ impl ModuleCatalog {
                 .by_identity(next)
                 .ok_or_else(|| fail(50, "next dynamic retirement target disappeared"))?;
             let refs = self.references(next)?;
-            if target
-                .dynamic
-                .as_ref()
-                .is_none_or(|image| image.phase != DynamicPhase::Ready)
-                || refs.api_references != 0
+            if target.dynamic.as_ref().is_none_or(|image| {
+                image.phase != DynamicPhase::Ready
+                    && !(kind == DynamicOperationKind::FailedLoad
+                        && self.dynamic_state.active.as_ref().unwrap().graph
+                        && image.phase == DynamicPhase::Mapped)
+            }) || refs.api_references != 0
                 || refs.process_anchor
-                || refs.incoming_owners.iter().any(|owner| *owner != id)
+                || refs.incoming_owners.iter().any(|owner| {
+                    *owner != id
+                        && !(kind == DynamicOperationKind::FailedLoad
+                            && self.dynamic_state.active.as_ref().unwrap().graph
+                            && self
+                                .dynamic_state
+                                .active
+                                .as_ref()
+                                .unwrap()
+                                .modules
+                                .contains(owner))
+                })
             {
                 return Err(fail(
                     50,

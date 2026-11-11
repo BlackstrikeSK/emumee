@@ -86,6 +86,7 @@ impl StartupFixture {
                 | Self::InitializersFail
                 | Self::InitializersEmpty
                 | Self::InitializersMutate
+                | Self::InitializersReentrant
         )
     }
 }
@@ -367,9 +368,11 @@ pub fn crt_startup_probe(arch: Architecture, kind: StartupFixture) -> Vec<u8> {
                     first.extend([0x48, 0x83, 0xec, 0x28, 0x31, 0xc9, 0x31, 0xd2, 0xff, 0x15]);
                     let next = 0x1800 + first.len() + 4;
                     first.extend((0x2080i32 + 9 * width as i32 - next as i32).to_le_bytes());
+                    first.extend([0x48, 0x83, 0xc4, 0x28]);
                 } else {
                     first.extend([0x6a, 0, 0x6a, 0, 0xff, 0x15]);
                     first.extend(((base + 0x2080 + 9 * width as u64) as u32).to_le_bytes());
+                    first.extend([0x83, 0xc4, 8]);
                 }
             }
             first.push(0xb8);

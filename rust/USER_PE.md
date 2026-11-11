@@ -34,13 +34,13 @@ unsupported behavior and budget stops return nonzero while retaining the report.
 A guest return value is an observation, not the controller exit status.
 `ExitProcess` and `RtlExitUserProcess` stop the modeled process, retain the full
 32-bit `process_exit_code`, and report `process_exit` with no invented entry return.
-This bounded termination does not run Windows DLL detach callbacks.
+Normal process exit runs bounded guest DLL/TLS detach callbacks; forced termination skips them.
 The return/UINT exit-code distinction follows Microsoft's
 [ExitProcess contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess);
-the documented detach and full process lifecycle are not claimed by this profile.
+The bounded M3 lifecycle is qualified; general scheduling and Windows runtime compatibility remain separate.
 
 This entrypoint does not establish full Python/Speakeasy compatibility. Managed
-assemblies, drivers, storage TLS, arbitrary Windows APIs and a general Windows process runtime remain
+assemblies, drivers, arbitrary Windows APIs and a general Windows process runtime remain
 outside this submitted native profile. Drivers retain `submitted-driver`; managed
 IL retains its separate bounded fixture/interpreter path. Unsupported imports
 stop explicitly. Python is not invoked by this path.
@@ -140,6 +140,20 @@ admission is not a promise that an image can consume the whole quota in addition
 to runtime backing. See `../docs/native-pe/m2-binding-exit.md` for transaction
 semantics, exact bounds and reproducible M2 exit controls.
 
+## Owned root bootstrap
+
+Submitted user profiles initialize an owned PEB/TEB and x86 FS/x64 GS backing.
+Process parameters project the existing persona, VFS, standard handles and stable
+GetCommandLineW buffer. Direct and API/model-mediated LastError writes share one
+authority; successful environment/cwd setters refresh guest backing. The arena
+uses the existing live memory quota and refuses guest free/protect changes.
+`Execution.user_bootstrap` reports the root addresses and exact bounded scope.
+See `../docs/native-pe/m3-user-bootstrap.md` for direct-memory probes, reference
+layouts, boundary/refusal controls and qualification evidence. Loader lists,
+static TLS and bounded process/thread notifications are qualified separately in
+`../docs/native-pe/m3-loader-lifecycle.md`. General scheduling, waits and FLS
+destructors remain M4 work.
+
 ## CRT startup parity
 
 The next API family adds `__getmainargs`, `__wgetmainargs`, `__p___argc`,
@@ -214,11 +228,14 @@ program with a six-processor configured persona. Matching the test persona to
 the program resolves its early INT3 while retaining all paging and IPI checks.
 This fixture correction changes no production exception or paging behavior.
 
-Current source verification passes 478 core tests, all 438 engine tests, three
-static-inventory tests and workspace Clippy. Engine Clippy also passes after the
-last TLS/FLS GetValue2 correction. Zero-valued and invalid GetValue2 results
+The pre-M2 checkpoint passed 478 core tests, 438 engine tests, three inventory
+tests and Clippy. Current M3 bootstrap source verification passes 1,060 Rust
+tests and strict all-target Clippy; its reproducible receipts and packaged scope
+are documented in `../docs/native-pe/m3-user-bootstrap.md`.
+Zero-valued and invalid GetValue2 results
 preserve last error, following the
 [TLS GetValue2 contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue2).
-The current ledger records 1,829 missing bindings and 761 bindings awaiting
+The current ledger records 1,819 missing bindings and 771 bindings awaiting
 semantic qualification across both architectures. Binding presence alone does
-not close a parity contract; fresh packaged qualification remains outstanding.
+not close a parity contract; comprehensive M10 package qualification remains
+outstanding independently of the bounded M2/M3 package controls.

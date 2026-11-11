@@ -1,6 +1,72 @@
 # Native PE session checkpoint
 
-## Current continuation checkpoint
+## Current M3 completion checkpoint
+
+M3 completion (2026-11-11): all remaining checkboxes and the bounded M3 exit
+are qualified. Unified catalog/LDR/export views, recursive VFS graphs and lazy
+forwarders, static TLS for root/companions/new threads, normal/forced lifecycle,
+nested callbacks/ABI/fault unwind and shared instruction/wall/resource admission
+pass x86/x64 controls. The same-source frozen bundle passes 398 required outcomes
+(328 prior controls plus 70 M3 lifecycle controls); all chained seals pass.
+Source controls pass 1073 Rust tests, 163 accounting tests, four inventory tests,
+partition/syntax, strict all-target Clippy and whitespace. Fresh dependency and
+effective registration audits/checks pass. Final source index is
+output/rust-pe-m3-complete/final-validation-04/index.json; independent package
+seal: output/rust-pe-m3-complete/qualification-20261111/qualified-m3.json.
+Build-source SHA-256: 084f1a7e7ed1f83e0fb915bc512a263a0a187a3deca5f2a0a7d2472a3470d99d.
+All 2,590 API contracts remain unreviewed (1,809 missing/781 unverified); zero
+semantic closures. M4 scheduling/waits/FLS and global M10 remain separate.
+Review: docs/native-pe/m3-loader-lifecycle.md. No commit/push, supplied-sample
+execution, host DLL search or security-setting change occurred.
+
+## Historical bootstrap checkpoint
+
+
+
+2026-11-07: the **first M3 checkbox (owned root user bootstrap) is qualified**.
+PEB/TEB, x86 FS/x64 GS, process parameters, environment/cwd/command-line/desktop,
+IDs and shared LastError project existing persona/VFS/stdio/process authorities.
+Direct FS/GS loads and API/model writes are tested; DesktopInfo reuses the exact
+GetStartupInfoW pointer, and counted strings include the admitted maximum without
+uint16 wrap. Owned free/protect attempts require their specific refusal.
+See `docs/native-pe/m3-user-bootstrap.md` for scope, reference and resolved findings.
+
+Clean source-only M2 commit `503d0d77a04ecb50b46ccc52de8d4a4702501777` was pushed
+to `origin/main` and independently matched with `git ls-remote`. Subsequent M3
+changes remain uncommitted. No generated/private output was included in that
+commit; no branch, supplied-sample execution, host DLL search or security change.
+
+Serial source validation passes 1,060 Rust controls and strict all-target Clippy.
+Fresh release/freeze and **328 required package outcomes** pass: all 294 M2
+outcomes plus 34 bootstrap controls, including 16 required guest-owned-memory
+refusals and 18 returns. Chained independent seals bind 2,201 prior-matrix files,
+789 M2-extension files and 358 bootstrap-extension files and pass repeat checks.
+Build-source SHA-256:
+`63d3a247da60362ddeccdcdbae49cb97590a5c73228bafb89ea3becfdd32e2bd`.
+
+Current evidence root: `output/rust-pe-m3-bootstrap/`. Use `bundle/`,
+`fixtures-final/`, `qualification/`, `staging/`, `binding/`, `bootstrap/`,
+`bootstrap-reference.json`, all three `qualified-*.json` seals,
+`dependencies-complete/report.json`, `registration-complete/review.json`,
+`dispatch.log`, `final-ledger.json`, `final-status.json` and
+`final-validation/index.json`. Require the independent source-index and bootstrap
+seal checks before reuse. The index records the final source fingerprint and
+suite timings; this checkpoint is itself hashed there. Before-desktop bundles,
+failed probes and the interrupted build log remain historical, not current proof.
+Dependency checks unset CARGO_NET_OFFLINE and RUST_TEST_THREADS; source validation
+uses offline=true/threads=1 and one-job Cargo. Missing ignored captures require
+recapture, not an assumption that a prior run passed.
+
+**Next: M3 module catalog/LDR/export/dynamic-loader lifecycle**, with shared
+refcounts, placement/relocations, unload/invalidation, cycles/unresolved imports
+and failed-initialization rollback. Static TLS, complete startup/termination and
+nested callback/horizon checkboxes remain later M3 work; M4 scheduling follows
+the complete milestone. All 2,590 semantic contracts remain open
+(1,819 missing/771 unverified bindings), with zero semantic closures and no
+inventory loss. The global M10 package gate remains unreviewed. No work from the
+first bootstrap checkbox is deferred into those later obligations.
+
+## Historical complete M2 checkpoint
 
 2026-11-06: **all five M2 checkboxes and the bounded M2 exit are qualified**.
 Exact request/primary/persona/slot identity, full accepted-option receipts,

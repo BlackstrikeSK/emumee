@@ -228,20 +228,27 @@ pub(super) fn initialize_with_reference(
     let mut reference_receipt = None;
     if reference.is_none()
         && !engine.get_data().apis.bindings.iter().any(|b| {
-            (kernel_pushlocks::enabled(engine) && matches!(b.model,
-                Model::NormalSync(kernel_sync::Call::PushInitialize | kernel_sync::Call::PushAcquire | kernel_sync::Call::PushRelease)))
-            || matches!(
-                b.model,
-                Model::SystemRoutine
-                    | Model::DynamicLoader(_)
-                    | Model::KernelModules(_)
-                    | Model::OpenSection
-                    | Model::ModuleHandleA
-                    | Model::ModuleHandleW
-                    | Model::Procedure
-                    | Model::Environment(kernel_environment::Call::Data(_))
-                    | Model::Objects(kernel_objects::Call::Data(_))
-            )
+            (kernel_pushlocks::enabled(engine)
+                && matches!(
+                    b.model,
+                    Model::NormalSync(
+                        kernel_sync::Call::PushInitialize
+                            | kernel_sync::Call::PushAcquire
+                            | kernel_sync::Call::PushRelease
+                    )
+                ))
+                || matches!(
+                    b.model,
+                    Model::SystemRoutine
+                        | Model::DynamicLoader(_)
+                        | Model::KernelModules(_)
+                        | Model::OpenSection
+                        | Model::ModuleHandleA
+                        | Model::ModuleHandleW
+                        | Model::Procedure
+                        | Model::Environment(kernel_environment::Call::Data(_))
+                        | Model::Objects(kernel_objects::Call::Data(_))
+                )
         })
     {
         return Ok(None);
@@ -451,7 +458,7 @@ pub(super) fn initialize_with_reference(
     Ok(reference_receipt)
 }
 
-fn ansi(engine: &Unicorn<Trace>, address: u64) -> Result<String> {
+pub(super) fn ansi(engine: &Unicorn<Trace>, address: u64) -> Result<String> {
     let length = string_length(engine, address, 129)?;
     let bytes = read(engine, address, length)?;
     ensure!(
@@ -560,6 +567,12 @@ pub(super) fn call(engine: &mut Unicorn<Trace>, model: Model, args: &[u64]) -> R
             } else {
                 ImportName::Name(ansi(engine, args[1])?)
             };
+            if engine.get_data().apis.user_bootstrap.is_some()
+                && matches!(engine.get_data().apis.modules.resolve(&module, &symbol)?,
+                    Resolution::MissingModule { ref chain, .. } if chain.len() > 1)
+            {
+                return dynamic_loader::invoke(engine, dynamic_loader::Call::Procedure, args);
+            }
             if let Some(address) = resolve(engine, &module, &symbol)? {
                 if let Resolution::Found { chain, .. } =
                     engine.get_data().apis.modules.resolve(&module, &symbol)?

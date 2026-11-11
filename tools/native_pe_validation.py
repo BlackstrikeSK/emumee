@@ -75,7 +75,7 @@ def environment_snapshot():
                 name: hashlib.sha256(value.encode('utf-8')).hexdigest()
                 for name, value in sorted(os.environ.items())
                 if name.startswith(('CARGO_', 'RUST', 'CMAKE_', 'BINDGEN_', 'LIBCLANG', 'VSCMD_'))
-                or name in ('PATH', 'PATHEXT', 'CC', 'CXX', 'AR', 'INCLUDE', 'LIB', 'LIBPATH',
+                or name in ('PATH', 'PATHEXT', 'PSModulePath', 'PSMODULEPATH', 'CC', 'CXX', 'AR', 'INCLUDE', 'LIB', 'LIBPATH',
                             'CL', '_CL_', 'LINK', '_LINK_', 'MAKE', 'NINJA', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS')}}
 
 

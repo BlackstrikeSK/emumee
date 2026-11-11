@@ -47,19 +47,28 @@ impl GuardedMutexCountProtocol {
         let waiters = i32::try_from(waiters).context("Guarded mutex waiter count overflow")?;
         match self {
             Self::LegacySigned => Ok(-waiters),
-            Self::Windows26200X64 => waiters.checked_mul(4).context("Guarded mutex bit-count overflow"),
+            Self::Windows26200X64 => waiters
+                .checked_mul(4)
+                .context("Guarded mutex bit-count overflow"),
         }
     }
     pub(crate) fn blocked_count(self, count: i32) -> Result<i32> {
-        ensure!(self.owned_count(count), "Guarded mutex count is not a stable owned state");
+        ensure!(
+            self.owned_count(count),
+            "Guarded mutex count is not a stable owned state"
+        );
         match self {
             Self::LegacySigned => count.checked_sub(1),
             Self::Windows26200X64 => count.checked_add(4),
-        }.context("Guarded mutex blocked count overflow")
+        }
+        .context("Guarded mutex blocked count overflow")
     }
 }
 pub(crate) fn guarded_mutex_count_protocol(engine: &Unicorn<Trace>) -> GuardedMutexCountProtocol {
-    GuardedMutexCountProtocol::for_target(engine.get_data().architecture, engine.get_data().machine.windows_build())
+    GuardedMutexCountProtocol::for_target(
+        engine.get_data().architecture,
+        engine.get_data().machine.windows_build(),
+    )
 }
 use emumee_core::kernel_layout::{KernelLayout, THREAD_STACK_SIZE as CHILD_STACK_SIZE};
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -231,6 +240,9 @@ impl ThreadExecution {
     }
 }
 pub(crate) fn thread_address(engine: &Unicorn<Trace>) -> u64 {
+    if let Some(teb) = crate::api::user_bootstrap::active_teb(engine) {
+        return teb;
+    }
     if let Some(address) = crate::ipi::current_thread(engine) {
         return address;
     }
@@ -247,7 +259,7 @@ pub(crate) fn current_id(engine: &Unicorn<Trace>) -> u64 {
         .threads
         .as_ref()
         .map(|t| t.current_slot)
-        .unwrap_or(1)
+        .unwrap_or_else(|| crate::api::user_threads::current_id(engine))
 }
 fn pc_register(arch: Architecture) -> RegisterX86 {
     if arch == Architecture::X64 {
@@ -374,7 +386,10 @@ pub(crate) fn acquire_mutex(
         );
         None
     } else {
-        ensure!(protocol.owned_count(count), "Invalid owned guarded mutex count for target protocol");
+        ensure!(
+            protocol.owned_count(count),
+            "Invalid owned guarded mutex count for target protocol"
+        );
         Some(
             threads
                 .model
@@ -419,14 +434,20 @@ pub(crate) struct Handoff {
     pub old_irql: u8,
     pub count: i32,
 }
-pub(crate) fn release_mutex(engine: &mut Unicorn<Trace>, address: u64, count: i32) -> Result<Option<Handoff>> {
+pub(crate) fn release_mutex(
+    engine: &mut Unicorn<Trace>,
+    address: u64,
+    count: i32,
+) -> Result<Option<Handoff>> {
     let architecture = engine.get_data().architecture;
     let protocol = guarded_mutex_count_protocol(engine);
     let Some(threads) = &mut engine.get_data_mut().threads else {
         return Ok(None);
     };
-    ensure!(count == protocol.for_waiters(threads.model.mutex_waiters(address))?,
-        "Guest guarded mutex release count diverges from scheduler");
+    ensure!(
+        count == protocol.for_waiters(threads.model.mutex_waiters(address))?,
+        "Guest guarded mutex release count diverges from scheduler"
+    );
     threads
         .model
         .adopt_mutex(address, Some(threads.current_slot))?;
@@ -964,6 +985,25 @@ pub(crate) fn execute_horizon(
     stop_marker: u64,
     horizon: &ExecutionHorizon,
 ) -> Result<Outcome> {
+    ensure!(
+        engine.get_data().continuation_depth < 32,
+        "Shared guest continuation depth exceeds 32"
+    );
+    let state = engine.get_data_mut();
+    state.continuation_depth += 1;
+    state.maximum_continuation_depth = state
+        .maximum_continuation_depth
+        .max(state.continuation_depth);
+    let result = execute_horizon_inner(engine, entry, stop_marker, horizon);
+    engine.get_data_mut().continuation_depth -= 1;
+    result
+}
+fn execute_horizon_inner(
+    engine: &mut Unicorn<Trace>,
+    entry: u64,
+    stop_marker: u64,
+    horizon: &ExecutionHorizon,
+) -> Result<Outcome> {
     let arch = engine.get_data().architecture;
     uc(engine.reg_write(pc_register(arch), entry))?;
     loop {
@@ -1014,15 +1054,43 @@ pub(crate) fn execute_horizon(
             });
         }
         if engine.get_data().process_exit_code.is_some() {
-            return Ok(Outcome { returned: false, value: None, error: None });
+            return Ok(Outcome {
+                returned: false,
+                value: None,
+                error: None,
+            });
+        }
+        if crate::api::user_threads::exiting(engine) {
+            return Ok(Outcome {
+                returned: false,
+                value: None,
+                error: None,
+            });
+        }
+        if crate::api::user_threads::queued(engine) {
+            match crate::api::user_threads::transition(engine, horizon) {
+                Ok(Some(outcome)) => return Ok(outcome),
+                Ok(None) => continue,
+                Err(error) => {
+                    return Ok(Outcome {
+                        returned: false,
+                        value: None,
+                        error: Some(format!("{error:#}")),
+                    });
+                }
+            }
         }
         if crate::native_exceptions::queued(engine) {
             match crate::native_exceptions::transition(engine, horizon) {
                 Ok(Some(outcome)) => return Ok(outcome),
                 Ok(None) => continue,
-                Err(error) => return Ok(Outcome {
-                    returned: false, value: None, error: Some(format!("{error:#}")),
-                }),
+                Err(error) => {
+                    return Ok(Outcome {
+                        returned: false,
+                        value: None,
+                        error: Some(format!("{error:#}")),
+                    });
+                }
             }
         }
         let mut deferred = None;
@@ -1068,7 +1136,13 @@ pub(crate) fn execute_horizon(
             match crate::api::crt_startup::transition(engine, horizon) {
                 Ok(Some(outcome)) => return Ok(outcome),
                 Ok(None) => continue,
-                Err(error) => return Ok(Outcome { returned: false, value: None, error: Some(format!("{error:#}")) }),
+                Err(error) => {
+                    return Ok(Outcome {
+                        returned: false,
+                        value: None,
+                        error: Some(format!("{error:#}")),
+                    });
+                }
             }
         }
         if crate::api::dynamic_loader::queued(engine) {
@@ -1160,7 +1234,10 @@ pub(crate) fn execute_horizon(
                 return Ok(Outcome {
                     returned: false,
                     value: None,
-                    error: Some("DEBUGCTL active DPC transition requires architectural tracing support".into()),
+                    error: Some(
+                        "DEBUGCTL active DPC transition requires architectural tracing support"
+                            .into(),
+                    ),
                 });
             }
             match dpc::offer(engine, continuation) {

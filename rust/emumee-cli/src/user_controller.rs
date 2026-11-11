@@ -26,6 +26,39 @@ pub struct Options {
     pub inputs: Option<PathBuf>,
 }
 
+pub fn bootstrap_boundary(
+    source: &Path,
+    root: &Path,
+    architecture: emumee_core::pe::Architecture,
+) -> Result<Value> {
+    let expected = emumee_core::fixtures::user_bootstrap_probe(
+        architecture,
+        emumee_core::fixtures::BootstrapFixture::Basic,
+        false,
+    );
+    ensure!(
+        source.file_name().and_then(|value| value.to_str()) == Some("bootstrap.exe"),
+        "Bootstrap fixture requires bootstrap.exe"
+    );
+    ensure!(
+        emumee_platform::windows::read_regular_locked(source, emumee_core::pe::MAX_INPUT, None)?
+            == expected,
+        "Bootstrap fixture bytes differ"
+    );
+    let guest_path = r"C:\emumee\bootstrap.exe";
+    run(
+        source,
+        root,
+        Options {
+            budget: 500000,
+            timeout_us: 30_000_000,
+            persona: None,
+            arguments: vec!["x".repeat(32766 - guest_path.encode_utf16().count() - 1)],
+            inputs: None,
+        },
+    )
+}
+
 pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
     let bytes =
         emumee_platform::windows::read_regular_locked(source, emumee_core::pe::MAX_INPUT, None)?;

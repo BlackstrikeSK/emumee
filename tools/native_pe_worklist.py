@@ -51,7 +51,7 @@ def runtime_snapshot(root):
                'native_api_parity_ledger.py', 'native_pe_worklist.py', 'native_pe_status.py',
                'inventory_native_api.py', 'audit_native_surface.py', 'native_pe_batches.py', 'native_pe_validation.py',
                'native_pe_baseline.py', 'native_pe_registration.py', 'native_pe_staging.py',
-                'native_pe_staging_seal.py', 'native_pe_m2.py', 'verify_rust_user_pe.ps1')]
+                'native_pe_staging_seal.py', 'native_pe_m2.py', 'native_pe_m3.py', 'verify_rust_user_pe.ps1')]
     paths += sorted((root / 'tests').glob('test_native_pe_*.py'))
     paths += [root / 'tests/test_native_api_inventory.py']
     paths += [root / 'docs/native-pe/validation-policy.json']

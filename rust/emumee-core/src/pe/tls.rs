@@ -1,4 +1,4 @@
-//! Checked callback-only TLS directory plans. Thread TLS storage is not modeled.
+//! Checked TLS directories, relocated pointers and bounded static storage plans.
 use super::*;
 pub const MAX_TLS_CALLBACKS: usize = 100;
 #[derive(Debug, Error)]
@@ -33,7 +33,19 @@ pub struct TlsCallbackPlan {
     pub directory_rva: Option<u32>,
     pub callbacks_rva: Option<u32>,
     pub callback_rvas: Vec<u32>,
+    pub storage: Option<TlsStorage>,
     architecture: Architecture,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct TlsStorage {
+    pub template_rva: Option<u32>,
+    pub initialized_bytes: u32,
+    pub zero_fill: u32,
+    pub index_rva: u32,
+    pub alignment: u32,
+    pub characteristics: u32,
+    #[serde(skip_serializing)]
+    pub template: Vec<u8>,
 }
 #[derive(Clone, Debug)]
 pub struct TlsMirrorCheck {
@@ -58,6 +70,44 @@ impl TlsCallbackPlan {
         };
         let width = self.architecture.width();
         let mut header = vec![0; if width == 8 { 40 } else { 24 }];
+        if let Some(storage) = &self.storage {
+            if storage.initialized_bytes as usize != storage.template.len()
+                || storage.initialized_bytes as u64 + storage.zero_fill as u64 > 1024 * 1024
+                || storage.template_rva.is_none() && storage.initialized_bytes != 0
+                || !storage.alignment.is_power_of_two()
+                || storage.alignment > 8192
+            {
+                return Err(malformed("inconsistent static TLS storage plan"));
+            }
+            let end = storage
+                .template_rva
+                .map(|rva| {
+                    rva.checked_add(storage.initialized_bytes)
+                        .ok_or_else(|| malformed("TLS template end overflow"))
+                })
+                .transpose()?;
+            for (ordinal, rva) in [storage.template_rva, end, Some(storage.index_rva)]
+                .into_iter()
+                .enumerate()
+            {
+                let value = rva
+                    .map(|rva| {
+                        actual_base
+                            .checked_add(rva as u64)
+                            .ok_or_else(|| malformed("TLS relocated storage pointer overflow"))
+                    })
+                    .transpose()?
+                    .unwrap_or(0);
+                if width == 4 && value > u32::MAX as u64 {
+                    return Err(malformed("x86 TLS storage pointer exceeds ABI width"));
+                }
+                header[ordinal * width..(ordinal + 1) * width]
+                    .copy_from_slice(&value.to_le_bytes()[..width]);
+            }
+            header[4 * width..4 * width + 4].copy_from_slice(&storage.zero_fill.to_le_bytes());
+            header[4 * width + 4..4 * width + 8]
+                .copy_from_slice(&storage.characteristics.to_le_bytes());
+        }
         let mut result = Vec::new();
         if let Some(array) = self.callbacks_rva {
             let va = actual_base
@@ -95,6 +145,12 @@ impl TlsCallbackPlan {
 }
 impl PeImage {
     pub fn tls_callbacks_only(&self, data: &[u8]) -> TlsResult<TlsCallbackPlan> {
+        self.tls_plan(data, false)
+    }
+    pub fn tls_with_storage(&self, data: &[u8]) -> TlsResult<TlsCallbackPlan> {
+        self.tls_plan(data, true)
+    }
+    fn tls_plan(&self, data: &[u8], storage_allowed: bool) -> TlsResult<TlsCallbackPlan> {
         if format!("{:x}", Sha256::digest(data)) != self.sample.sha256 {
             return Err(TlsError {
                 kind: "identity",
@@ -105,6 +161,7 @@ impl PeImage {
             directory_rva: None,
             callbacks_rva: None,
             callback_rvas: Vec::new(),
+            storage: None,
             architecture: self.sample.architecture,
         };
         let directory = self.directories[9];
@@ -139,9 +196,80 @@ impl PeImage {
         let zero = u32_at(header, 4 * width)?;
         let characteristics = u32_at(header, 4 * width + 4)?;
         if start != 0 || end != 0 || index != 0 || zero != 0 || characteristics != 0 {
-            return Err(unsupported(
-                "TLS template/index/zero-fill/characteristics require actual user-thread storage authority",
-            ));
+            if !storage_allowed {
+                return Err(unsupported(
+                    "TLS template/index/zero-fill/characteristics require actual user-thread storage authority",
+                ));
+            }
+            if end < start
+                || (start == 0) != (end == 0)
+                || index == 0
+                || characteristics & !0x00f00000 != 0
+            {
+                return Err(malformed("invalid TLS template/index/alignment descriptor"));
+            }
+            let initialized = end - start;
+            if initialized
+                .checked_add(zero as u64)
+                .is_none_or(|size| size > 1024 * 1024)
+            {
+                return Err(unsupported("static TLS block exceeds one MiB"));
+            }
+            let alignment = (characteristics >> 20) & 15;
+            if alignment > 14 {
+                return Err(malformed("reserved TLS alignment"));
+            }
+            let preferred = self.accepted_headers.preferred_base;
+            let relative = |address: u64, size: u64| -> TlsResult<u32> {
+                address
+                    .checked_sub(preferred)
+                    .filter(|rva| {
+                        rva.checked_add(size)
+                            .is_some_and(|end| end <= self.image_size as u64)
+                    })
+                    .and_then(|rva| u32::try_from(rva).ok())
+                    .ok_or_else(|| malformed("TLS storage span is outside image"))
+            };
+            let index_rva = relative(index, 4)?;
+            let template_rva = (start != 0)
+                .then(|| relative(start, initialized))
+                .transpose()?;
+            let mut template = vec![0; initialized as usize];
+            if let Some(rva) = template_rva {
+                let end = rva as u64 + initialized;
+                for section in &self.sections {
+                    let begin = (rva as u64).max(section.rva as u64);
+                    let finish = end.min(section.rva as u64 + section.raw_size as u64);
+                    if begin < finish {
+                        let file = section.raw_offset as u64 + begin - section.rva as u64;
+                        let bytes = data
+                            .get(file as usize..(file + finish - begin) as usize)
+                            .ok_or_else(|| malformed("TLS template raw range is truncated"))?;
+                        template[(begin - rva as u64) as usize..(finish - rva as u64) as usize]
+                            .copy_from_slice(bytes);
+                    }
+                }
+                if rva < self.headers_size {
+                    let finish = end.min(self.headers_size as u64);
+                    let bytes = data
+                        .get(rva as usize..finish as usize)
+                        .ok_or_else(|| malformed("TLS template header range is truncated"))?;
+                    template[..bytes.len()].copy_from_slice(bytes);
+                }
+            }
+            plan.storage = Some(TlsStorage {
+                template_rva,
+                initialized_bytes: initialized as u32,
+                zero_fill: zero,
+                index_rva,
+                alignment: if alignment == 0 {
+                    self.sample.architecture.width() as u32
+                } else {
+                    1 << (alignment - 1)
+                },
+                characteristics,
+                template,
+            });
         }
         plan.directory_rva = Some(directory.rva);
         if callbacks == 0 {
@@ -265,8 +393,69 @@ mod tests {
             directory_rva: Some(0x2100),
             callbacks_rva: Some(0x2180),
             callback_rvas: vec![0x1000],
+            storage: None,
             architecture: Architecture::X86,
         };
         assert!(plan.mirror_checks(u32::MAX as u64).is_err());
+    }
+    #[test]
+    fn static_storage_preserves_template_zero_fill_index_alignment_and_relocated_addresses() {
+        for architecture in [Architecture::X86, Architecture::X64] {
+            let mut data = image(architecture);
+            let width = architecture.width();
+            let base = if width == 8 { 0x140000000u64 } else { 0x400000 };
+            for (offset, value) in [
+                (0, base + 0x20c0),
+                (width, base + 0x20c8),
+                (2 * width, base + 0x20d0),
+            ] {
+                data[0x500 + offset..0x500 + offset + width]
+                    .copy_from_slice(&value.to_le_bytes()[..width]);
+            }
+            write(&mut data, 0x500 + 4 * width, 12);
+            write(&mut data, 0x504 + 4 * width, 0x00500000);
+            data[0x4c0..0x4c8].copy_from_slice(b"TLS-DATA");
+            let pe = PeImage::parse(&data, "storage.dll").unwrap();
+            assert!(pe.tls_callbacks_only(&data).is_err());
+            let plan = pe.tls_with_storage(&data).unwrap();
+            let storage = plan.storage.as_ref().unwrap();
+            assert_eq!(storage.template, b"TLS-DATA");
+            assert_eq!(
+                (storage.index_rva, storage.zero_fill, storage.alignment),
+                (0x20d0, 12, 16)
+            );
+            let relocated = base + 0x200000;
+            let checks = plan.mirror_checks(relocated).unwrap();
+            assert_eq!(
+                &checks[0].expected[..width],
+                &(relocated + 0x20c0).to_le_bytes()[..width]
+            );
+            for (offset, value) in [(0, 1u64), (width, base + 0x20b0), (2 * width, 0)] {
+                let mut wrong = data.clone();
+                wrong[0x500 + offset..0x500 + offset + width]
+                    .copy_from_slice(&value.to_le_bytes()[..width]);
+                assert!(
+                    PeImage::parse(&wrong, "bad.dll")
+                        .unwrap()
+                        .tls_with_storage(&wrong)
+                        .is_err()
+                );
+            }
+            for (offset, value) in [
+                (4 * width, 1024 * 1024),
+                (4 * width + 4, 1),
+                (4 * width + 4, 0x00f00000),
+            ] {
+                let mut wrong = data.clone();
+                write(&mut wrong, 0x500 + offset, value);
+                assert!(
+                    PeImage::parse(&wrong, "bad.dll")
+                        .unwrap()
+                        .tls_with_storage(&wrong)
+                        .is_err()
+                );
+            }
+            assert!(plan.mirror_checks(u64::MAX).is_err());
+        }
     }
 }

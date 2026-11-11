@@ -12,7 +12,14 @@ see `../docs/native-pe/m2-input-staging.md` for qualification and scope. Exact
 worker/parent receipts, persona rechecks, aggregate live guest-memory bounds and
 transactional staging are documented in `../docs/native-pe/m2-binding-exit.md`.
 
-The next native API batch models CRT startup:MSVCRT mainargs, UCRT argument
+M3 now adds owned root PEB/TEB, FS/GS and process parameters projecting the
+existing persona/VFS/stdio/LastError authorities, with direct guest-memory and
+owned-backing refusal controls. See `../docs/native-pe/m3-user-bootstrap.md` for
+the exact first-checkbox scope and evidence. Loader lists, static TLS and
+complete loader/thread lifecycle remain separate obligations, not consequences
+of installing a root TEB.
+
+The existing native API batch models CRT startup:MSVCRT mainargs, UCRT argument
 globals and initial environment/configuration, MSVCRT x86 global accessors, and
 real `_initterm`/`_initterm_e` guest callback walks. Runtime-owned arrays are
 separate across MSVCRT/UCRT, callbacks share the outer execution horizon, and

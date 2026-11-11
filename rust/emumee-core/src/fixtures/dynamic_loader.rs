@@ -463,6 +463,41 @@ pub fn dynamic_loader_probe(
     arch: Architecture,
     kind: DynamicLoaderFixture,
 ) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
+    dynamic_loader_with_graph(arch, kind, false, None)
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LazyForwarderFixture {
+    MissingModule,
+    MissingExport,
+    Cycle,
+}
+pub fn dynamic_loader_lazy_forwarder_probe(
+    arch: Architecture,
+    failure: LazyForwarderFixture,
+) -> Vec<u8> {
+    dynamic_loader_with_graph(arch, DynamicLoaderFixture::Forwarder, true, Some(failure)).0
+}
+pub fn dynamic_loader_recursive_probe(
+    arch: Architecture,
+    forwarder: bool,
+) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
+    dynamic_loader_with_graph(
+        arch,
+        if forwarder {
+            DynamicLoaderFixture::Forwarder
+        } else {
+            DynamicLoaderFixture::Dependency
+        },
+        true,
+        None,
+    )
+}
+fn dynamic_loader_with_graph(
+    arch: Architecture,
+    kind: DynamicLoaderFixture,
+    recursive: bool,
+    lazy_failure: Option<LazyForwarderFixture>,
+) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
     let wide = arch == Architecture::X64;
     let base: u64 = if wide { 0x140000000 } else { 0x400000 };
     let j = base + 0x5000;
@@ -507,7 +542,14 @@ pub fn dynamic_loader_probe(
         _ => {}
     }
     let mut a = dll(arch, j, kind, false);
-    let b = dll(arch, j, kind, true);
+    let mut b = dll(arch, j, kind, true);
+    if lazy_failure == Some(LazyForwarderFixture::MissingExport) {
+        b[dllraw(0x24a0)..dllraw(0x24a0) + 6].copy_from_slice(b"Omega\0");
+    }
+    if lazy_failure == Some(LazyForwarderFixture::Cycle) {
+        put32(&mut b, dllraw(0x2440), 0x24c0);
+        b[dllraw(0x24c0)..dllraw(0x24c0) + 12].copy_from_slice(b"guest.Alpha\0");
+    }
     if kind == DynamicLoaderFixture::Malformed {
         a[..2].copy_from_slice(b"NO");
     }
@@ -547,10 +589,14 @@ pub fn dynamic_loader_probe(
         kind,
         DynamicLoaderFixture::Dependency | DynamicLoaderFixture::Forwarder
     ) {
-        write(&mut c, base + 0x52c0, base + 0xa000, b.len());
-        call(&mut c, arch, base, 3, &[V(base + 0x52c0)]);
-        winhttp::success(&mut c);
-        store(&mut c, arch, base + 0x5120);
+        if lazy_failure != Some(LazyForwarderFixture::MissingModule) {
+            write(&mut c, base + 0x52c0, base + 0xa000, b.len());
+        }
+        if !recursive {
+            call(&mut c, arch, base, 3, &[V(base + 0x52c0)]);
+            winhttp::success(&mut c);
+            store(&mut c, arch, base + 0x5120);
+        }
     }
     if !matches!(
         kind,
@@ -680,14 +726,31 @@ pub fn dynamic_loader_probe(
             winhttp::success(&mut c);
         }
         call(&mut c, arch, base, 8, &[M(base + 0x5110), V(base + 0x5280)]);
-        winhttp::success(&mut c);
-        store(&mut c, arch, base + 0x5140);
-        c.extend([0xff, 0xd0]);
-        value(&mut c, 42);
-        if matches!(
-            kind,
-            DynamicLoaderFixture::Dependency | DynamicLoaderFixture::Forwarder
-        ) {
+        if let Some(failure) = lazy_failure {
+            winhttp::failure(&mut c);
+            call(&mut c, arch, base, 9, &[]);
+            value(
+                &mut c,
+                if failure == LazyForwarderFixture::MissingModule {
+                    126
+                } else if failure == LazyForwarderFixture::Cycle {
+                    50
+                } else {
+                    127
+                },
+            );
+        } else {
+            winhttp::success(&mut c);
+            store(&mut c, arch, base + 0x5140);
+            c.extend([0xff, 0xd0]);
+            value(&mut c, 42);
+        }
+        if !recursive
+            && matches!(
+                kind,
+                DynamicLoaderFixture::Dependency | DynamicLoaderFixture::Forwarder
+            )
+        {
             call(&mut c, arch, base, 7, &[M(base + 0x5120)]);
             winhttp::success(&mut c);
         }
@@ -718,7 +781,9 @@ pub fn dynamic_loader_probe(
             load(&mut c, arch, base + 0x5140);
             c.extend([0xff, 0xd0]);
         }
-        let expected = if matches!(
+        let expected = if lazy_failure == Some(LazyForwarderFixture::MissingModule) {
+            2
+        } else if matches!(
             kind,
             DynamicLoaderFixture::Tls
                 | DynamicLoaderFixture::Dependency

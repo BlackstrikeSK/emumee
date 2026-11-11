@@ -21,6 +21,15 @@ pub struct Event {
     pub result: Option<u32>,
     pub error: Option<String>,
 }
+#[derive(Clone, Debug, Serialize)]
+pub struct Interrupted {
+    pub pc: u64,
+    pub sp: u64,
+    pub begin: u64,
+    pub count: u64,
+    pub instruction: u64,
+    pub error: String,
+}
 fn sp_register(arch: Architecture) -> RegisterX86 {
     if arch == Architecture::X64 {
         RegisterX86::RSP
@@ -48,7 +57,11 @@ pub(super) fn queue(
     );
     let state = &engine.get_data().apis.crt_startup;
     ensure!(
-        !state.active && state.pending.is_none(),
+        (!state.active && state.pending.is_none())
+            || engine.get_data().apis.user_bootstrap.is_some()
+                && state.active
+                && !state.resume
+                && state.suspended.len() < 16,
         "Reentrant CRT initializer execution is not modeled"
     );
     if count == 0 {
@@ -72,6 +85,9 @@ pub(super) fn queue(
         result: None,
     };
     let state = &mut engine.get_data_mut().apis.crt_startup;
+    if let Some(caller) = state.pending.take() {
+        state.suspended.push(caller);
+    }
     state.pending = Some(pending);
     state.action = true;
     Ok(0)
@@ -167,6 +183,63 @@ fn invoke(
     Ok(outcome)
 }
 pub(crate) fn transition(
+    engine: &mut Unicorn<Trace>,
+    horizon: &ExecutionHorizon,
+) -> Result<Option<Outcome>> {
+    if engine.get_data().apis.user_bootstrap.is_none() {
+        return transition_inner(engine, horizon);
+    }
+    let caller = engine
+        .get_data()
+        .apis
+        .crt_startup
+        .pending
+        .clone()
+        .context("CRT pending caller absent")?;
+    let result = transition_inner(engine, horizon);
+    if !matches!(&result, Ok(None)) {
+        let error = match &result {
+            Err(error) => format!("{error:#}"),
+            Ok(Some(outcome)) => outcome
+                .error
+                .clone()
+                .or_else(|| engine.get_data().apis.fault.clone())
+                .or_else(|| engine.get_data().cpu.fault.clone())
+                .unwrap_or_else(|| "Shared execution horizon interrupted CRT callbacks".into()),
+            _ => unreachable!(),
+        };
+        let interrupted = Interrupted {
+            pc: caller.pc,
+            sp: caller.sp,
+            begin: caller.begin,
+            count: caller.count,
+            instruction: engine.get_data().instructions,
+            error: error.clone(),
+        };
+        if let Some(index) = caller.event
+            && let Some(event) = engine.get_data_mut().apis.events.get_mut(index)
+        {
+            event.pending = false;
+            event.error = Some(error);
+            event.effect = Some("crt_initializers_aborted");
+        }
+        let state = &mut engine.get_data_mut().apis.crt_startup;
+        ensure!(
+            state.interrupted.len() < 32,
+            "Interrupted CRT continuation quota exceeded"
+        );
+        state.interrupted.push(interrupted);
+        state.pending = state.suspended.pop();
+        state.active = state.pending.is_some();
+        state.action = false;
+        state.resume = false;
+        let architecture = engine.get_data().architecture;
+        uc(engine.reg_write(sp_register(architecture), caller.sp))?;
+        uc(engine.reg_write(pc_register(architecture), caller.pc))?;
+    }
+    result
+}
+fn transition_inner(
     engine: &mut Unicorn<Trace>,
     horizon: &ExecutionHorizon,
 ) -> Result<Option<Outcome>> {
@@ -290,7 +363,8 @@ pub(crate) fn resume_api(engine: &mut Unicorn<Trace>, pc: u64) -> Result<bool> {
         event.effect = Some("crt_initializers_completed");
     }
     let state = &mut engine.get_data_mut().apis.crt_startup;
-    state.pending = None;
+    state.pending = state.suspended.pop();
+    state.active = state.pending.is_some();
     state.resume = false;
     Ok(true)
 }

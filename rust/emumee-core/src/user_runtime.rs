@@ -8,6 +8,11 @@ pub struct Slots {
     fls: Vec<Option<BTreeMap<u64, u64>>>,
 }
 impl Slots {
+    pub fn retire_thread(&mut self, thread: u64) {
+        for values in self.tls.iter_mut().chain(self.fls.iter_mut()).flatten() {
+            values.remove(&thread);
+        }
+    }
     pub fn allocate(&mut self, fiber: bool) -> Option<u32> {
         let slots = if fiber { &mut self.fls } else { &mut self.tls };
         let index = slots

@@ -173,8 +173,17 @@ pub(crate) fn prepare(
         }
         return Ok(None);
     }
-    let tls = root.tls_callbacks_only(root_bytes)?;
-    if companions.is_empty() && root.sample.kind == Kind::Exe && tls.directory_rva.is_none() {
+    let storage = engine.get_data().apis.user_bootstrap.is_some();
+    let tls = if storage {
+        root.tls_with_storage(root_bytes)?
+    } else {
+        root.tls_callbacks_only(root_bytes)?
+    };
+    if !storage
+        && companions.is_empty()
+        && root.sample.kind == Kind::Exe
+        && tls.directory_rva.is_none()
+    {
         return Ok(None);
     }
     ensure!(
@@ -219,7 +228,11 @@ pub(crate) fn prepare(
             kind: pe.sample.kind,
             entry_rva: pe.entry_rva,
             accepted_sha256: pe.sample.sha256.clone(),
-            tls: pe.tls_callbacks_only(bytes)?,
+            tls: if storage {
+                pe.tls_with_storage(bytes)?
+            } else {
+                pe.tls_callbacks_only(bytes)?
+            },
             dependencies: Vec::new(),
         });
     }
@@ -249,13 +262,13 @@ pub(crate) fn prepare(
             require(engine, m.base + image.entry_rva as u64, 1, P::EXECUTE)?;
         }
     }
-    Ok(Some(
-        engine
-            .get_data_mut()
-            .apis
-            .modules
-            .configure_static(&images)?,
-    ))
+    let startup = engine
+        .get_data_mut()
+        .apis
+        .modules
+        .configure_static(&images)?;
+    super::user_loader::sync(engine)?;
+    Ok(Some(startup))
 }
 fn validate_tls(
     engine: &Unicorn<Trace>,
@@ -273,6 +286,20 @@ fn validate_tls(
             actual == check.expected,
             "Actual TLS callback directory/array differs from accepted relocated bytes"
         );
+    }
+    if let Some(storage) = &plan.storage {
+        require(engine, base + storage.index_rva as u64, 4, P::WRITE)?;
+        if let Some(rva) = storage
+            .template_rva
+            .filter(|_| storage.initialized_bytes != 0)
+        {
+            require(
+                engine,
+                base + rva as u64,
+                storage.initialized_bytes as u64,
+                P::READ,
+            )?;
+        }
     }
     Ok(())
 }
@@ -301,6 +328,7 @@ pub(super) fn invoke_inner(
     stack_top: u64,
     horizon: &ExecutionHorizon,
 ) -> Result<Outcome> {
+    super::user_loader::sync(engine)?;
     let arch = engine.get_data().architecture;
     let m = engine
         .get_data()
@@ -437,9 +465,10 @@ fn invoke(
         .apis
         .modules
         .begin_invocation(call, count)?;
+    let previous_loader_active = engine.get_data().loader_active;
     engine.get_data_mut().loader_active = true;
     let result = invoke_inner(engine, call, stack_top, horizon);
-    engine.get_data_mut().loader_active = false;
+    engine.get_data_mut().loader_active = previous_loader_active;
     let outcome = match result {
         Ok(value) => value,
         Err(error) => Outcome {
@@ -503,6 +532,7 @@ fn retire(engine: &mut Unicorn<Trace>, id: ModuleId) -> Result<()> {
         ));
         return Err(error);
     }
+    super::user_loader::sync(engine)?;
     Ok(())
 }
 pub(crate) fn before_instruction(engine: &mut Unicorn<Trace>, pc: u64) -> bool {
@@ -606,6 +636,7 @@ pub(crate) fn execute(
             return Ok(failure("Guest DllMain returned FALSE; primary execution was suppressed after actual failed-load cleanup".into()));
         }
         engine.get_data_mut().apis.modules.mark_ready(id)?;
+        super::user_loader::sync(engine)?;
     }
     if root.sample.kind == Kind::Dll {
         return Ok(Outcome {

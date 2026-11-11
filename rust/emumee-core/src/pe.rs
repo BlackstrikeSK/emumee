@@ -7,7 +7,7 @@ mod exports;
 mod tests;
 mod tls;
 pub use exports::{Export, ExportCall, ExportTarget};
-pub use tls::{MAX_TLS_CALLBACKS, TlsCallbackPlan, TlsError, TlsMirrorCheck};
+pub use tls::{MAX_TLS_CALLBACKS, TlsCallbackPlan, TlsError, TlsMirrorCheck, TlsStorage};
 
 pub const MAX_INPUT: usize = 128 * 1024 * 1024;
 pub const MAX_IMAGE: u32 = 512 * 1024 * 1024;

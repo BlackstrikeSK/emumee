@@ -171,6 +171,9 @@ pub(super) fn size(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
     }
 }
 pub(super) fn close(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    if let Some(value) = super::user_threads::close(engine, args[0]) {
+        return Ok(value);
+    }
     if let Some(value) = super::user_runtime::close(engine, args[0]) {
         return Ok(value);
     }

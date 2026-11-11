@@ -54,6 +54,14 @@ pub(crate) struct State {
     next_handle: u64,
     strings: BTreeMap<(String, bool), (u64, u64)>,
 }
+pub(crate) fn retire_thread(engine: &mut Unicorn<Trace>, thread: u64) {
+    engine
+        .get_data_mut()
+        .apis
+        .user_runtime
+        .slots
+        .retire_thread(thread);
+}
 pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
     let kernel = matches!(module, "kernel32" | "kernelbase");
     let process = kernel || module.starts_with("api-ms-win-core-processthreads-");
@@ -283,7 +291,9 @@ pub(crate) fn require_change(engine: &Unicorn<Trace>, address: u64, size: u64) -
     );
     Ok(())
 }
-fn stable_string(engine: &mut Unicorn<Trace>, text: &str, wide: bool) -> Result<u64> {
+pub(super) const DESKTOP_NAME: &str = r"WinSta0\Default";
+
+pub(super) fn stable_string(engine: &mut Unicorn<Trace>, text: &str, wide: bool) -> Result<u64> {
     let key = (text.to_owned(), wide);
     if let Some((address, _)) = engine.get_data().apis.user_runtime.strings.get(&key) {
         return Ok(*address);
@@ -324,6 +334,9 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         Call::Thread => max(engine) - 1,
         Call::ThreadId => thread,
         Call::ProcessId(is_thread) => {
+            if is_thread && let Some(id) = user_threads::handle_id(engine, args[0]) {
+                return Ok(id);
+            }
             if if is_thread {
                 args[0] == max(engine) - 1
             } else {
@@ -378,8 +391,7 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             if !process_access(engine, args[0], 1) {
                 return Ok(fail(engine, 6));
             }
-            engine.get_data_mut().process_exit_code = Some(args[1] as u32);
-            uc(engine.emu_stop())?;
+            user_lifecycle::request_exit(engine, args[1] as u32, true)?;
             1
         }
         Call::VirtualEx(operation) => {
@@ -565,7 +577,7 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         Call::Startup(wide) => {
             let size = if width == 8 { 104 } else { 68 };
             require(engine, args[0], size, P::WRITE)?;
-            let desktop = stable_string(engine, r"WinSta0\Default", wide)?;
+            let desktop = stable_string(engine, DESKTOP_NAME, wide)?;
             let image = engine.get_data().apis.persona.model.argv(OWNER)?[0].clone();
             let title = stable_string(engine, &image, wide)?;
             let std = engine

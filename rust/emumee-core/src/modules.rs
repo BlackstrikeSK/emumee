@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 mod dynamic;
 mod lifecycle;
+mod user_graph;
 pub use dynamic::*;
 mod provenance;
 pub use lifecycle::*;
@@ -81,13 +82,19 @@ pub struct ModuleCatalog {
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Resolution {
-    Found { address: u64, chain: Vec<String> },
+    Found {
+        address: u64,
+        chain: Vec<String>,
+    },
     MissingModule {
         module: String,
         symbol: ImportName,
         chain: Vec<String>,
     },
-    MissingExport { module: String, symbol: ImportName },
+    MissingExport {
+        module: String,
+        symbol: ImportName,
+    },
 }
 impl ModuleCatalog {
     pub fn new(architecture: Architecture) -> Self {

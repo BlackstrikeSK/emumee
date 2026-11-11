@@ -119,7 +119,12 @@ fn read_msr(engine: &Unicorn<Trace>, rid: u32) -> Result<u64> {
     })?;
     Ok(register.value)
 }
-fn table(engine: &mut Unicorn<Trace>, register: RegisterX86, base: u64, limit: u32) -> Result<()> {
+pub(crate) fn table(
+    engine: &mut Unicorn<Trace>,
+    register: RegisterX86,
+    base: u64,
+    limit: u32,
+) -> Result<()> {
     let value = uc_x86_mmr {
         selector: 0,
         base,

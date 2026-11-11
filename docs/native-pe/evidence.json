@@ -5,33 +5,85 @@
   "required_gates": {
     "effective_registration_review": {
       "status": "verified",
-      "scope_fingerprint": "a1bc6311c17c6c15f45a5f7096f828c4741c89585ca3a3c343ad6357ebcb60e1",
-      "history": [{
-        "status": "verified",
-        "scope_fingerprint": "7e2f6f7a689cc0dc6434f1679672083055df47221c82bf6b78ba6c542395047d",
-        "review_fingerprint": "b1ca1266f5b6cc31de0154b107d6aa7c95dfdff4ac6972612cf717e645f972df",
-        "review": "docs/native-pe/m0-package-smoke.md"
-      }, {
-        "status": "verified",
-        "scope_fingerprint": "2944858b347c91f61976df8ff15b484e3abb10150ed1abd28594ff85f1899549",
-        "review_fingerprint": "0b638642d203dcb3c426931eb0ef032af1a69d18e0e08d4ea5584f0d2779491e",
-        "review": "docs/native-pe/m2-pe-layout.md"
-      }, {
-        "status": "verified",
-        "scope_fingerprint": "15f4a78a4415c6de06ef1b6e0c004c865f13010015fa7b2511184db9a406d9b5",
-        "review_fingerprint": "f98fb16f125a60bee1478b6b681157dea1ee533aa8d4dea367ffb6a0f52b1757",
-        "review": "docs/native-pe/m2-import-resolution.md"
-      }, {
-        "status": "verified",
-        "scope_fingerprint": "a01fa4ceb41418712c1f9af8b1326162c39461ae636fa7fd2c05207a50a7a698",
-        "review_fingerprint": "3ee5e1011d948dec130671aa61407b19b2a1575384a41ebcdda9f3b7bdf71593",
-        "review": "docs/native-pe/m2-abi.md"
-      }, {
-        "status": "verified",
-        "scope_fingerprint": "5a0785a67ef42d8d7437dd0ed33c89acffe6ad2ca3aa9292a99eb9b45b26d960",
-        "review_fingerprint": "5cb609e690bb7253a3825a345d40a746fda7b70093488922fe65f762bbc51b28",
-        "review": "docs/native-pe/m2-input-staging.md"
-      }],
+      "scope_fingerprint": "eac7bffc3504f36aa7df773acf7ae3948f0c8dff2595466f4621531fda92103d",
+      "history": [
+        {
+          "status": "verified",
+          "scope_fingerprint": "7e2f6f7a689cc0dc6434f1679672083055df47221c82bf6b78ba6c542395047d",
+          "review_fingerprint": "b1ca1266f5b6cc31de0154b107d6aa7c95dfdff4ac6972612cf717e645f972df",
+          "review": "docs/native-pe/m0-package-smoke.md"
+        },
+        {
+          "status": "verified",
+          "scope_fingerprint": "2944858b347c91f61976df8ff15b484e3abb10150ed1abd28594ff85f1899549",
+          "review_fingerprint": "0b638642d203dcb3c426931eb0ef032af1a69d18e0e08d4ea5584f0d2779491e",
+          "review": "docs/native-pe/m2-pe-layout.md"
+        },
+        {
+          "status": "verified",
+          "scope_fingerprint": "15f4a78a4415c6de06ef1b6e0c004c865f13010015fa7b2511184db9a406d9b5",
+          "review_fingerprint": "f98fb16f125a60bee1478b6b681157dea1ee533aa8d4dea367ffb6a0f52b1757",
+          "review": "docs/native-pe/m2-import-resolution.md"
+        },
+        {
+          "status": "verified",
+          "scope_fingerprint": "a01fa4ceb41418712c1f9af8b1326162c39461ae636fa7fd2c05207a50a7a698",
+          "review_fingerprint": "3ee5e1011d948dec130671aa61407b19b2a1575384a41ebcdda9f3b7bdf71593",
+          "review": "docs/native-pe/m2-abi.md"
+        },
+        {
+          "status": "verified",
+          "scope_fingerprint": "5a0785a67ef42d8d7437dd0ed33c89acffe6ad2ca3aa9292a99eb9b45b26d960",
+          "review_fingerprint": "5cb609e690bb7253a3825a345d40a746fda7b70093488922fe65f762bbc51b28",
+          "review": "docs/native-pe/m2-input-staging.md"
+        },
+        {
+          "status": "verified",
+          "scope_fingerprint": "a1bc6311c17c6c15f45a5f7096f828c4741c89585ca3a3c343ad6357ebcb60e1",
+          "review_fingerprint": "da40e16184d956924876a5947b9ccafda16e6d2e6dee5ce4c2a6d8543e410014",
+          "review": "docs/native-pe/m2-binding-exit.md"
+        },
+        {
+          "status": "verified",
+          "scope_fingerprint": "ad3d3fde605104fb4f1e6bdb11c88b79aaf2f782a937563ee06bb88b86640842",
+          "scope": "Successful-initialization source registration review only; not constructor execution, guest reachability or API semantics",
+          "evidence": [
+            {
+              "kind": "maintained_static_source_review",
+              "review": "docs/native-pe/effective-registration-review.md",
+              "policy": "docs/native-pe/registration-policy.json",
+              "collector": "tools/native_pe_registration.py",
+              "controls": "tests/test_native_pe_registration.py",
+              "review_fingerprint": "6724ae194b77a515d0f52f79eaf011b970946db28723f2b5a4aa5d398d64eb84",
+              "contracts": 2590,
+              "architectures": [
+                "x86",
+                "x64"
+              ]
+            }
+          ]
+        },
+        {
+          "status": "verified",
+          "scope_fingerprint": "d1425548df8f1a2c01d77ef0a424fe95d027ba3571d2ab6ed00e0ee6895a6f0d",
+          "scope": "Successful-initialization source registration review only; not constructor execution, guest reachability or API semantics",
+          "evidence": [
+            {
+              "kind": "maintained_static_source_review",
+              "review": "docs/native-pe/effective-registration-review.md",
+              "policy": "docs/native-pe/registration-policy.json",
+              "collector": "tools/native_pe_registration.py",
+              "controls": "tests/test_native_pe_registration.py",
+              "review_fingerprint": "3363d3397c2c0d0d87ac6f08154894e3ec61b3564bc4e9cca772598c0f0461f0",
+              "contracts": 2590,
+              "architectures": [
+                "x86",
+                "x64"
+              ]
+            }
+          ]
+        }
+      ],
       "scope": "Successful-initialization source registration review only; not constructor execution, guest reachability or API semantics",
       "evidence": [
         {
@@ -40,9 +92,12 @@
           "policy": "docs/native-pe/registration-policy.json",
           "collector": "tools/native_pe_registration.py",
           "controls": "tests/test_native_pe_registration.py",
-          "review_fingerprint": "da40e16184d956924876a5947b9ccafda16e6d2e6dee5ce4c2a6d8543e410014",
+          "review_fingerprint": "3363d3397c2c0d0d87ac6f08154894e3ec61b3564bc4e9cca772598c0f0461f0",
           "contracts": 2590,
-          "architectures": ["x86", "x64"]
+          "architectures": [
+            "x86",
+            "x64"
+          ]
         }
       ]
     },
@@ -100,8 +155,33 @@
         "artifact_index": "output/rust-pe-m2-binding/qualified-m2.json",
         "prior_matrix_index": "output/rust-pe-m2-binding/qualified-smoke.json"
       },
-      "next_action": "Complete the M3-M10 semantic, safety and operational obligations before promoting the global package gate",
-      "evidence": [{"kind": "bounded_m0_smoke_only", "review": "docs/native-pe/m0-package-smoke.md"}]
+      "m3_root_bootstrap": {
+        "status": "verified",
+        "review": "docs/native-pe/m3-user-bootstrap.md",
+        "source_tree_sha256": "63d3a247da60362ddeccdcdbae49cb97590a5c73228bafb89ea3becfdd32e2bd",
+        "required_outcomes": 328,
+        "prior_m2_outcomes": 294,
+        "bootstrap_controls": 34,
+        "bootstrap_returns": 18,
+        "bootstrap_expected_guest_refusals": 16,
+        "artifact_index": "output/rust-pe-m3-bootstrap/qualified-bootstrap.json",
+        "prior_m2_index": "output/rust-pe-m3-bootstrap/qualified-m2.json"
+      },
+      "next_action": "M3 bounded lifecycle is qualified; complete M4-M10 semantic, scheduling, safety and operational obligations before promoting the global package gate",
+      "evidence": [
+        {
+          "kind": "bounded_m0_smoke_only",
+          "review": "docs/native-pe/m0-package-smoke.md"
+        }
+      ],
+      "m3_lifecycle": {
+        "status": "verified",
+        "review": "docs/native-pe/m3-loader-lifecycle.md",
+        "source_tree_sha256": "084f1a7e7ed1f83e0fb915bc512a263a0a187a3deca5f2a0a7d2472a3470d99d",
+        "required_outcomes": 398,
+        "lifecycle_controls": 70,
+        "artifact_index": "output/rust-pe-m3-complete/qualification-20261111/qualified-m3.json"
+      }
     }
   }
 }

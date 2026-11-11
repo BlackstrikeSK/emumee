@@ -93,8 +93,11 @@ scope drift makes it stale. No API semantics or other qualification gate is
 promoted. The maintained review/policy/controls are the clone-safe evidence;
 the local generated map is a reproducible detail capture, not sole proof.
 
-Current local report: `output/rust-pe-m2-binding/registration-complete/review.json`.
-Full safe-source receipt: `output/rust-pe-m2-binding/final-validation/index.json`.
+Current local report: `output/rust-pe-m3-bootstrap/registration-complete/review.json`.
+Full safe-source receipt: `output/rust-pe-m3-bootstrap/final-validation/index.json`.
 Dependency recheck and preserved-history ledger/status are under the same output
 root. Missing local artifacts after a clone require fresh captures; the maintained
 policy, findings and controls remain usable without them.
+
+2026-11-11 refresh: the source-only registration audit/check passes for the M3
+lifecycle source. Receipt: `output/rust-pe-m3-complete/qualification-20261111/registration-complete/review.json`. Registration remains separate from semantic API qualification.

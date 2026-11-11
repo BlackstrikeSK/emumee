@@ -5,6 +5,7 @@ use crate::threads::{ExecutionHorizon, Outcome};
 use anyhow::Context as _;
 use emumee_core::modules::ModuleId;
 mod mapping;
+pub(crate) use mapping::placement as place_image;
 const OWNER: u64 = 1024; // Existing single-user VFS/API process, never a host PID.
 const STATUS_INVALID_PARAMETER: u64 = 0xc000000d;
 const STATUS_NOT_SUPPORTED: u64 = 0xc00000bb;
@@ -18,6 +19,7 @@ pub(super) enum Call {
     Free,
     LdrLoad,
     LdrUnload,
+    Procedure,
 }
 pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, C, T)> {
     let win32 = matches!(
@@ -70,14 +72,26 @@ struct Pending {
     request: Request,
     operation: Option<u64>,
     result: Option<u64>,
+    forwarded: Option<(String, ImportName)>,
+    forward_references: Vec<ModuleId>,
+    forward_steps: usize,
 }
 #[derive(Default)]
 pub(crate) struct State {
     pending: Option<Pending>,
+    suspended: Vec<Pending>,
     action: bool,
     resume: bool,
     requests: u64,
     resumed: u64,
+    refusals: Vec<Refusal>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Refusal {
+    pub requested: String,
+    pub win32: u32,
+    pub reason: String,
+    pub instruction: u64,
 }
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -88,6 +102,8 @@ pub struct Report {
     pub pending_result: Option<u64>,
     pub requests: u64,
     pub resumed: u64,
+    pub suspended_callers: usize,
+    pub refusals: Vec<Refusal>,
     pub native_effect_failure: Option<String>,
     pub scope: &'static str,
 }
@@ -97,7 +113,11 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
         return None;
     }
     Some(Report {
-        profile: "bounded-vfs-leaf-dll-v1",
+        profile: if engine.get_data().apis.user_bootstrap.is_some() {
+            "bounded-vfs-dll-graph-v2"
+        } else {
+            "bounded-vfs-leaf-dll-v1"
+        },
         state: engine.get_data().apis.modules.dynamic_state().clone(),
         images: engine
             .get_data()
@@ -117,8 +137,14 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
         pending_result: state.pending.as_ref().and_then(|p| p.result),
         requests: state.requests,
         resumed: state.resumed,
+        suspended_callers: state.suspended.len(),
+        refusals: state.refusals.clone(),
         native_effect_failure: engine.get_data().loader_native_effect_failure.clone(),
-        scope: "Actual native DLL bytes from the same guest VFS and catalog. Leaf dependencies must already be ready; real callback-only TLS/DllMain attach, FALSE cleanup, detach, native unmap and reference edges. No host lookup, recursive missing dependencies, storage TLS, initializer reentrancy, special flags, EXE-as-image loads or consumption of static process anchors. Incomplete operations retain pending evidence and never publish completed API success.",
+        scope: if engine.get_data().apis.user_bootstrap.is_some() {
+            "Actual bounded VFS DLL dependency graphs and lazy forwarded exports on the sole catalog, including static TLS, nested caller continuations, attach refusal/cleanup, reference edges and cascade unload/cache invalidation. Cycles and special LoadLibraryEx flags refuse explicitly. Interrupted operations retain diagnostics and never publish completed API success. No host DLL lookup or complete Windows loader compatibility is implied."
+        } else {
+            "Actual native DLL bytes from the same guest VFS and catalog. Leaf dependencies must already be ready; real callback-only TLS/DllMain attach, FALSE cleanup, detach, native unmap and reference edges. No host lookup, recursive missing dependencies, storage TLS, initializer reentrancy, special flags, EXE-as-image loads or consumption of static process anchors. Incomplete operations retain pending evidence and never publish completed API success."
+        },
     })
 }
 fn sp_register(arch: Architecture) -> RegisterX86 {
@@ -165,12 +191,51 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
         "Dynamic DLL operations require the actual single-user process"
     );
     ensure!(
-        !engine.get_data().loader_active && engine.get_data().dynamic_loader.pending.is_none(),
+        (!engine.get_data().loader_active && engine.get_data().dynamic_loader.pending.is_none())
+            || engine.get_data().apis.user_bootstrap.is_some()
+                && engine.get_data().loader_active
+                && engine.get_data().dynamic_loader.suspended.len() < 16,
         "Dynamic DLL initializer/detacher reentrancy is not modeled"
     );
     let nt = matches!(call, Call::LdrLoad | Call::LdrUnload);
-    let load = matches!(call, Call::Load { .. } | Call::LdrLoad);
+    let load = matches!(call, Call::Load { .. } | Call::LdrLoad | Call::Procedure);
+    let mut forwarded = None;
     let request = match call {
+        Call::Procedure => {
+            let module = engine
+                .get_data()
+                .apis
+                .modules
+                .modules()
+                .find(|m| m.base == args[0])
+                .context("Forwarder owner handle vanished")?
+                .name
+                .clone();
+            let symbol = if args[1] <= 0xffff {
+                ImportName::Ordinal {
+                    ordinal: args[1] as u16,
+                }
+            } else {
+                ImportName::Name(providers::ansi(engine, args[1])?)
+            };
+            let emumee_core::modules::Resolution::MissingModule {
+                module: target,
+                chain,
+                ..
+            } = engine.get_data().apis.modules.resolve(&module, &symbol)?
+            else {
+                bail!("Lazy procedure continuation has no missing forwarded target");
+            };
+            ensure!(
+                chain.len() > 1,
+                "Lazy procedure request is not a followed forwarder"
+            );
+            forwarded = Some((module, symbol));
+            Request::Load {
+                name: target,
+                output: None,
+            }
+        }
         Call::Load { wide, extended } => {
             ensure!(
                 !extended || (args[1] == 0 && args[2] as u32 == 0),
@@ -264,6 +329,16 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
         .apis
         .modules
         .establish_user_loader(OWNER)?;
+    if engine.get_data().dynamic_loader.pending.is_some() {
+        engine
+            .get_data_mut()
+            .apis
+            .modules
+            .suspend_dynamic_operation()?;
+        let state = &mut engine.get_data_mut().dynamic_loader;
+        let caller = state.pending.take().unwrap();
+        state.suspended.push(caller);
+    }
     let state = &mut engine.get_data_mut().dynamic_loader;
     state.requests = state
         .requests
@@ -274,6 +349,9 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
         request,
         operation: None,
         result: None,
+        forwarded,
+        forward_references: Vec::new(),
+        forward_steps: 0,
     });
     state.action = true;
     Ok(0) // Not a guest result; dispatch records pending and does not write AX.
@@ -283,7 +361,7 @@ pub(crate) fn queued(engine: &Unicorn<Trace>) -> bool {
 }
 fn normal_failure(engine: &mut Unicorn<Trace>, error: u32) -> Result<()> {
     ensure!(
-        error != 50,
+        error != 50 || engine.get_data().apis.user_bootstrap.is_some(),
         "Dynamic DLL operation outside the bounded execution profile"
     );
     let nt = engine
@@ -364,9 +442,10 @@ fn routine(
         .sp
         .checked_sub(0x100)
         .context("DLL callback stack underflow")?;
+    let previous_loader_active = engine.get_data().loader_active;
     engine.get_data_mut().loader_active = true;
     let result = native_loader::invoke_inner(engine, call, stack_top, horizon);
-    engine.get_data_mut().loader_active = false;
+    engine.get_data_mut().loader_active = previous_loader_active;
     let outcome = match result {
         Ok(v) => v,
         Err(e) => Outcome {
@@ -432,6 +511,7 @@ fn retire(engine: &mut Unicorn<Trace>, id: ModuleId) -> Result<()> {
         native_failure(engine, "cache retirement after successful unmap", &error);
         return Err(error);
     }
+    super::user_loader::sync(engine)?;
     Ok(())
 }
 fn detach(engine: &mut Unicorn<Trace>, horizon: &ExecutionHorizon) -> Result<Option<Outcome>> {
@@ -457,11 +537,86 @@ fn detach(engine: &mut Unicorn<Trace>, horizon: &ExecutionHorizon) -> Result<Opt
         retire(engine, id)?;
     }
 }
+fn finish_operation(engine: &mut Unicorn<Trace>) -> Result<()> {
+    if let Some(operation) = engine
+        .get_data_mut()
+        .dynamic_loader
+        .pending
+        .as_mut()
+        .unwrap()
+        .operation
+        .take()
+    {
+        let count = engine.get_data().instructions;
+        engine
+            .get_data_mut()
+            .apis
+            .modules
+            .finish_dynamic_operation(operation, count)?;
+    }
+    Ok(())
+}
+fn release_forward_references(
+    engine: &mut Unicorn<Trace>,
+    horizon: &ExecutionHorizon,
+) -> Result<Option<Outcome>> {
+    let references = std::mem::take(
+        &mut engine
+            .get_data_mut()
+            .dynamic_loader
+            .pending
+            .as_mut()
+            .unwrap()
+            .forward_references,
+    );
+    for id in references.into_iter().rev() {
+        let count = engine.get_data().instructions;
+        if engine
+            .get_data_mut()
+            .apis
+            .modules
+            .release_dynamic_reference(id, OWNER, count)?
+        {
+            current_operation(engine);
+            if let Some(outcome) = detach(engine, horizon)? {
+                return Ok(Some(outcome));
+            }
+            finish_operation(engine)?;
+        }
+    }
+    Ok(None)
+}
 /// Called only after emu_start has returned; recursive host frames share horizon.
 pub(crate) fn transition(
     engine: &mut Unicorn<Trace>,
     horizon: &ExecutionHorizon,
 ) -> Result<Option<Outcome>> {
+    let nested = !engine.get_data().dynamic_loader.suspended.is_empty();
+    let result = transition_inner(engine, horizon);
+    if nested && !matches!(&result, Ok(None)) {
+        engine
+            .get_data_mut()
+            .apis
+            .modules
+            .resume_dynamic_operation(true)?;
+        let state = &mut engine.get_data_mut().dynamic_loader;
+        state.pending = state.suspended.pop();
+        state.action = false;
+        state.resume = false;
+    }
+    result
+}
+fn transition_inner(
+    engine: &mut Unicorn<Trace>,
+    horizon: &ExecutionHorizon,
+) -> Result<Option<Outcome>> {
+    if horizon.expired(engine.get_data().instructions) {
+        return Ok(Some(Outcome {
+            returned: false,
+            value: None,
+            error: None,
+        }));
+    }
     ensure!(
         engine.get_data().dynamic_loader.action,
         "No queued dynamic DLL transition"
@@ -485,7 +640,14 @@ pub(crate) fn transition(
                     return Err(error);
                 }
             }
-            match mapping::load(engine, &name) {
+            match mapping::load(engine, &name, horizon) {
+                Err(mapping::LoadError::Horizon) => {
+                    return Ok(Some(Outcome {
+                        returned: false,
+                        value: None,
+                        error: None,
+                    }));
+                }
                 Err(mapping::LoadError::Refused(error)) => normal_failure(engine, error)?,
                 Err(mapping::LoadError::Fatal(error)) => return Err(error),
                 Ok(mapping::Loaded::Retained(base)) => {
@@ -500,39 +662,56 @@ pub(crate) fn transition(
                         .nt;
                     completion(engine, if nt { 0 } else { base });
                 }
-                Ok(mapping::Loaded::New(id, base)) => {
+                Ok(mapping::Loaded::New(id, base, order)) => {
                     current_operation(engine);
+                    ensure!(
+                        order.last() == Some(&id),
+                        "DLL graph root/order identity differs"
+                    );
                     let mut refused = false;
-                    for call in engine.get_data().apis.modules.dynamic_calls(id, false)? {
-                        let outcome = routine(engine, &call, horizon)?;
-                        if !outcome.returned {
-                            return Ok(Some(outcome));
-                        }
-                        if matches!(call.routine, emumee_core::modules::LoaderRoutine::DllAttach)
-                            && outcome.value.unwrap() as u32 == 0
+                    for member in order {
+                        for call in engine
+                            .get_data()
+                            .apis
+                            .modules
+                            .dynamic_calls(member, false)?
                         {
-                            refused = true;
+                            let outcome = routine(engine, &call, horizon)?;
+                            if !outcome.returned {
+                                return Ok(Some(outcome));
+                            }
+                            if matches!(
+                                call.routine,
+                                emumee_core::modules::LoaderRoutine::DllAttach
+                            ) && outcome.value.unwrap() as u32 == 0
+                            {
+                                let count = engine.get_data().instructions;
+                                engine
+                                    .get_data_mut()
+                                    .apis
+                                    .modules
+                                    .fail_dynamic_attach(member, count)?;
+                                refused = true;
+                                break;
+                            }
+                        }
+                        if refused {
                             break;
                         }
-                    }
-                    if refused {
                         let count = engine.get_data().instructions;
                         engine
                             .get_data_mut()
                             .apis
                             .modules
-                            .fail_dynamic_attach(id, count)?;
+                            .dynamic_ready(member, count)?;
+                        super::user_loader::sync(engine)?;
+                    }
+                    if refused {
                         if let Some(outcome) = detach(engine, horizon)? {
                             return Ok(Some(outcome));
                         }
                         normal_failure(engine, 1114)?;
                     } else {
-                        let count = engine.get_data().instructions;
-                        engine
-                            .get_data_mut()
-                            .apis
-                            .modules
-                            .dynamic_ready(id, count)?;
                         mapping::publish_handle(engine, output, base)?;
                         let nt = engine
                             .get_data()
@@ -590,6 +769,74 @@ pub(crate) fn transition(
             }
         }
     }
+    let forwarded = engine
+        .get_data()
+        .dynamic_loader
+        .pending
+        .as_ref()
+        .unwrap()
+        .forwarded
+        .clone();
+    if let Some((module, symbol)) = forwarded {
+        let loaded = engine
+            .get_data()
+            .dynamic_loader
+            .pending
+            .as_ref()
+            .unwrap()
+            .result
+            .unwrap_or(0);
+        finish_operation(engine)?;
+        if loaded != 0 {
+            let id = engine
+                .get_data()
+                .apis
+                .modules
+                .modules()
+                .find(|m| m.base == loaded)
+                .context("Lazy forwarder target was not actually published")?
+                .identity();
+            let pending = engine
+                .get_data_mut()
+                .dynamic_loader
+                .pending
+                .as_mut()
+                .unwrap();
+            pending.forward_references.push(id);
+            pending.forward_steps += 1;
+            ensure!(
+                pending.forward_steps <= 32,
+                "Lazy forwarder depth exceeds 32"
+            );
+            match engine.get_data().apis.modules.resolve(&module, &symbol) {
+                Ok(emumee_core::modules::Resolution::Found { address, chain }) => {
+                    mapping::retain_followed_edges(engine, &module, &chain)?;
+                    completion(engine, address);
+                }
+                Ok(emumee_core::modules::Resolution::MissingModule { module: next, .. }) => {
+                    let pending = engine
+                        .get_data_mut()
+                        .dynamic_loader
+                        .pending
+                        .as_mut()
+                        .unwrap();
+                    pending.request = Request::Load {
+                        name: next,
+                        output: None,
+                    };
+                    pending.result = None;
+                    return transition_inner(engine, horizon);
+                }
+                Ok(emumee_core::modules::Resolution::MissingExport { .. }) => {
+                    normal_failure(engine, 127)?
+                }
+                Err(_) => normal_failure(engine, 50)?,
+            }
+        }
+        if let Some(outcome) = release_forward_references(engine, horizon)? {
+            return Ok(Some(outcome));
+        }
+    }
     let pending = engine.get_data().dynamic_loader.pending.as_ref().unwrap();
     let (pc, sp) = (pending.caller.pc, pending.caller.sp);
     // Do not restore a Context: callback volatile/global/clock/LastError effects are real.
@@ -617,6 +864,7 @@ pub(crate) fn resume_api(engine: &mut Unicorn<Trace>, pc: u64) -> Result<bool> {
     if !engine.get_data().dynamic_loader.resume {
         return Ok(false);
     }
+    super::user_loader::sync(engine)?;
     let pending = engine
         .get_data()
         .dynamic_loader
@@ -679,6 +927,15 @@ pub(crate) fn resume_api(engine: &mut Unicorn<Trace>, pc: u64) -> Result<bool> {
         .context("DLL resumed counter overflow")?;
     state.pending = None;
     state.resume = false;
+    if !state.suspended.is_empty() {
+        let caller = state.suspended.pop().unwrap();
+        state.pending = Some(caller);
+        engine
+            .get_data_mut()
+            .apis
+            .modules
+            .resume_dynamic_operation(false)?;
+    }
     Ok(true)
 }
 

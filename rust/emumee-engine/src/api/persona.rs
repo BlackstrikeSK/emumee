@@ -87,6 +87,8 @@ pub(crate) fn require_allocation_change(
     address: u64,
     size: u64,
 ) -> Result<()> {
+    super::user_bootstrap::require_change(engine, address, size)?;
+    super::user_loader::require_change(engine, address, size)?;
     ensure!(
         !engine.get_data().apis.persona.overlaps(address, size)?,
         "Guest allocation change overlaps system-owned command-line storage"
@@ -260,7 +262,7 @@ fn count(engine: &Unicorn<Trace>, at: u64) -> Result<u32> {
     }
     Ok(u32::from_le_bytes(read(engine, at, 4)?.try_into().unwrap()))
 }
-fn stable_command_line(engine: &mut Unicorn<Trace>, encoding: Encoding) -> Result<u64> {
+pub(super) fn stable_command_line(engine: &mut Unicorn<Trace>, encoding: Encoding) -> Result<u64> {
     let key = (OWNER, if encoding == Encoding::Utf16 { 1 } else { 0 });
     if let Some(text) = engine.get_data().apis.persona.command_lines.get(&key) {
         ensure!(
@@ -358,6 +360,7 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                     &name,
                     value.as_deref(),
                 )?;
+                super::user_bootstrap::refresh_process(engine)?;
                 // https://learn.microsoft.com/en-us/windows/win32/api/processenv/nf-processenv-setenvironmentvariablew
                 // No host/system/other-process environment is modified.
                 Ok(1)

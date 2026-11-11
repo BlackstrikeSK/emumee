@@ -53,6 +53,7 @@ class NativePeValidationTests(unittest.TestCase):
     def test_changes_additions_deletions_and_unknown_dependencies_select_full(self):
         for relative in ('Cargo.lock', 'rust/emumee-engine/src/user.rs', 'tools/build_rust.ps1',
                          'tools/native_pe_staging.py', 'tools/native_pe_staging_seal.py', 'tools/native_pe_m2.py', 'tests/test_native_pe_staging.py',
+                         'tools/native_pe_m3.py', 'tests/test_native_pe_bootstrap.py',
                          '.venv/Lib/site-packages/speakeasy/handler.py', 'new-unclassified.fixture'):
             original = self.sources(relative)
             changed = {relative: 'c' * 64}

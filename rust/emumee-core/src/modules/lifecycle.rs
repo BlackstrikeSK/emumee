@@ -108,6 +108,9 @@ impl ModuleCatalog {
     pub fn loader_events(&self) -> &[LoaderEvent] {
         &self.loader_events
     }
+    pub fn initialization_order(&self) -> &[ModuleId] {
+        &self.ready_order
+    }
     pub fn retired_images(&self) -> &[RetiredImage] {
         &self.retired_images
     }

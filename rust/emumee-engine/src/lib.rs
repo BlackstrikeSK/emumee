@@ -118,6 +118,8 @@ mod kernel_timer_tests;
 mod kernel_waits_tests;
 pub mod linux;
 #[cfg(test)]
+mod m3_tests;
+#[cfg(test)]
 mod mdl_tests;
 #[cfg(test)]
 mod native_exception_tests;
@@ -143,6 +145,8 @@ mod submitted_driver_tests;
 mod tcg;
 mod threads;
 mod time;
+#[cfg(test)]
+mod user_bootstrap_tests;
 #[cfg(test)]
 mod user_runtime_tests;
 #[cfg(test)]
@@ -319,7 +323,11 @@ struct Trace {
     ipi: ipi::State,
     ipi_action: Option<ipi::Action>,
     loader_active: bool,
+    continuation_depth: u32,
+    maximum_continuation_depth: u32,
     dynamic_loader: api::dynamic_loader::State,
+    user_lifecycle: api::user_lifecycle::State,
+    user_threads: api::user_threads::State,
     native_exceptions: native_exceptions::State,
     loader_native_effect_failure: Option<String>,
     loader_preparation_error: Option<String>,
@@ -388,7 +396,11 @@ impl Trace {
             ipi: ipi::State::new(architecture),
             ipi_action: None,
             loader_active: false,
+            continuation_depth: 0,
+            maximum_continuation_depth: 0,
             dynamic_loader: api::dynamic_loader::State::default(),
+            user_lifecycle: api::user_lifecycle::State::default(),
+            user_threads: api::user_threads::State::default(),
             native_exceptions: native_exceptions::State::default(),
             loader_native_effect_failure: None,
             loader_preparation_error: None,
@@ -434,6 +446,10 @@ pub struct Execution {
     pub console_session: Option<emumee_core::console::Report>,
     pub file_enumeration: Option<emumee_core::filesystem::EnumerationReport>,
     pub environment_blocks: Option<EnvironmentBlockReport>,
+    pub user_bootstrap: Option<api::user_bootstrap::Report>,
+    pub user_loader: Option<api::user_loader::Report>,
+    pub user_lifecycle: Option<api::user_lifecycle::Report>,
+    pub user_threads: Option<api::user_threads::Report>,
     pub file_storage: Option<emumee_core::filesystem::StorageReport>,
     pub kernel_callbacks: Option<CallbackReport>,
     pub kernel_cache_aware_rundown: Option<RundownReport>,
@@ -470,6 +486,7 @@ pub struct Execution {
     pub completion_reason: &'static str,
     pub instruction_count: u64,
     pub max_instructions: u64,
+    pub maximum_continuation_depth: u32,
     pub guest_entry_return: Option<u64>,
     pub final_pc: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1146,6 +1163,9 @@ fn run_generated_with_fixture_configuration(
     };
     let integrated_receipt = if let Some(reference) = integrated_reference {
         api::initialize_providers_with_reference(&mut engine, reference)?
+    } else if submitted_user {
+        api::user_providers::initialize(&mut engine)?;
+        None
     } else {
         api::initialize_providers(&mut engine)?;
         None
@@ -1261,6 +1281,9 @@ fn run_generated_with_fixture_configuration(
         api::kernel_capture::initialize_boot(&mut engine)?;
     }
     kernel_cpu::initialize(&mut engine)?;
+    if submitted_user {
+        api::user_bootstrap::initialize(&mut engine, pe.image_base, stack, STACK_SIZE)?;
+    }
     native_exceptions::install(&mut engine)?;
     time::initialize(&mut engine)?;
     let sp = stack + STACK_SIZE
@@ -1305,7 +1328,8 @@ fn run_generated_with_fixture_configuration(
                 return;
             }
         }
-        if let Err(error) = native_exceptions::api_frame::before_instruction(engine, pc) {
+        if let Err(error) = api::user_bootstrap::before_instruction(engine)
+            .and_then(|()| native_exceptions::api_frame::before_instruction(engine, pc)) {
             engine.get_data_mut().cpu.fault = Some(format!("{error:#}"));
             let _ = engine.emu_stop();
             return;
@@ -1361,6 +1385,7 @@ fn run_generated_with_fixture_configuration(
                 if api::dynamic_loader::resume_api(engine, pc)? {
                     return Ok(());
                 }
+                if api::user_threads::resume_api(engine, pc)? { return Ok(()); }
                 if api::crt_startup::resume_api(engine, pc)? {
                     return Ok(());
                 }
@@ -1388,6 +1413,7 @@ fn run_generated_with_fixture_configuration(
             Some(threads::Action::Wait { .. })
         ) && !matches!(engine.get_data().ipi_action, Some(ipi::Action::Begin))
             && !api::dynamic_loader::queued(engine)
+            && !api::user_threads::queued(engine)
             && !api::crt_startup::queued(engine)
             && !native_exceptions::queued(engine)
         {
@@ -1421,6 +1447,7 @@ fn run_generated_with_fixture_configuration(
             || engine.get_data().thread_action.is_some()
             || engine.get_data().ipi_action.is_some()
             || api::dynamic_loader::queued(engine)
+            || api::user_threads::queued(engine)
             || api::crt_startup::queued(engine)
             || native_exceptions::queued(engine)
         {
@@ -1467,7 +1494,7 @@ fn run_generated_with_fixture_configuration(
     let start = Instant::now();
     let horizon = threads::ExecutionHorizon::new(timeout_us, budget);
     let startup = api::native_loader::prepare(&mut engine, &pe, bytes, companions, &parsed);
-    let outcome = match startup {
+    let mut outcome = match startup {
         Ok(startup) => match api::native_loader::execute(
             &mut engine,
             startup,
@@ -1499,7 +1526,22 @@ fn run_generated_with_fixture_configuration(
             }
         }
     };
+    if submitted_user && engine.get_data().process_exit_code.is_some() {
+        match api::user_lifecycle::finish_process(&mut engine, stack + STACK_SIZE - 0x200, &horizon)
+        {
+            Ok(Some(cleanup)) => outcome = cleanup,
+            Ok(None) => {}
+            Err(error) => {
+                outcome = threads::Outcome {
+                    returned: false,
+                    value: None,
+                    error: Some(format!("{error:#}")),
+                }
+            }
+        }
+    }
     let seconds = start.elapsed().as_secs_f64();
+    api::user_bootstrap::before_instruction(&mut engine)?;
     let pc = uc(engine.pc_read())?;
     engine.get_data_mut().clock.flush_cycles()?;
     let timer_error = threads::timers::settle(&mut engine, outcome.returned);
@@ -1602,6 +1644,10 @@ fn run_generated_with_fixture_configuration(
         memory_string_sources,
         configuration:trace.machine.receipt(),
         environment_blocks: (!trace.apis.kernel_mode).then(||trace.apis.environment_blocks_report()),
+        user_bootstrap: api::user_bootstrap::report(&engine),
+        user_loader: api::user_loader::report(&engine),
+        user_lifecycle: api::user_lifecycle::report(&engine),
+        user_threads: api::user_threads::report(&engine),
         file_storage,
         kernel_files,
         file_enumeration: (!trace.apis.kernel_mode).then(||trace.apis.file_metadata.searches.report()),
@@ -1639,6 +1685,7 @@ fn run_generated_with_fixture_configuration(
         completion_reason: completion,
         instruction_count: count,
         max_instructions: budget,
+        maximum_continuation_depth: trace.maximum_continuation_depth,
         guest_entry_return: value,
         final_pc: pc,
         native_memory_fault: trace.native_memory_fault.clone(),

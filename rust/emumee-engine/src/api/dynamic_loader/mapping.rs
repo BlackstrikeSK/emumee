@@ -5,8 +5,10 @@ use emumee_core::{
     modules::{DynamicDescriptor, ModuleCatalog, ModuleOrigin, Resolution},
     pe::Kind,
 };
+mod graph;
 pub(super) enum LoadError {
     Refused(u32),
+    Horizon,
     Fatal(anyhow::Error),
 }
 impl From<anyhow::Error> for LoadError {
@@ -21,7 +23,7 @@ impl From<emumee_core::memory::MemoryError> for LoadError {
 }
 pub(super) enum Loaded {
     Retained(u64),
-    New(ModuleId, u64),
+    New(ModuleId, u64, Vec<ModuleId>),
 }
 fn unsupported(message: &str) -> LoadError {
     LoadError::Fatal(anyhow::anyhow!(
@@ -101,7 +103,15 @@ pub(super) fn lookup(engine: &Unicorn<Trace>, name: &str) -> Result<Option<Modul
     }
     Ok(None)
 }
-fn placement(engine: &Unicorn<Trace>, preferred: u64, size: u64) -> Result<u64> {
+pub(crate) fn placement(engine: &Unicorn<Trace>, preferred: u64, size: u64) -> Result<u64> {
+    placement_in(engine, &engine.get_data().apis.memory, preferred, size)
+}
+fn placement_in(
+    engine: &Unicorn<Trace>,
+    memory: &AddressSpace,
+    preferred: u64,
+    size: u64,
+) -> Result<u64> {
     let environment = emumee_core::kernel_environment::Environment::new(
         engine.get_data().architecture,
         &engine.get_data().cpu.profile,
@@ -115,10 +125,7 @@ fn placement(engine: &Unicorn<Trace>, preferred: u64, size: u64) -> Result<u64> 
             && base
                 .checked_add(size)
                 .is_some_and(|end| end > base && end - 1 <= last)
-            && !engine
-                .get_data()
-                .apis
-                .memory
+            && !memory
                 .regions()
                 .any(|r| base < r.base + r.size && r.base < base + size)
     };
@@ -126,7 +133,7 @@ fn placement(engine: &Unicorn<Trace>, preferred: u64, size: u64) -> Result<u64> 
         return Ok(preferred);
     }
     let mut base = 0x10000u64;
-    for region in engine.get_data().apis.memory.regions() {
+    for region in memory.regions() {
         if region.base >= base && region.base - base >= size && fits(base) {
             return Ok(base);
         }
@@ -163,7 +170,7 @@ fn installed_gate(engine: &Unicorn<Trace>, address: u64) -> bool {
             .get(((address - state.base) / 16) as usize)
             .is_some_and(|b| routine_binding(b))
 }
-fn modeled_external(engine: &Unicorn<Trace>, module: &str, symbol: &ImportName) -> Result<u64> {
+fn modeled_external(engine: &mut Unicorn<Trace>, module: &str, symbol: &ImportName) -> Result<u64> {
     let name = match symbol {
         ImportName::Name(name) => name.clone(),
         ImportName::Ordinal { ordinal } => format!("#{ordinal}"),
@@ -178,8 +185,11 @@ fn modeled_external(engine: &Unicorn<Trace>, module: &str, symbol: &ImportName) 
     let index = state
         .bindings
         .iter()
-        .position(|b| b.name == expected.name && routine_binding(b))
-        .context("Dynamic DLL import requires an API gate not installed in the actual process")?;
+        .position(|b| b.name == expected.name && routine_binding(b));
+    if index.is_none() {
+        return super::super::install_binding(engine, expected);
+    }
+    let index = index.unwrap();
     let address = state.base + index as u64 * 16;
     ensure!(
         installed_gate(engine, address),
@@ -193,6 +203,7 @@ fn actual_edges(
     owner: ModuleId,
     chain: &[String],
     edges: &mut Vec<(ModuleId, ModuleId)>,
+    pending: &[ModuleId],
 ) -> Result<()> {
     let mut previous = owner;
     for step in chain {
@@ -218,11 +229,12 @@ fn actual_edges(
             continue;
         }
         ensure!(
-            engine
-                .get_data()
-                .apis
-                .modules
-                .loader_image_ready(m.identity()),
+            pending.contains(&m.identity())
+                || engine
+                    .get_data()
+                    .apis
+                    .modules
+                    .loader_image_ready(m.identity()),
             "Dynamic DLL import targets an image that has not actually initialized"
         );
         if previous != m.identity() && !edges.contains(&(previous, m.identity())) {
@@ -233,23 +245,24 @@ fn actual_edges(
     Ok(())
 }
 fn bindings(
-    engine: &Unicorn<Trace>,
+    engine: &mut Unicorn<Trace>,
     catalog: &ModuleCatalog,
+    memory: &AddressSpace,
     pe: &PeImage,
     owner: ModuleId,
     image: &mut [u8],
+    pending: &[ModuleId],
 ) -> Result<Vec<(ModuleId, ModuleId)>> {
     let width = pe.sample.architecture.width();
     let mut edges = Vec::new();
     for import in &pe.imports {
         let address = match catalog.resolve(&import.module, &import.name)? {
             Resolution::Found { address, chain } => {
-                actual_edges(engine, catalog, owner, &chain, &mut edges)?;
+                actual_edges(engine, catalog, owner, &chain, &mut edges, pending)?;
                 // Metadata-only classified CODE remains NONE, even if catalogued.
                 // Guest data exports can be readable; an actual gate must be modeled.
                 ensure!(
-                    installed_gate(engine, address)
-                        || engine.get_data().apis.memory.allows(address, 1, P::READ),
+                    installed_gate(engine, address) || memory.allows(address, 1, P::READ),
                     "Dynamic DLL import resolves to protected/unmodeled metadata: {}!{:?}",
                     import.module,
                     import.name
@@ -273,6 +286,7 @@ fn bindings(
                     owner,
                     &chain[..chain.len().saturating_sub(1)],
                     &mut edges,
+                    pending,
                 )?;
                 modeled_external(engine, &module, &symbol)?
             }
@@ -343,7 +357,7 @@ struct Prepared {
     id: ModuleId,
 }
 fn prepare_new(
-    engine: &Unicorn<Trace>,
+    engine: &mut Unicorn<Trace>,
     path: &str,
     name: &str,
     bytes: &[u8],
@@ -361,9 +375,12 @@ fn prepare_new(
     if pe.image_size as u64 > emumee_core::modules::MAX_DYNAMIC_IMAGE {
         return Err(LoadError::Refused(8));
     }
-    let tls = pe
-        .tls_callbacks_only(bytes)
-        .map_err(|e| unsupported(&format!("{e}")))?;
+    let tls = (if engine.get_data().apis.user_bootstrap.is_some() {
+        pe.tls_with_storage(bytes)
+    } else {
+        pe.tls_callbacks_only(bytes)
+    })
+    .map_err(|e| unsupported(&format!("{e}")))?;
     let base = placement(engine, pe.image_base, pe.image_size as u64)?;
     let mut image = pe
         .materialize(bytes, base)
@@ -375,7 +392,8 @@ fn prepare_new(
         .add_with_path(name, base, &pe, path, ModuleOrigin::GuestFile)
         .map_err(|e| unsupported(&format!("{e}")))?;
     let id = catalog.module(name).unwrap().unwrap().identity();
-    let edges = bindings(engine, &catalog, &pe, id, &mut image)?;
+    let memory = engine.get_data().apis.memory.clone();
+    let edges = bindings(engine, &catalog, &memory, &pe, id, &mut image, &[])?;
     let dependencies = edges
         .iter()
         .filter_map(|(from, to)| (*from == id).then_some(*to))
@@ -420,6 +438,16 @@ fn prepare_new(
     })
 }
 pub(super) fn load(
+    engine: &mut Unicorn<Trace>,
+    requested: &str,
+    horizon: &ExecutionHorizon,
+) -> std::result::Result<Loaded, LoadError> {
+    if engine.get_data().apis.user_bootstrap.is_some() {
+        return graph::load(engine, requested, horizon);
+    }
+    load_single(engine, requested)
+}
+fn load_single(
     engine: &mut Unicorn<Trace>,
     requested: &str,
 ) -> std::result::Result<Loaded, LoadError> {
@@ -529,7 +557,7 @@ pub(super) fn load(
         .modules
         .dynamic_mapped(id, count)
         .map_err(|e| LoadError::Fatal(e.into()))?;
-    Ok(Loaded::New(id, base))
+    Ok(Loaded::New(id, base, vec![id]))
 }
 pub(super) fn publish_handle(
     engine: &mut Unicorn<Trace>,
@@ -572,7 +600,7 @@ pub(crate) fn retain_followed_edges(
         .context("GetProcAddress owner vanished")?
         .identity();
     let mut edges = Vec::new();
-    actual_edges(engine, catalog, owner, chain, &mut edges)?;
+    actual_edges(engine, catalog, owner, chain, &mut edges, &[])?;
     edges.retain(|(from, to)| {
         !catalog
             .by_identity(*from)
@@ -584,7 +612,15 @@ pub(crate) fn retain_followed_edges(
         return Ok(());
     }
     ensure!(
-        !engine.get_data().loader_active && engine.get_data().dynamic_loader.pending.is_none(),
+        !engine.get_data().loader_active && engine.get_data().dynamic_loader.pending.is_none()
+            || engine.get_data().apis.user_bootstrap.is_some()
+                && engine
+                    .get_data()
+                    .apis
+                    .modules
+                    .dynamic_state()
+                    .active
+                    .is_none(),
         "New GetProcAddress ownership during a loader callback is not modeled"
     );
     let mut candidate = catalog.clone();

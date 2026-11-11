@@ -86,11 +86,13 @@ pub(crate) struct State {
     legacy_globals: Option<u64>,
     backing: Vec<Backing>,
     pub(super) pending: Option<initializers::Pending>,
+    pub(super) suspended: Vec<initializers::Pending>,
     pub(super) action: bool,
     pub(super) active: bool,
     pub(super) resume: bool,
     pub(super) events: Vec<initializers::Event>,
     pub(super) events_omitted: u64,
+    pub(super) interrupted: Vec<initializers::Interrupted>,
 }
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -107,6 +109,8 @@ pub struct Report {
     pub initializers: Vec<initializers::Event>,
     pub initializer_events_omitted: u64,
     pub initializer_pending: bool,
+    pub suspended_initializers: usize,
+    pub interrupted_initializers: Vec<initializers::Interrupted>,
     pub scope: &'static str,
 }
 pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
@@ -128,7 +132,13 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
         initializers: state.events.clone(),
         initializer_events_omitted: state.events_omitted,
         initializer_pending: state.pending.is_some(),
-        scope: "Guest-owned RW/NX CDECL startup arguments/globals and pre-entry environment snapshots. Initializers execute real guest instructions under the caller horizon. Wildcard expansion, initializer reentrancy, CRT teardown and general runtime initialization remain outside this profile.",
+        suspended_initializers: state.suspended.len(),
+        interrupted_initializers: state.interrupted.clone(),
+        scope: if engine.get_data().apis.user_bootstrap.is_some() {
+            "Guest-owned RW/NX CDECL startup arguments/globals and pre-entry environment snapshots. Nested initializers execute actual guest instructions with checked caller frames and ABI under one shared horizon. Interrupted continuations unwind to archived diagnostics. Wildcard expansion, CRT teardown and general runtime initialization remain outside this profile."
+        } else {
+            "Guest-owned RW/NX CDECL startup arguments/globals and pre-entry environment snapshots. Initializers execute real guest instructions under the caller horizon. Wildcard expansion, initializer reentrancy, CRT teardown and general runtime initialization remain outside this profile."
+        },
     })
 }
 pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {

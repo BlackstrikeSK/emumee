@@ -343,6 +343,7 @@ pub(crate) fn write(engine: &mut Unicorn<Trace>, address: u64, bytes: &[u8]) -> 
     crate::image_writes::model_write(engine, address, bytes.len(), written.is_ok());
     crate::instruction_window::model_write(engine, address, bytes, written.is_ok());
     uc(written)?;
+    crate::api::user_bootstrap::model_write(engine, address, bytes.len())?;
     // Clearing our decoder classifications is insufficient: already executed
     // guest bytes can still reside in Unicorn's translated-block cache. Model
     // writes bypass guest store hooks, so invalidate that cache after the write

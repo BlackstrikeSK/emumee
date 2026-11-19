@@ -45,6 +45,7 @@ pub(crate) struct Machine {
     object_namespace: Option<emumee_core::kernel_namespace::Namespace>,
     physical_memory_mb: u64,
     seeded_file_hashes: BTreeMap<String, String>,
+    submitted_file_hashes: BTreeMap<String, String>,
     receipt: Option<ConfigurationReceipt>,
 }
 impl Machine {
@@ -56,6 +57,7 @@ impl Machine {
             object_namespace: None,
             physical_memory_mb: 16384,
             seeded_file_hashes: BTreeMap::new(),
+            submitted_file_hashes: BTreeMap::new(),
             receipt: None,
         }
     }
@@ -85,6 +87,11 @@ impl Machine {
             .get(path)
             .is_none_or(|expected| *expected != format!("{:x}", Sha256::digest(bytes)))
     }
+    pub(crate) fn submitted_image(&self, path: &str, bytes: &[u8]) -> bool {
+        self.submitted_file_hashes
+            .get(path)
+            .is_some_and(|expected| *expected == emumee_core::report_bundle::digest(bytes))
+    }
 }
 /// Only a whole validated candidate can construct this engine installation.
 /// It is deliberately not Deserialize and cannot be a worker launch token.
@@ -109,6 +116,10 @@ impl Prepared {
     ) -> Result<()> {
         let candidate = self.state.filesystem.with_submitted_files(files)?;
         for file in files {
+            self.machine.submitted_file_hashes.insert(
+                candidate.path(file.path)?,
+                emumee_core::report_bundle::digest(file.bytes),
+            );
             self.machine.seeded_file_hashes.insert(
                 candidate.path(file.path)?,
                 emumee_core::report_bundle::digest(file.bytes),
@@ -240,6 +251,7 @@ impl Prepared {
                 object_namespace: None,
                 physical_memory_mb: value.physical_memory_mb as u64,
                 seeded_file_hashes,
+                submitted_file_hashes: BTreeMap::new(),
                 receipt: Some(receipt),
             },
         })
@@ -411,6 +423,7 @@ impl Prepared {
             object_namespace,
             physical_memory_mb: receipt.physical_memory_mb,
             seeded_file_hashes,
+            submitted_file_hashes: BTreeMap::new(),
             receipt: Some(receipt),
         };
         Ok(Self {

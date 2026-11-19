@@ -8,6 +8,22 @@ pub struct Slots {
     fls: Vec<Option<BTreeMap<u64, u64>>>,
 }
 impl Slots {
+    /// Clear values before callbacks run, allowing reentrant slot writes without
+    /// invoking the same destructor forever. Retirement has its own pass bound.
+    pub fn take_fls(&mut self, index: u32, thread: Option<u64>) -> Option<Vec<u64>> {
+        let values = self.fls.get_mut(index as usize)?.as_mut()?;
+        let keys = values
+            .keys()
+            .copied()
+            .filter(|id| thread.is_none_or(|t| *id == t))
+            .collect::<Vec<_>>();
+        Some(
+            keys.into_iter()
+                .filter_map(|id| values.remove(&id))
+                .filter(|v| *v != 0)
+                .collect(),
+        )
+    }
     pub fn retire_thread(&mut self, thread: u64) {
         for values in self.tls.iter_mut().chain(self.fls.iter_mut()).flatten() {
             values.remove(&thread);

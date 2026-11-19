@@ -108,15 +108,60 @@ fn registers(arch: Architecture) -> &'static [RegisterX86] {
         ]
     }
 }
-fn invoke(
+pub(crate) struct CheckedCall {
+    marker: u64,
+    expected_sp: u64,
+    saved: Vec<(RegisterX86, u64)>,
+    vectors: Vec<(RegisterX86, Box<[u8]>)>,
+    flags: u64,
+    control: u64,
+}
+impl CheckedCall {
+    pub(crate) fn validate(&self, engine: &Unicorn<Trace>) -> Result<()> {
+        let arch = engine.get_data().architecture;
+        ensure!(
+            uc(engine.pc_read())? == self.marker
+                && uc(engine.reg_read(sp_register(arch)))? == self.expected_sp,
+            "CRT initializer violated CDECL/Win64 return frame"
+        );
+        for (r, v) in &self.saved {
+            ensure!(
+                uc(engine.reg_read(*r))? == *v,
+                "CRT initializer changed nonvolatile register {r:?}"
+            );
+        }
+        for (r, v) in &self.vectors {
+            ensure!(
+                uc(engine.reg_read_long(*r))?.as_ref() == v.as_ref(),
+                "CRT initializer changed nonvolatile vector register {r:?}"
+            );
+        }
+        let after = uc(engine.reg_read(RegisterX86::EFLAGS))?;
+        ensure!(
+            after & 0x400 == 0 && (after ^ self.flags) & 0x3200 == 0,
+            "CRT initializer changed protected flags"
+        );
+        ensure!(
+            (uc(engine.reg_read(RegisterX86::MXCSR))? ^ self.control) & 0xffc0 == 0,
+            "CRT initializer changed MXCSR control bits"
+        );
+        Ok(())
+    }
+}
+pub(crate) fn begin_checked_call(
     engine: &mut Unicorn<Trace>,
     target: u64,
     caller_sp: u64,
-    horizon: &ExecutionHorizon,
-) -> Result<Outcome> {
+    arguments: &[u64],
+    cdecl: bool,
+    marker: u64,
+) -> Result<CheckedCall> {
+    ensure!(
+        arguments.len() <= 4,
+        "Guest callback argument bound exceeded"
+    );
     require(engine, target, 1, P::EXECUTE)?;
     let arch = engine.get_data().architecture;
-    let marker = engine.get_data().return_marker + 0x600;
     require(engine, marker, 1, P::EXECUTE)?;
     let saved = registers(arch)
         .iter()
@@ -146,39 +191,62 @@ fn invoke(
         .checked_sub(arch.width() as u64)
         .context("CRT callback aligned stack underflow")?;
     let width = arch.width();
-    let mut frame = vec![0; if width == 8 { 40 } else { 4 }];
+    let mut frame = vec![
+        0;
+        if width == 8 {
+            40
+        } else {
+            4 + arguments.len() * 4
+        }
+    ];
+    for (i, value) in arguments.iter().enumerate() {
+        if width == 4 {
+            frame[4 + i * 4..8 + i * 4].copy_from_slice(&(*value as u32).to_le_bytes());
+        } else {
+            uc(engine.reg_write(
+                [
+                    RegisterX86::RCX,
+                    RegisterX86::RDX,
+                    RegisterX86::R8,
+                    RegisterX86::R9,
+                ][i],
+                *value,
+            ))?;
+        }
+    }
     frame[..width].copy_from_slice(&marker.to_le_bytes()[..width]);
     require(engine, sp, frame.len() as u64, P::WRITE)?;
     crate::cpu::write(engine, sp, &frame)?;
     uc(engine.reg_write(sp_register(arch), sp))?;
+    uc(engine.reg_write(pc_register(arch), target))?;
+    Ok(CheckedCall {
+        marker,
+        expected_sp: sp
+            + width as u64
+            + if width == 4 && !cdecl {
+                arguments.len() as u64 * 4
+            } else {
+                0
+            },
+        saved,
+        vectors,
+        flags,
+        control,
+    })
+}
+pub(crate) fn invoke_with_arguments(
+    engine: &mut Unicorn<Trace>,
+    target: u64,
+    caller_sp: u64,
+    horizon: &ExecutionHorizon,
+    arguments: &[u64],
+    cdecl: bool,
+) -> Result<Outcome> {
+    let marker = engine.get_data().return_marker + 0x600;
+    let checked = begin_checked_call(engine, target, caller_sp, arguments, cdecl, marker)?;
     let outcome = crate::threads::execute_horizon(engine, target, marker, horizon)?;
     if outcome.returned {
-        ensure!(
-            uc(engine.pc_read())? == marker
-                && uc(engine.reg_read(sp_register(arch)))? == sp + width as u64,
-            "CRT initializer violated CDECL/Win64 return frame"
-        );
-        for (r, v) in saved {
-            ensure!(
-                uc(engine.reg_read(r))? == v,
-                "CRT initializer changed nonvolatile register {r:?}"
-            );
-        }
-        for (r, v) in vectors {
-            ensure!(
-                uc(engine.reg_read_long(r))? == v,
-                "CRT initializer changed nonvolatile vector register {r:?}"
-            );
-        }
-        let after = uc(engine.reg_read(RegisterX86::EFLAGS))?;
-        ensure!(
-            after & 0x400 == 0 && (after ^ flags) & 0x3200 == 0,
-            "CRT initializer changed protected flags"
-        );
-        ensure!(
-            (uc(engine.reg_read(RegisterX86::MXCSR))? ^ control) & 0xffc0 == 0,
-            "CRT initializer changed MXCSR control bits"
-        );
+        checked.validate(engine)?;
     }
     Ok(outcome)
 }
@@ -287,7 +355,7 @@ fn transition_inner(
             state.events_omitted += 1;
             None
         };
-        let outcome = invoke(engine, target, pending.sp, horizon);
+        let outcome = invoke_with_arguments(engine, target, pending.sp, horizon, &[], true);
         let stopped = engine.get_data().instructions;
         if let Some(i) = event_index {
             let event = &mut engine.get_data_mut().apis.crt_startup.events[i];

@@ -3,6 +3,11 @@ use super::*;
 const USER: u64 = 0x7ffe0000;
 #[repr(align(4096))]
 pub(crate) struct SharedPage([u8; 4096]);
+pub(crate) fn remap(engine: &mut Unicorn<Trace>, base: u64) -> Result<()> {
+    let pointer = engine.get_data_mut().clock_page.as_mut()
+        .context("Process clock backing missing")?.0.as_mut_ptr().cast();
+    uc(unsafe { engine.mem_map_ptr(base, 4096, Prot::READ, pointer) })
+}
 pub(crate) fn page(engine: &Unicorn<Trace>) -> [u8; 4096] {
     let mut page = engine.get_data().clock.shared_data_page();
     let profile = &engine.get_data().cpu.profile;

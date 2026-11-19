@@ -37,7 +37,7 @@ A guest return value is an observation, not the controller exit status.
 Normal process exit runs bounded guest DLL/TLS detach callbacks; forced termination skips them.
 The return/UINT exit-code distinction follows Microsoft's
 [ExitProcess contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess);
-The bounded M3 lifecycle is qualified; general scheduling and Windows runtime compatibility remain separate.
+The bounded M3 lifecycle and M4 guest runtime are qualified; general Windows runtime compatibility remains open.
 
 This entrypoint does not establish full Python/Speakeasy compatibility. Managed
 assemblies, drivers, arbitrary Windows APIs and a general Windows process runtime remain
@@ -151,8 +151,9 @@ uses the existing live memory quota and refuses guest free/protect changes.
 See `../docs/native-pe/m3-user-bootstrap.md` for direct-memory probes, reference
 layouts, boundary/refusal controls and qualification evidence. Loader lists,
 static TLS and bounded process/thread notifications are qualified separately in
-`../docs/native-pe/m3-loader-lifecycle.md`. General scheduling, waits and FLS
-destructors remain M4 work.
+`../docs/native-pe/m3-loader-lifecycle.md`. Deterministic scheduling, waits,
+FLS/APC callbacks, isolated children and user exceptions are qualified in
+`../docs/native-pe/m4-user-runtime.md`.
 
 ## CRT startup parity
 
@@ -211,8 +212,15 @@ The frozen declaration baseline and its limitations are documented in
 Current source adds owned current-process handles and rights checks, guest
 process-memory and virtual-memory operations, TLS/FLS slots, recursive critical
 sections, startup/system/version/memory/processor information and module paths.
-Other processes, blocking synchronization and general user scheduling remain
-open; FLS callbacks retain the legacy placeholder limitation.
+The bounded M4 runtime adds process-owned threads/contexts and isolated virtual
+children, checked remote memory, deterministic scheduling, dispatcher/critical
+section waits, virtual deadlines/deadlock reporting, FLS destruction and target
+thread APC delivery. x86 SEH/VEH/EH4 and AMD64 unwind/runtime tables use actual
+guest continuations. One live native CPU multiplexes owned address spaces;
+guest child APIs never launch host processes. Limits include 32 lifetime
+children, 256 aggregate threads and run-wide execution/resource bounds.
+See `../docs/native-pe/m4-user-runtime.md` for qualification and explicit limits,
+including general C++ destruction, XSTATE/CET and native CRT/Windows parity.
 
 The Windows string profile now includes bounded ASCII comparison and search,
 in-place case mapping and trimming, CP437/CP850/CP1252/UTF8 conversions,

@@ -13,7 +13,9 @@ use std::collections::BTreeSet;
 pub(crate) mod api_frame;
 pub(crate) mod c_scope;
 mod context;
+pub(crate) mod function_tables;
 mod unwind_phase;
+pub(crate) mod user;
 use context::{capture, restore};
 // Other runtime owners use +100(thread), +200(IPI), +300(loader), +400(DPC).
 const LANGUAGE_RETURN: u64 = 0x700;
@@ -59,6 +61,8 @@ const XMM: [R; 16] = [
 #[derive(Default)]
 pub(crate) struct State {
     pending: Option<ExceptionRecord>,
+    user: user::State,
+    function_tables: function_tables::State,
     active: bool,
     events: Vec<Event>,
     raised: u64,
@@ -102,6 +106,10 @@ pub struct Event {
 }
 #[derive(Debug, Serialize)]
 pub struct Report {
+    pub vectored_registrations: usize,
+    pub user_exception_frames: usize,
+    pub unhandled_filter: bool,
+    pub registered_runtime_tables: usize,
     pub cpu_faults: Vec<CpuFault>,
     pub cpu_faults_omitted: u64,
     pub profile: &'static str,
@@ -121,15 +129,32 @@ pub struct Report {
 }
 pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
     let state = &engine.get_data().native_exceptions;
-    if state.raised == 0 && state.events.is_empty() && !state.active && state.pending.is_none() {
+    let (vectored_registrations, user_exception_frames, unhandled_filter) = user::summary(engine);
+    let registered_runtime_tables = function_tables::count(engine);
+    if state.raised == 0
+        && state.events.is_empty()
+        && !state.active
+        && state.pending.is_none()
+        && vectored_registrations == 0
+        && !unhandled_filter
+        && registered_runtime_tables == 0
+    {
         return None;
     }
     Some(Report {
+        vectored_registrations,
+        user_exception_frames,
+        unhandled_filter,
+        registered_runtime_tables,
         cpu_faults: state.cpu_faults.clone(),
         cpu_faults_omitted: state.cpu_faults_omitted,
-        profile: "amd64-guest-exception-search-unwind-v2",
-        active: state.active,
-        pending: state.pending.is_some(),
+        profile: if engine.get_data().apis.user_bootstrap.is_some() {
+            "owned-user-exception-continuations-v1"
+        } else {
+            "amd64-guest-exception-search-unwind-v2"
+        },
+        active: state.active || user::active(engine),
+        pending: state.pending.is_some() || user::queued(engine),
         events: state.events.clone(),
         exceptions_raised: state.raised,
         c_scope_requests: state.scope.requests,
@@ -140,10 +165,15 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
         transient_unwind_frames: state.transient_unwind_frames,
         dispatcher_boundaries_crossed: state.dispatcher_boundaries_crossed,
         api_exceptions: state.api_exceptions.clone(),
-        scope: "INT3 and unavailable non-KVM-backend MSR #GP search/unwind through actual guest handlers, C filters and finally routines. Legacy CONTEXT uses mode-specific x87/selector/debug rules; fault contexts preserve the resume flag and pre-instruction registers. No physical-host MSR availability is claimed. x86 hardware-fault dispatch, advertised KVM backend, selector/debug edits, nested/collided dispatch, C++ destruction and XSTATE/CET remain unsupported.",
+        scope: if engine.get_data().apis.user_bootstrap.is_some() {
+            "Owned x86 registration-chain and x86/AMD64 vectored exception/continue callbacks with checked legacy CONTEXT transport, bounded nested frames and schedulable handler waits. AMD64 static/registered runtime-function search/unwind retains the native dispatcher. Software exceptions and checked CPU-fault continuation use guest memory only. General x86 C/C++ scope-table unwinding, selector/debug edits, collided unwind and XSTATE/CET remain unsupported."
+        } else {
+            "INT3 and unavailable non-KVM-backend MSR #GP search/unwind through actual guest handlers, C filters and finally routines. Legacy CONTEXT uses mode-specific x87/selector/debug rules; fault contexts preserve the resume flag and pre-instruction registers. No physical-host MSR availability is claimed. x86 hardware-fault dispatch, advertised KVM backend, selector/debug edits, nested/collided dispatch, C++ destruction and XSTATE/CET remain unsupported."
+        },
     })
 }
 pub(crate) fn install(engine: &mut Unicorn<Trace>) -> Result<()> {
+    user::install(engine)?;
     if engine.get_data().architecture != Architecture::X64 {
         return Ok(());
     }
@@ -152,6 +182,19 @@ pub(crate) fn install(engine: &mut Unicorn<Trace>) -> Result<()> {
     uc(engine.reg_write(R::MXCSR, 0x1f80))?;
     uc(engine.add_intr_hook(|engine, number| {
         let result = (|| -> Result<()> {
+            if number != 3 && engine.get_data().apis.user_bootstrap.is_some() {
+                let code = match number {
+                    0 => 0xc0000094,
+                    6 => 0xc000001d,
+                    _ => bail!("Unsupported guest CPU interrupt {number}"),
+                };
+                let pc = uc(engine.pc_read())?;
+                ensure!(
+                    user::queue_fault(engine, code, pc, vec![]),
+                    "User exception queue is occupied"
+                );
+                return Ok(());
+            }
             ensure!(number == 3, "Unsupported guest CPU interrupt {number}");
             ensure!(
                 !engine.get_data().native_exceptions.active,
@@ -187,7 +230,9 @@ pub(crate) fn install(engine: &mut Unicorn<Trace>) -> Result<()> {
     Ok(())
 }
 pub(crate) fn queued(engine: &Unicorn<Trace>) -> bool {
-    engine.get_data().native_exceptions.pending.is_some() || c_scope::queued(engine)
+    engine.get_data().native_exceptions.pending.is_some()
+        || c_scope::queued(engine)
+        || user::queued(engine)
 }
 pub(crate) fn queue_msr_gp(
     engine: &mut Unicorn<Trace>,
@@ -254,6 +299,14 @@ fn owned_stack(engine: &Unicorn<Trace>, sp: u64) -> Result<Stack> {
         );
         return Ok(Stack { low, high });
     }
+    if engine.get_data().apis.user_bootstrap.is_some() {
+        let (low, high) = crate::api::user_threads::stack_bounds(engine)?;
+        ensure!(
+            sp >= low && sp < high,
+            "Exception RSP left its owned user thread stack"
+        );
+        return Ok(Stack { low, high });
+    }
     let region = engine
         .get_data()
         .apis
@@ -278,6 +331,18 @@ fn memory<'a, 'uc>(engine: &'a Unicorn<'uc, Trace>) -> impl unwind::Memory + 'a 
     }
 }
 fn image(engine: &Unicorn<Trace>, pc: u64) -> Result<(Image, u64)> {
+    let static_image = static_image(engine, pc);
+    if let Ok((image, _)) = &static_image
+        && image.lookup(pc).is_some()
+    {
+        return static_image;
+    }
+    if let Some(dynamic) = function_tables::image(engine, pc)? {
+        return Ok(dynamic);
+    }
+    static_image
+}
+fn static_image(engine: &Unicorn<Trace>, pc: u64) -> Result<(Image, u64)> {
     let m = engine
         .get_data()
         .apis
@@ -315,6 +380,9 @@ pub(crate) fn transition(
     engine: &mut Unicorn<Trace>,
     horizon: &ExecutionHorizon,
 ) -> Result<Option<Outcome>> {
+    if user::queued(engine) {
+        return user::transition(engine);
+    }
     if c_scope::queued(engine) {
         return c_scope::transition(engine, horizon);
     }
@@ -324,6 +392,9 @@ pub(crate) fn transition(
         .pending
         .take()
         .context("No pending exception")?;
+    if user::begin(engine, exception.clone())? {
+        return user::transition(engine);
+    }
     api_frame::deliver(engine)?;
     ensure!(
         !engine.get_data().native_exceptions.active,
@@ -341,7 +412,28 @@ pub(crate) fn transition(
     if !matches!(&result, Ok(Some(_))) {
         engine.get_data_mut().native_exceptions.active = false;
     }
-    result.with_context(|| format!("Native EXCEPTION {:#010x} dispatch failed", exception.code))
+    match &result {
+        Ok(None) if user::after_native(engine, exception.clone(), false)? => return Ok(None),
+        Err(error)
+            if error
+                .chain()
+                .any(|cause| cause.to_string().starts_with("Unhandled native exception"))
+                && user::after_native(engine, exception.clone(), true)? =>
+        {
+            return Ok(None);
+        }
+        _ => {}
+    }
+    if result.as_ref().err().is_some_and(|error| error.chain().any(|cause| cause.to_string().starts_with("Unhandled native exception"))) {
+        engine.get_data_mut().guest_failure_code = Some(exception.code);
+    }
+    result.with_context(|| {
+        format!(
+            "Native EXCEPTION {:#010x} dispatch failed{}",
+            exception.code,
+            user::fault_suffix(engine)
+        )
+    })
 }
 fn dispatch(
     engine: &mut Unicorn<Trace>,

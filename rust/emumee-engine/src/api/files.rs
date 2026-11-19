@@ -171,6 +171,14 @@ pub(super) fn size(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
     }
 }
 pub(super) fn close(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    if let Some(result) = user_processes::close(engine, args[0]) {
+        return Ok(result);
+    }
+    match engine.get_data_mut().apis.user_sync.close_checked(args[0]) {
+        Ok(true) => return Ok(1),
+        Err(error) => { engine.get_data_mut().apis.last_error=error; return Ok(0); },
+        Ok(false) => {}
+    }
     if let Some(value) = super::user_threads::close(engine, args[0]) {
         return Ok(value);
     }

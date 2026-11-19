@@ -1,6 +1,6 @@
 use super::*;
 mod companion;
-mod emit;
+use crate::user_test_fixtures as emit;
 mod nested_loader;
 use emumee_core::{
     fixtures,

@@ -92,6 +92,13 @@ impl Default for VirtualFileSystem {
     }
 }
 impl VirtualFileSystem {
+    pub fn snapshot_without_handles(&self) -> Self {
+        let mut snapshot = self.clone();
+        for handle in self.handles.keys() {
+            snapshot.close_owned(*handle);
+        }
+        snapshot
+    }
     /// Exact live ownership in the sole file/directory table, without accepting aliases or retired identities.
     pub fn owns_handle(&self, handle: u64) -> bool {
         self.handles.contains_key(&handle)
@@ -402,6 +409,23 @@ impl VirtualFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn process_snapshot_copies_guest_bytes_without_granting_parent_handles() {
+        let mut parent = VirtualFileSystem::new();
+        let (handle, _) = parent
+            .open(r"C:\workspace\parent.bin", 0xc0000000, 3, 2, 1024)
+            .unwrap();
+        parent.write(handle, 1024, b"owned bytes").unwrap();
+        let mut child = parent.snapshot_without_handles();
+        assert_eq!(
+            child.contents(r"C:\workspace\parent.bin").unwrap(),
+            Some(b"owned bytes".as_slice())
+        );
+        assert!(!child.owns_handle(handle));
+        assert_eq!(child.close(handle, 1024).unwrap_err().win32, 6);
+        assert!(parent.owns_handle(handle));
+        assert_eq!(parent.size(handle, 1024).unwrap(), 11);
+    }
     #[test]
     fn failed_handle_allocator_preflight_cannot_truncate_or_publish_names() {
         let mut fs = VirtualFileSystem::new();

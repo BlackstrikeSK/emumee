@@ -1,6 +1,8 @@
 """Source impact and evidence-index regressions; never run a submitted sample."""
 import copy
 import json
+import hashlib
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +22,14 @@ ENVIRONMENT = {'python_executable': sys.executable, 'tools': {'rustc': 'syntheti
 
 
 class NativePeValidationTests(unittest.TestCase):
+    def test_fixture_emission_root_is_bound_to_validation_environment(self):
+        with patch.dict(os.environ, {'EMUMEE_USER_TEST_FIXTURES': 'owned-fixture-root'}), patch.object(
+            validation.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='tool')
+        ):
+            environment = validation.environment_snapshot()
+        self.assertEqual(environment['build_environment_hashes']['EMUMEE_USER_TEST_FIXTURES'],
+                         hashlib.sha256(b'owned-fixture-root').hexdigest())
+
     def test_rust_commands_and_recorded_environment_both_compile_serially(self):
         with patch.object(validation.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='tool')):
             environment = validation.environment_snapshot()
@@ -54,6 +64,7 @@ class NativePeValidationTests(unittest.TestCase):
         for relative in ('Cargo.lock', 'rust/emumee-engine/src/user.rs', 'tools/build_rust.ps1',
                          'tools/native_pe_staging.py', 'tools/native_pe_staging_seal.py', 'tools/native_pe_m2.py', 'tests/test_native_pe_staging.py',
                          'tools/native_pe_m3.py', 'tests/test_native_pe_bootstrap.py',
+                         'tools/native_pe_m4.py', 'tests/test_native_pe_m4.py',
                          '.venv/Lib/site-packages/speakeasy/handler.py', 'new-unclassified.fixture'):
             original = self.sources(relative)
             changed = {relative: 'c' * 64}

@@ -74,6 +74,7 @@ pub mod elf;
 pub mod driver_runtime;
 pub mod driver_runtime_fixture;
 
+pub mod codepage;
 pub mod crt_startup;
 pub mod general_broker_ownership;
 pub mod general_broker_private_attestation;
@@ -88,4 +89,4 @@ pub mod general_worker_public_preflight;
 pub mod plan_runtime;
 pub mod user_input;
 pub mod user_runtime;
-pub mod codepage;
+pub mod user_sync;

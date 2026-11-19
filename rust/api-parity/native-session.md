@@ -1,5 +1,61 @@
 # Native PE session checkpoint
 
+## Current M4 completion checkpoint (2026-11-19)
+
+The bounded M4 runtime and source/package regression qualification are complete.
+All 1,123 workspace tests pass, including 539 engine tests and 43 M4 tests;
+170 accounting controls, four inventory controls, partition/syntax/whitespace,
+strict workspace all-target Clippy and dependency/registration audit/check pass.
+The fresh frozen bundle repeats 398 M2/M3 outcomes and adds 172 M4 guest outcomes.
+All chained seals and the final current-source M4 seal pass independent checks.
+
+Evidence: output/rust-pe-m4-complete-20261119-02/, final source index under
+source-validation-final/, qualified-m4-final.json, audits-02/, final-ledger.json.
+Maintained scope/limits: docs/native-pe/m4-user-runtime.md and rust/USER_PE.md.
+The final ledger leaves all 2,590 semantic API contracts open. M10 remains open.
+The allocator boundary and DACL-control regression diagnostics are preserved;
+the passing evidence includes their fixes and negative controls.
+
+Next bounded work: M5 CRT/allocation/string foundations. Source remains
+uncommitted at starting HEAD 24056c1; no push occurred. No subagents, supplied
+samples, host-native guest execution or security-configuration changes.
+
+## Historical M4 continuation checkpoint (2026-11-12)
+
+2026-11-12: starting HEAD remains `24056c1`; M4 is in progress and all maintained
+changes are uncommitted. Thread/dispatcher handle authority, full legacy context
+transport, CRT starts, deterministic scheduling, FLS retirement, nested alertable
+APCs and thread TLS/DLL notifications use checked owned continuations. Guest
+handler waits and nested x86/AMD64 vectored exceptions execute without recursive
+host guest-execution frames. AMD64 runtime-function registration/lookup/delete
+feeds actual exception dispatch; software exceptions retain caller/argument ABI.
+
+Current source: `output/rust-pe-m4/continuation-workspace-tests-01.log` passes
+all 1,106 Rust workspace tests (526 engine, 30 M4), including M3/kernel controls.
+Strict workspace all-target Clippy passes in `continuation-workspace-clippy-01.log`
+(46.61 seconds). The replay includes exact software parameters, both-architecture
+divide faults, resumable thread notifications, process-exit frame cancellation
+and worker-owned process detach. The execution driver preserves the exiting
+worker through terminal DLL callbacks and restores the root only before backing
+retirement. Older failed/intermediate logs are diagnostic history, not the latest
+verification state. Accounting consistency passes all 163 controls in
+continuation-accounting-tests-02.log with system Python (the first replay used
+.venv and the trusted-pip guard refused it). All four inventory controls pass in
+continuation-inventory-tests-01.log. The ignored continuation-checkpoint-20261112.json
+records current development evidence and explicitly leaves M4 incomplete.
+
+Still required: virtual children with isolated address spaces/remote memory and
+aggregate admission, frozen x86 EH4 scope/filter behavior, further qualification
+and fresh contained package seals. One NativeEngine lifetime is allowed on
+Windows; do not remove NATIVE_INSTANCE or create simultaneous engines. Use owned
+address-space/process snapshots on the one CPU. The unexecuted extraction helper
+under output predates this constraint and must not be applied blindly.
+
+No M4 package qualification, semantic closure, commit or push is claimed. Review:
+`docs/native-pe/m4-user-runtime.md`; authority: `.codex/plans/rust-pe-completion.md`;
+working plan: `.codex/plans/m4-user-runtime.md`. Preserve all task source and raw
+ignored evidence; keep output and private plans out of the eventual clean commit.
+
 ## Current M3 completion checkpoint
 
 M3 completion (2026-11-11): all remaining checkboxes and the bounded M3 exit

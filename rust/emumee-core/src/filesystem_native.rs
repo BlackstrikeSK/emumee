@@ -119,7 +119,15 @@ mod tests {
             crate::registry::NATIVE_HANDLE_FIRST + crate::registry::MAX_HANDLES as u64 * 8
         );
         const { assert!(crate::registry::NATIVE_HANDLE_END > 0x80020000) };
-        for (a, b) in ranges {
+        ranges.sort_unstable();
+        for &(a, b) in &ranges {
+            // Adjacent reservations form one forbidden interval too.
+            let expected = ranges.iter().fold(
+                b,
+                |end, &(start, next)| {
+                    if start == end { next } else { end }
+                },
+            );
             for at in [a, b - 1] {
                 let mut fs = VirtualFileSystem::new();
                 let (h, _) = fs.open("keep", 0xc0000000, 7, 2, 1).unwrap();
@@ -127,7 +135,7 @@ mod tests {
                 fs.close(h, 1).unwrap();
                 fs.next_handle = at;
                 let (h, _) = fs.open("keep", 0x80000000, 7, 3, 1).unwrap();
-                assert_eq!(h, b);
+                assert_eq!(h, expected);
                 assert_eq!(fs.contents("keep").unwrap().unwrap(), b"KEEP");
             }
         }

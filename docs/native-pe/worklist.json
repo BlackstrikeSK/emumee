@@ -5,12 +5,12 @@
   "feature_matrix": "rust/api-parity/native-feature-matrix.md",
   "api_partition": "docs/native-pe/api-batches.json",
   "validation_policy": "docs/native-pe/validation-policy.json",
-  "validation_index": "output/rust-pe-m3-complete/final-validation-04/index.json",
-  "dependency_integrity_report": "output/rust-pe-m3-complete/qualification-20261111/dependencies-complete/report.json",
+  "validation_index": "output/rust-pe-m4-complete-20261119-02/source-validation-final/index.json",
+  "dependency_integrity_report": "output/rust-pe-m4-complete-20261119-02/audits-02/dependencies-final.json",
   "baseline_failure_classification": "docs/native-pe/baseline-failures.md",
   "bounded_m0_package_smoke": "docs/native-pe/m0-package-smoke.md",
   "effective_registration_review": "docs/native-pe/effective-registration-review.md",
-  "effective_registration_report": "output/rust-pe-m3-complete/qualification-20261111/registration-complete/review.json",
+  "effective_registration_report": "output/rust-pe-m4-complete-20261119-02/audits-02/registration-final.json",
   "architectures": [
     "x86",
     "x64"
@@ -150,7 +150,7 @@
     },
     {
       "id": "M4-user-scheduling",
-      "status": "pending",
+      "status": "closed",
       "depends_on": [
         "M3-user-bootstrap"
       ],
@@ -159,7 +159,7 @@
         "N11",
         "N12"
       ],
-      "next_action": "Exercise two guest threads sharing signaling but not TLS/error state under one budget",
+      "next_action": "Bounded M4 source/package regression qualification complete; see docs/native-pe/m4-user-runtime.md. Continue M5 CRT/allocation/string foundations; API semantic parity and M10 remain open.",
       "exit_tests": [
         "waits and callbacks",
         "exception continuation",

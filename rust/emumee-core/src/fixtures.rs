@@ -6,6 +6,8 @@ mod callback;
 mod dynamic_loader;
 mod imports;
 mod m3;
+mod m4;
+pub use m4::{M4Arg, M4Code, M4Fixture, m4_custom_probe, m4_probe};
 mod m3_callbacks;
 mod m3_companion;
 mod m3_quota;

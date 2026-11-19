@@ -701,7 +701,6 @@ impl Drop for OfflineProfile {
 pub struct AccessGrant {
     path: Vec<u16>,
     descriptor: PSECURITY_DESCRIPTOR,
-    original: *mut ACL,
     restored: bool,
 }
 impl AccessGrant {
@@ -747,7 +746,6 @@ impl AccessGrant {
         let guard = Self {
             path: text,
             descriptor,
-            original,
             restored: false,
         };
         if let Some(recovery) = recovery {
@@ -795,32 +793,63 @@ impl AccessGrant {
     }
     pub fn restore(&mut self) -> Result<()> {
         if !self.restored {
-            let status = unsafe {
-                SetNamedSecurityInfoW(
-                    self.path.as_ptr(),
-                    SE_FILE_OBJECT,
-                    DACL_SECURITY_INFORMATION,
-                    null_mut(),
-                    null_mut(),
-                    self.original,
-                    null(),
-                )
-            };
-            ensure!(status == 0, "Cannot restore grant DACL:Win32{status}");
-            // SetNamedSecurityInfo propagates removal to descendants, but also
-            // enables automatic inheritance on the root. Restore its original
-            // descriptor flags with the non-propagating file-security API.
-            unsafe {
-                win(SetFileSecurityW(
-                    self.path.as_ptr(),
-                    DACL_SECURITY_INFORMATION,
-                    self.descriptor,
-                ))?;
-            }
+            restore_dacl(&self.path, self.descriptor)?;
             self.restored = true;
         }
         Ok(())
     }
+}
+fn restore_dacl(path: &[u16], descriptor: PSECURITY_DESCRIPTOR) -> Result<()> {
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut acl = null_mut();
+    let mut control = 0;
+    let mut revision = 0;
+    unsafe {
+        win(GetSecurityDescriptorDacl(
+            descriptor,
+            &mut present,
+            &mut acl,
+            &mut defaulted,
+        ))?;
+        win(GetSecurityDescriptorControl(
+            descriptor,
+            &mut control,
+            &mut revision,
+        ))?;
+    }
+    ensure!(present != 0, "Original descriptor has no DACL");
+    let flags = DACL_SECURITY_INFORMATION
+        | if control & SE_DACL_PROTECTED != 0 {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            path.as_ptr(),
+            SE_FILE_OBJECT,
+            flags,
+            null_mut(),
+            null_mut(),
+            acl,
+            null(),
+        )
+    };
+    ensure!(status == 0, "Cannot restore original DACL: Win32{status}");
+    // The legacy API clears AUTO_INHERITED even when the supplied descriptor
+    // contains it. Use it only for an original legacy DACL; the modern API above
+    // preserves automatic inheritance and propagates grant removal to children.
+    if control & SE_DACL_AUTO_INHERITED == 0 {
+        unsafe {
+            win(SetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                descriptor,
+            ))?;
+        }
+    }
+    Ok(())
 }
 impl Drop for AccessGrant {
     fn drop(&mut self) {

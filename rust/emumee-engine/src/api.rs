@@ -41,10 +41,13 @@ mod network;
 #[cfg(test)]
 mod network_tests;
 pub(crate) mod user_bootstrap;
+pub(crate) mod user_callbacks;
 pub(crate) mod user_lifecycle;
 pub(crate) mod user_loader;
 pub(crate) mod user_providers;
 pub(crate) mod user_runtime;
+pub(crate) mod user_processes;
+mod user_sync;
 pub(crate) mod user_threads;
 mod winstrings;
 pub use network::Report as NetworkReport;
@@ -82,11 +85,13 @@ pub(super) const BASE: u64 = 0x68000000;
 const MAX_TRANSFER: u64 = 16 * 1024 * 1024;
 #[derive(Clone, Copy)]
 enum Model {
+    UserProcess(user_processes::Call),
     CrtStartup(crt_startup::Call),
     UserRuntime(user_runtime::Call),
     WinStrings(winstrings::Call),
     ExitProcess,
     UserThread(user_threads::Call),
+    UserSync(user_sync::Call),
     OpenSection,
     DynamicLoader(dynamic_loader::Call),
     Objects(kernel_objects::Call),
@@ -230,6 +235,7 @@ pub struct ApiEvent {
     pub error: Option<String>,
     pub last_error: u32,
     pub thread_id: u64,
+    pub process_id: Option<u64>,
     pub processor: u32,
     pub current_thread: u64,
     pub execution_domain: &'static str,
@@ -263,6 +269,8 @@ pub(super) struct ApiState {
     pub crt_stdio: crt_stdio::State,
     pub crt_startup: crt_startup::State,
     pub user_runtime: user_runtime::State,
+    pub user_sync: emumee_core::user_sync::Dispatcher,
+    pub user_callbacks: user_callbacks::State,
     pub winstrings: Vec<String>,
     pub kernel_formatting: crt_format::KernelFormatting,
     pub console: console::State,
@@ -359,6 +367,8 @@ impl ApiState {
             crt_stdio: crt_stdio::State::fixture(architecture),
             crt_startup: crt_startup::State::default(),
             user_runtime: user_runtime::State::default(),
+            user_sync: emumee_core::user_sync::Dispatcher::default(),
+            user_callbacks: user_callbacks::State::default(),
             winstrings: Vec::new(),
             console: console::State::fixture(),
             file_metadata: filesystem_metadata::State::default(),
@@ -448,8 +458,26 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         convention: C::Stdcall,
         returns: T::U32,
     };
+    if let Some((call, count, returns)) = user_processes::definition(module, name) {
+        binding.model = Model::UserProcess(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = user_sync::definition(module, name) {
+        binding.model = Model::UserSync(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
     if let Some((call, count, returns)) = user_threads::definition(module, name) {
         binding.model = Model::UserThread(call);
+        if matches!(
+            call,
+            user_threads::Call::Begin(_) | user_threads::Call::End(_)
+        ) {
+            binding.convention = C::Cdecl;
+        }
         binding.count = count;
         binding.returns = returns;
         return binding;
@@ -539,6 +567,12 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         return binding;
     }
     if let Some((call, count, returns)) = user_runtime::definition(module, name) {
+        if matches!(call, user_runtime::Call::Exception(crate::native_exceptions::user::Call::Eh4)) {
+            if architecture != Architecture::X86 {
+                return binding;
+            }
+            binding.convention = C::Cdecl;
+        }
         binding.model = Model::UserRuntime(call);
         binding.count = count;
         binding.returns = returns;
@@ -1260,6 +1294,7 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
     kernel_rtl::require_native_ready(engine)?;
     Ok(match binding.model {
         Model::UserThread(call) => user_threads::invoke(engine, call, args)?,
+        Model::UserSync(call) => user_sync::invoke(engine, call, args)?,
         Model::ExitProcess => {
             ensure!(
                 !engine.get_data().apis.kernel_mode && engine.get_data().threads.is_none(),
@@ -1297,6 +1332,7 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::CrtStdio(call) => crt_stdio::invoke(engine, args, call)?,
         Model::CrtStartup(call) => crt_startup::invoke(engine, args, call)?,
         Model::UserRuntime(call) => user_runtime::invoke(engine, args, call)?,
+        Model::UserProcess(call) => user_processes::invoke(engine, call, args)?,
         Model::WinStrings(call) => winstrings::invoke(engine, args, call)?,
         Model::Console(call) => console::invoke(engine, args, call)?,
         Model::FileMetadata(call) => filesystem_metadata::invoke(engine, args, call)?,
@@ -1511,10 +1547,14 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
     ) || matches!(
         engine.get_data().ipi_action,
         Some(crate::ipi::Action::Begin)
-    ) || user_threads::queued(engine)
+    ) || user_callbacks::queued(engine)
+        || user_threads::queued(engine)
         || dynamic_loader::queued(engine)
         || crt_startup::queued(engine)
         || crate::native_exceptions::queued(engine);
+    // A self-exit has no suspended API caller to resume. Its scheduling action
+    // still stops the CPU, but the recorded API is terminal rather than pending.
+    let terminates_user_thread = result.is_ok() && user_threads::exiting(engine);
     if engine.get_data().apis.next_event_index().is_some() {
         let event = ApiEvent {
             api: binding.name.clone(),
@@ -1525,7 +1565,7 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
             } else {
                 vec![]
             },
-            result: if pending
+            result: if pending || terminates_user_thread
                 || binding.returns == T::Void
                 || (matches!(binding.model, Model::TerminateSystemThread) && result.is_ok())
             {
@@ -1540,8 +1580,9 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
             thread_id: if crate::ipi::member_running(engine) {
                 0
             } else {
-                crate::threads::current_id(engine)
+                user_processes::tid(user_processes::pid(engine), crate::threads::current_id(engine))
             },
+            process_id: engine.get_data().apis.user_bootstrap.as_ref().map(|_| user_processes::pid(engine)),
             processor: engine.get_data().cpu.processor,
             current_thread: crate::threads::thread_address(engine),
             execution_domain: if crate::ipi::member_running(engine) {
@@ -1551,11 +1592,19 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
             } else {
                 "ordinary_thread"
             },
-            effect: if pending {
+            effect: if terminates_user_thread {
+                Some("terminates_current_thread")
+            } else if pending {
                 Some(match binding.model {
                     Model::Ipi => "ipi_broadcast_pending",
                     Model::DynamicLoader(_) => "dynamic_loader_pending",
                     Model::UserThread(_) => "user_thread_pending",
+                    Model::UserSync(_) => "user_dispatcher_wait_pending",
+                    Model::UserRuntime(user_runtime::Call::Exception(crate::native_exceptions::user::Call::Raise)) => "raises_user_software_exception",
+                    Model::UserRuntime(user_runtime::Call::Exception(crate::native_exceptions::user::Call::Eh4)) => "eh4_scope_dispatch_pending",
+                    Model::UserRuntime(_) if user_callbacks::queued(engine) => {
+                        "fls_destructors_pending"
+                    }
                     Model::Procedure if dynamic_loader::queued(engine) => "dynamic_loader_pending",
                     Model::NativeCSpecific => "c_language_handler_pending",
                     Model::Breakpoint => "raises_native_breakpoint",
@@ -1576,7 +1625,7 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
             } else {
                 None
             },
-            pending,
+            pending: pending && !terminates_user_thread,
         };
         engine.get_data_mut().apis.events.push(event);
     }

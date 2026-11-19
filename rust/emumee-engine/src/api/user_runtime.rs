@@ -10,6 +10,8 @@ const OWNER: u64 = 1024;
 #[derive(Clone, Copy)]
 pub(super) enum Call {
     Process,
+    Exception(crate::native_exceptions::user::Call),
+    RuntimeTable(crate::native_exceptions::function_tables::Call),
     Thread,
     ThreadId,
     ProcessId(bool),
@@ -49,10 +51,35 @@ pub(super) enum Call {
 #[derive(Default)]
 pub(crate) struct State {
     slots: Slots,
+    fls_callbacks: BTreeMap<u32, u64>,
     critical: BTreeMap<u64, CriticalSection>,
     handles: BTreeMap<u64, u32>,
     next_handle: u64,
     strings: BTreeMap<(String, bool), (u64, u64)>,
+}
+pub(crate) fn take_fls(
+    engine: &mut Unicorn<Trace>,
+    index: Option<u32>,
+    thread: Option<u64>,
+) -> Vec<(u64, u64)> {
+    let callbacks = engine.get_data().apis.user_runtime.fls_callbacks.clone();
+    let mut calls = Vec::new();
+    for (slot, target) in callbacks {
+        if index.is_some_and(|i| i != slot) {
+            continue;
+        }
+        if let Some(values) = engine
+            .get_data_mut()
+            .apis
+            .user_runtime
+            .slots
+            .take_fls(slot, thread)
+            && target != 0
+        {
+            calls.extend(values.into_iter().map(|value| (target, value)));
+        }
+    }
+    calls
 }
 pub(crate) fn retire_thread(engine: &mut Unicorn<Trace>, thread: u64) {
     engine
@@ -72,6 +99,72 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
     let memory = kernel || module.starts_with("api-ms-win-core-memory-");
     let loader = kernel || module.starts_with("api-ms-win-core-libraryloader-");
     Some(match name {
+        "_except_handler4_common" if module == "msvcrt" || module == "vcruntime140" => (
+            Call::Exception(crate::native_exceptions::user::Call::Eh4),
+            6,
+            T::U32,
+        ),
+        "RtlAddFunctionTable" if kernel || module == "ntdll" => (
+            Call::RuntimeTable(crate::native_exceptions::function_tables::Call::Add),
+            3,
+            T::U32,
+        ),
+        "RtlDeleteFunctionTable" if kernel || module == "ntdll" => (
+            Call::RuntimeTable(crate::native_exceptions::function_tables::Call::Delete),
+            1,
+            T::U32,
+        ),
+        "RtlLookupFunctionEntry" if kernel || module == "ntdll" => (
+            Call::RuntimeTable(crate::native_exceptions::function_tables::Call::Lookup),
+            3,
+            T::Pointer,
+        ),
+        "RaiseException" if debug => (
+            Call::Exception(crate::native_exceptions::user::Call::Raise),
+            4,
+            T::Void,
+        ),
+        "AddVectoredExceptionHandler" | "RtlAddVectoredExceptionHandler"
+            if debug || module == "ntdll" =>
+        {
+            (
+                Call::Exception(crate::native_exceptions::user::Call::Add(false)),
+                2,
+                T::Pointer,
+            )
+        }
+        "AddVectoredContinueHandler" | "RtlAddVectoredContinueHandler"
+            if debug || module == "ntdll" =>
+        {
+            (
+                Call::Exception(crate::native_exceptions::user::Call::Add(true)),
+                2,
+                T::Pointer,
+            )
+        }
+        "RemoveVectoredExceptionHandler" | "RtlRemoveVectoredExceptionHandler"
+            if debug || module == "ntdll" =>
+        {
+            (
+                Call::Exception(crate::native_exceptions::user::Call::Remove(false)),
+                1,
+                T::U32,
+            )
+        }
+        "RemoveVectoredContinueHandler" | "RtlRemoveVectoredContinueHandler"
+            if debug || module == "ntdll" =>
+        {
+            (
+                Call::Exception(crate::native_exceptions::user::Call::Remove(true)),
+                1,
+                T::U32,
+            )
+        }
+        "SetUnhandledExceptionFilter" if debug => (
+            Call::Exception(crate::native_exceptions::user::Call::Filter),
+            1,
+            T::Pointer,
+        ),
         "GetCurrentProcess" if process => (Call::Process, 0, T::Pointer),
         "GetCurrentThread" if process => (Call::Thread, 0, T::Pointer),
         "GetCurrentThreadId" if process => (Call::ThreadId, 0, T::U32),
@@ -202,8 +295,8 @@ fn fail(engine: &mut Unicorn<Trace>, error: u32) -> u64 {
     engine.get_data_mut().apis.last_error = error;
     0
 }
-fn process_access(engine: &Unicorn<Trace>, handle: u64, access: u32) -> bool {
-    handle == max(engine)
+pub(super) fn process_access(engine: &Unicorn<Trace>, handle: u64, access: u32) -> bool {
+    user_processes::process_access(engine, handle, access)
         || engine
             .get_data()
             .apis
@@ -251,6 +344,18 @@ fn critical(engine: &Unicorn<Trace>, address: u64) -> Result<CriticalSection> {
         "Guest critical-section state differs from its owned model"
     );
     Ok(state)
+}
+pub(crate) fn acquire_critical(
+    engine: &mut Unicorn<Trace>,
+    address: u64,
+    thread: u64,
+) -> Result<bool> {
+    let mut state = critical(engine, address)?;
+    let entered = state.enter(thread).map_err(anyhow::Error::msg)?;
+    if entered {
+        publish_critical(engine, address, state)?;
+    }
+    Ok(entered)
 }
 fn publish_critical(
     engine: &mut Unicorn<Trace>,
@@ -330,12 +435,19 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
     let width = engine.get_data().architecture.width();
     let thread = crate::threads::current_id(engine);
     Ok(match call {
+        Call::RuntimeTable(call) => {
+            crate::native_exceptions::function_tables::invoke(engine, call, args)?
+        }
+        Call::Exception(call) => crate::native_exceptions::user::invoke(engine, call, args)?,
         Call::Process => max(engine),
         Call::Thread => max(engine) - 1,
         Call::ThreadId => thread,
         Call::ProcessId(is_thread) => {
-            if is_thread && let Some(id) = user_threads::handle_id(engine, args[0]) {
-                return Ok(id);
+            if is_thread && args[0] != max(engine) - 1 {
+                return Ok(match user_threads::query_id(engine, args[0]) {
+                    Ok(id) => id,
+                    Err(error) => fail(engine, error),
+                });
             }
             if if is_thread {
                 args[0] == max(engine) - 1
@@ -460,20 +572,55 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             };
             value & max(engine)
         }
-        Call::SlotAllocate(fiber) => engine
-            .get_data_mut()
-            .apis
-            .user_runtime
-            .slots
-            .allocate(fiber)
-            .map_or(u32::MAX as u64, u64::from),
-        Call::SlotFree(fiber) => {
-            if engine
+        Call::SlotAllocate(fiber) => {
+            if fiber && args[0] != 0 && require(engine, args[0], 1, P::EXECUTE).is_err() {
+                return Ok(fail(engine, 998));
+            }
+            let index = engine
                 .get_data_mut()
                 .apis
                 .user_runtime
                 .slots
-                .free(fiber, args[0] as u32)
+                .allocate(fiber);
+            if fiber && let Some(index) = index {
+                engine
+                    .get_data_mut()
+                    .apis
+                    .user_runtime
+                    .fls_callbacks
+                    .insert(index, args[0]);
+            }
+            index.map_or(u32::MAX as u64, u64::from)
+        }
+        Call::SlotFree(fiber) => {
+            let index = args[0] as u32;
+            if fiber {
+                let calls = take_fls(engine, Some(index), None);
+                if !engine
+                    .get_data_mut()
+                    .apis
+                    .user_runtime
+                    .slots
+                    .free(true, index)
+                {
+                    return Ok(fail(engine, 87));
+                }
+                engine
+                    .get_data_mut()
+                    .apis
+                    .user_runtime
+                    .fls_callbacks
+                    .remove(&index);
+                if !calls.is_empty() {
+                    return user_callbacks::queue(engine, calls);
+                }
+                1
+            } else if engine
+                .get_data_mut()
+                .apis
+                .user_runtime
+                .slots
+                .free(false, index)
             {
                 1
             } else {
@@ -541,10 +688,14 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         Call::CriticalEnter(try_only) => {
             let mut state = critical(engine, args[0])?;
             let entered = state.enter(thread).map_err(anyhow::Error::msg)?;
-            ensure!(
-                entered || try_only,
-                "Contended critical section requires guest thread scheduling"
-            );
+            if !entered && !try_only {
+                return user_threads::wait(
+                    engine,
+                    user_threads::Wait::Critical(args[0]),
+                    u32::MAX,
+                    1,
+                );
+            }
             if entered {
                 publish_critical(engine, args[0], state)?;
             }

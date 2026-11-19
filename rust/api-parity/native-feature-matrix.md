@@ -20,11 +20,11 @@ the original audit revision above is historical, not the current checkout HEAD.
 | N05 | `--all-exports`, DLL attach and up to ten export calls | Opt-in frozen first-ten entry order, aliases, DllMain skip and ServiceMain arguments after normal startup; shared execution horizon | M2 staging/M3: contained selection/fault/budget controls; comprehensive attach/detach lifecycle remains M3 |
 | N06 | Persona and generated enumeration programs/files | Persona hash validated; owned root PEB/TEB/process parameters project existing persona/VFS/stdio state with contrasting-persona direct-memory controls; generated legacy program/file equivalence unreviewed | M3 bootstrap qualified: docs/native-pe/m3-user-bootstrap.md; M6 owns remaining persona/program equivalence |
 | N07 | `--network-fixtures`, `--offline-replay`, NetworkBridge | Offline internal network models exist; submitted request has no fixture document binding | M7: explicit network-fixture semantics; M2 containment grants no host network |
-| N08 | Instruction, wall-time, memory, output limits | Submitted instruction/time validated; parent output cap fixed; public memory/output options differ | M4/M8: run-wide accounting and bounded worker/controller failures |
+| N08 | Instruction, wall-time, memory, output limits | M4 run-wide instruction/wall/time/mapped-memory and callback/thread/process bounds are qualified; parent output cap remains fixed | M8: remaining public limit/reporting equivalence |
 | N09 | EXE/DLL load/relocation, imports/ordinals/data, delay load, module enumeration | Submitted companion/forwarder routes and prior import/data/delay/ABI controls are contained-package qualified; full lifecycle equivalence remains unreviewed | M2 binding/bounds/rollback and staged EXE/DLL import exit qualified; M3: direct-memory loader controls |
-| N10 | CRT bootstrap, TLS callbacks, module attach/detach and termination | Owned submitted root PEB/TEB, FS/GS, process parameters and shared LastError have direct-memory controls; full static TLS/loader lifecycle remains unreviewed | M3 bootstrap: docs/native-pe/m3-user-bootstrap.md; next loader lists, static TLS and lifecycle, then M4 isolation |
-| N11 | Virtual children, threads, waits/APCs/FLS/callback continuation | Internal kernel scheduler is not evidence of full user scheduling | M4: two-thread TLS/error/wait/callback programs with shared budgets |
-| N12 | SEH/VEH, x86 chains and x64 unwind | Core/engine unwind tests exist; full baseline user exception routes unreviewed | M4: nested guest faults and continuation, separate engine errors |
+| N10 | CRT bootstrap, TLS callbacks, module attach/detach and termination | M3 owned bootstrap/static TLS/loader lifecycle and M4 resumable thread notifications/retirement are qualified | M5: remaining CRT foundations; general native CRT parity remains open |
+| N11 | Virtual children, threads, waits/APCs/FLS/callback continuation | Bounded M4 owned scheduling, waits, TLS/error state, FLS/APC callbacks, isolated children and remote operations pass source/contained controls | docs/native-pe/m4-user-runtime.md; semantic API rows remain open |
+| N12 | SEH/VEH, x86 chains and x64 unwind | Bounded M4 guest continuations, x86 chains/EH4 and AMD64 static/runtime-function tables pass nested-fault/continuation controls | docs/native-pe/m4-user-runtime.md; full Windows/C++/CRT parity remains open |
 
 ## Non-API hooks and observations
 
@@ -74,3 +74,13 @@ DLL notifications, nested callbacks and shared resource/instruction/wall horizon
 are included. General user scheduling/waits/FLS and broader API semantics remain
 open. See `../../docs/native-pe/m3-loader-lifecycle.md`; earlier row descriptions
 record the bootstrap checkpoint and are superseded for this bounded M3 scope.
+
+## M4 runtime qualification (2026-11-19)
+
+The M4 portions of N08/N10/N11/N12 supersede the earlier open-scheduling notes.
+The full source gate passes 1,123 Rust tests, including 539 engine/43 M4 tests,
+strict lint and accounting/inventory checks. The same-source contained matrix
+repeats 398 M2/M3 outcomes and adds 172 M4 controls, with independently checked
+chained seals. See `../../docs/native-pe/m4-user-runtime.md` for exact ownership,
+bounds, frozen-source deviations and retained evidence. All 2,590 semantic API
+contracts and global M10 remain open; M5 is the next implementation batch.

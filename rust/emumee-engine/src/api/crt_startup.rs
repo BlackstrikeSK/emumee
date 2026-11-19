@@ -6,7 +6,7 @@ use emumee_core::{
     crt_startup::{MAX_BYTES, StringArray, initializer_count},
     virtual_memory as vm,
 };
-mod initializers;
+pub(crate) mod initializers;
 pub(crate) use initializers::{queued, resume_api, transition};
 const OWNER: u64 = 1024;
 

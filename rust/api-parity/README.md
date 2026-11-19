@@ -6,9 +6,11 @@ The current forward plan is `.codex/plans/rust-pe-completion.md` (local).
 Clone-safe scope and handoff live in `native-feature-matrix.md`,
 `../../docs/native-pe/worklist.json`, `../../docs/native-pe/evidence.json` and
 `native-session.md`. The exact API partition is `../../docs/native-pe/api-batches.json`.
-M0 baseline and M1 source accounting are complete; M2's PE layout/mapping audit
-is complete and request/staging remains active. The audit and controls are in
-`../../docs/native-pe/m2-pe-layout.md`. Global semantic
+M0 baseline, M1 source accounting, M2 input foundations, M3 loader lifecycle
+and the bounded M4 user runtime are complete. M4 scope, source controls and
+same-source contained qualification are in
+`../../docs/native-pe/m4-user-runtime.md`. M5 CRT/allocation/string foundations
+is next. Global semantic
 and runtime qualification gates remain open. Bounded smoke and tooling completion
 are not API behavioral or stable-release qualification.
 

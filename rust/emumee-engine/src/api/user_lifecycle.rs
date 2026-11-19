@@ -4,6 +4,8 @@ use crate::threads::{ExecutionHorizon, Outcome};
 use anyhow::Context;
 use emumee_core::modules::{DynamicPhase, ImagePhase, LoaderInvocation, LoaderRoutine};
 
+pub(crate) mod continuations;
+
 const MAX_EVENTS: usize = 4096;
 
 #[derive(Clone, Debug, Serialize)]
@@ -23,6 +25,7 @@ pub(crate) struct State {
     active: bool,
     complete: bool,
     events: Vec<Event>,
+    continuations: continuations::State,
 }
 
 #[derive(Debug, Serialize)]
@@ -175,12 +178,28 @@ pub(crate) fn finish_process(
         return Ok(None);
     };
     let forced = engine.get_data().user_lifecycle.forced;
+    let callback_stack = if user_threads::current_id(engine) != 1 {
+        uc(
+            engine.reg_read(if engine.get_data().architecture == Architecture::X64 {
+                RegisterX86::RSP
+            } else {
+                RegisterX86::ESP
+            }),
+        )?
+        .checked_sub(0x100)
+        .context("Process detach caller stack underflow")?
+    } else {
+        stack_top
+    };
+    // Other threads are terminated before process-detach callbacks observe their
+    // handles. Their FLS/thread-detach callbacks do not execute on process exit.
+    user_threads::prepare_process_exit(engine, code)?;
     // Detach callbacks execute despite the process's terminal flag, but retain
     // exactly the same instruction/deadline authority as the primary execution.
     let result = if forced {
         Ok(None)
     } else {
-        notify(engine, 0, stack_top, horizon)
+        notify(engine, 0, callback_stack, horizon)
     };
     engine.get_data_mut().process_exit_code = Some(code);
     match result {
@@ -194,6 +213,9 @@ pub(crate) fn finish_process(
         }
         Err(error) => Err(error),
         Ok(None) => {
+            // Keep the exiting caller's TEB/stack live through DLL_PROCESS_DETACH,
+            // then restore the report owner before retiring that caller's backing.
+            user_threads::terminal_restore(engine)?;
             let threads = engine
                 .get_data()
                 .apis

@@ -1,7 +1,38 @@
 //! Emit the exact source-tested input bytes for later contained CLI controls.
-use super::*;
+use emumee_core::user_input::Request;
 
-pub(super) fn fixture(
+pub(crate) fn execution(label: &str, result: &crate::Execution) {
+    if label.contains("-m4-") && matches!(result.completion_reason, "entry_return" | "process_exit")
+    {
+        assert!(
+            result.api_events.iter().all(|event| !event.pending),
+            "Successful M4 execution retains pending API events: {label}"
+        );
+    }
+    let Ok(root) = std::env::var("EMUMEE_USER_TEST_FIXTURES") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(root)
+        .join(label)
+        .join("source-execution.json");
+    let mut value = serde_json::to_value(result).unwrap();
+    for field in ["engine_seconds", "instructions_per_second"] {
+        value.as_object_mut().unwrap().remove(field);
+    }
+    let bytes = serde_json::to_vec_pretty(&value).unwrap();
+    if path.exists() {
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            bytes,
+            "Preserve differing source execution: {}",
+            path.display()
+        );
+    } else {
+        std::fs::write(path, bytes).unwrap();
+    }
+}
+
+pub(crate) fn fixture(
     label: &str,
     request: &Request,
     bytes: &[u8],

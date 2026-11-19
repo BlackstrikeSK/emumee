@@ -50,7 +50,7 @@ impl WinHttpFixture {
         )
     }
 }
-pub(super) enum Arg {
+pub enum Arg {
     Value(u64),
     Memory(u64),
 }

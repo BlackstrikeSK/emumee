@@ -70,7 +70,11 @@ fn reserved_native(handle: u64) -> bool {
 }
 /// A VFS allocator must skip all these values, including retired identities and
 /// truncated native/thread aliases. Reapply until no reservation contains it.
-pub const FILE_HANDLE_RESERVATIONS: [(u64, u64); 5] = [
+pub const FILE_HANDLE_RESERVATIONS: [(u64, u64); 7] = [
+    // Guest process handles and thread aliases/dispatcher/canonical threads.
+    // Reserve retired values too: lifetime churn must not change object type.
+    (0x25000000, 0x26000000),
+    (0x6d000000, 0x70000000),
     (USER_HANDLE_FIRST, USER_HANDLE_END),
     (NATIVE_HANDLE_FIRST, NATIVE_HANDLE_END),
     (HIGH | NATIVE_HANDLE_FIRST, HIGH | NATIVE_HANDLE_END),

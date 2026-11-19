@@ -123,56 +123,8 @@ fn descriptor(sddl: &str) -> Result<LocalBlock> {
 }
 fn apply_dacl(path: &Path, sddl: &str) -> Result<()> {
     let sd = descriptor(sddl)?;
-    let mut present = 0;
-    let mut defaulted = 0;
-    let mut acl = null_mut();
-    let mut control = 0;
-    let mut revision = 0;
-    unsafe {
-        win(GetSecurityDescriptorDacl(
-            sd.0,
-            &mut present,
-            &mut acl,
-            &mut defaulted,
-        ))?;
-        win(GetSecurityDescriptorControl(
-            sd.0,
-            &mut control,
-            &mut revision,
-        ))?;
-    }
-    ensure!(present != 0, "Recovery descriptor has no DACL");
-    let flags = DACL_SECURITY_INFORMATION
-        | if control & SE_DACL_PROTECTED != 0 {
-            PROTECTED_DACL_SECURITY_INFORMATION
-        } else {
-            UNPROTECTED_DACL_SECURITY_INFORMATION
-        };
     let path = wide(path.as_os_str())?;
-    let status = unsafe {
-        SetNamedSecurityInfoW(
-            path.as_ptr(),
-            SE_FILE_OBJECT,
-            flags,
-            null_mut(),
-            null_mut(),
-            acl,
-            null(),
-        )
-    };
-    ensure!(
-        status == 0,
-        "Cannot restore protected recovery DACL: Win32{status}"
-    );
-    // Preserve the recorded root control flags after propagating ACE removal.
-    unsafe {
-        win(SetFileSecurityW(
-            path.as_ptr(),
-            DACL_SECURITY_INFORMATION,
-            sd.0,
-        ))?;
-    }
-    Ok(())
+    restore_dacl(&path, sd.0)
 }
 fn attributes(path: &Path) -> Result<File> {
     let file = OpenOptions::new()
@@ -593,6 +545,78 @@ mod tests {
         let _text = LocalBlock(text.cast());
         let sddl = copy_wide(text, size as usize).unwrap();
         (guard, sddl)
+    }
+    #[test]
+    fn grant_and_recovery_preserve_protected_and_automatic_inheritance_flags() {
+        for protected in [false, true] {
+            for legacy in [false, true] {
+                let fixture = Fixture::new();
+                let path = wide(fixture.root.as_os_str()).unwrap();
+                let (initial, _) = original(&fixture.root);
+                let mut present = 0;
+                let mut defaulted = 0;
+                let mut acl = null_mut();
+                unsafe {
+                    win(GetSecurityDescriptorDacl(
+                        initial.0,
+                        &mut present,
+                        &mut acl,
+                        &mut defaulted,
+                    ))
+                    .unwrap();
+                    assert_eq!(
+                        SetNamedSecurityInfoW(
+                            path.as_ptr(),
+                            SE_FILE_OBJECT,
+                            DACL_SECURITY_INFORMATION
+                                | if protected {
+                                    PROTECTED_DACL_SECURITY_INFORMATION
+                                } else {
+                                    UNPROTECTED_DACL_SECURITY_INFORMATION
+                                },
+                            null_mut(),
+                            null_mut(),
+                            acl,
+                            null()
+                        ),
+                        0
+                    );
+                    if legacy {
+                        let (current, _) = original(&fixture.root);
+                        win(SetFileSecurityW(
+                            path.as_ptr(),
+                            DACL_SECURITY_INFORMATION,
+                            current.0,
+                        ))
+                        .unwrap();
+                    }
+                }
+                let (before_sd, before) = original(&fixture.root);
+                let mut control = 0;
+                let mut revision = 0;
+                unsafe {
+                    win(GetSecurityDescriptorControl(
+                        before_sd.0,
+                        &mut control,
+                        &mut revision,
+                    ))
+                    .unwrap();
+                }
+                assert_eq!(control & SE_DACL_PROTECTED != 0, protected);
+                assert_eq!(control & SE_DACL_AUTO_INHERITED == 0, legacy);
+                let mut profile = OfflineProfile::new().unwrap();
+                for recovery in [false, true] {
+                    let mut grant = profile.grant(&fixture.root, true).unwrap();
+                    if recovery {
+                        apply_dacl(&fixture.root, &before).unwrap();
+                        assert_eq!(original(&fixture.root).1, before);
+                    }
+                    grant.restore().unwrap();
+                    assert_eq!(original(&fixture.root).1, before);
+                }
+                profile.close().unwrap();
+            }
+        }
     }
     #[test]
     fn tracked_normal_cleanup_restores_dacl_and_removes_private_plan() {

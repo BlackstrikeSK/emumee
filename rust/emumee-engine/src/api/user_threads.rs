@@ -1,21 +1,44 @@
 //! Bounded guest thread startup/teardown continuations. No native host threads.
-//! General quantum scheduling and blocking waits belong to the scheduler batch.
+//! Deterministic user scheduling is separate from the kernel scheduler.
+pub(super) mod authority;
+mod exception_context;
+mod floating_context;
+pub(crate) mod scheduling;
 use super::*;
 use crate::threads::{ExecutionHorizon, Outcome};
 use anyhow::Context;
+pub(crate) use scheduling::{Wait, checkpoint, terminal_restore, wait};
 
 const MAX_THREADS: usize = 64;
 
 #[derive(Clone, Copy)]
 pub(super) enum Call {
     Create,
+    Begin(bool),
+    End(bool),
     Resume,
+    Suspend,
+    Yield,
+    Apc,
     Exit,
     Terminate,
     ExitCode,
+    Authority(authority::Call),
 }
 
 pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
+    if matches!(
+        module,
+        "msvcrt" | "ucrtbase" | "api-ms-win-crt-runtime-l1-1-0" | "api-ms-win-crt-private-l1-1-0"
+    ) {
+        return Some(match name.strip_prefix("_o_").unwrap_or(name) {
+            "_beginthread" => (Call::Begin(false), 3, T::Pointer),
+            "_beginthreadex" => (Call::Begin(true), 6, T::Pointer),
+            "_endthread" => (Call::End(false), 0, T::Void),
+            "_endthreadex" => (Call::End(true), 1, T::Void),
+            _ => return None,
+        });
+    }
     if !matches!(
         module,
         "kernel32" | "kernelbase" | "api-ms-win-core-processthreads-l1-1-0"
@@ -25,10 +48,16 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
     Some(match name {
         "CreateThread" => (Call::Create, 6, T::Pointer),
         "ResumeThread" => (Call::Resume, 1, T::U32),
+        "SuspendThread" => (Call::Suspend, 1, T::U32),
+        "QueueUserAPC" => (Call::Apc, 3, T::U32),
+        "SwitchToThread" => (Call::Yield, 0, T::U32),
         "ExitThread" => (Call::Exit, 1, T::Void),
         "TerminateThread" => (Call::Terminate, 2, T::U32),
         "GetExitCodeThread" => (Call::ExitCode, 2, T::U32),
-        _ => return None,
+        _ => {
+            let (call, argc, result) = authority::definition(name)?;
+            (Call::Authority(call), argc, result)
+        }
     })
 }
 
@@ -46,41 +75,108 @@ pub struct Thread {
     pub exit_code: Option<u32>,
     pub handle_closed: bool,
     pub backing_released: bool,
+    pub cdecl_start: bool,
+    pub auto_close: bool,
 }
 
 #[derive(Clone)]
-struct Pending {
+pub(super) struct Pending {
     handle: u64,
     result: u64,
     pc: u64,
     sp: u64,
     frame: Vec<u8>,
     event: Option<usize>,
+    last_error: Option<u32>,
 }
 
 #[derive(Default)]
 pub(crate) struct State {
     current: u64,
+    root: Option<Thread>,
     records: BTreeMap<u64, Thread>,
-    pending: Vec<Pending>,
+    handles: BTreeMap<u64, authority::Handle>,
+    next_handle: u64,
+    pending: BTreeMap<u64, Pending>,
+    scheduler: scheduling::State,
     action: bool,
-    resume: bool,
+
     exit: Option<(u32, bool)>,
 }
 
+const ROOT_HANDLE: u64 = 0x6f000004;
+impl State {
+    fn record(&self, h: u64) -> Option<&Thread> {
+        if h == ROOT_HANDLE {
+            self.root.as_ref()
+        } else {
+            self.records.get(&h)
+        }
+    }
+    fn record_mut(&mut self, h: u64) -> Option<&mut Thread> {
+        if h == ROOT_HANDLE {
+            self.root.as_mut()
+        } else {
+            self.records.get_mut(&h)
+        }
+    }
+    fn by_id(&self, id: u64) -> Option<&Thread> {
+        if id == 1 {
+            self.root.as_ref()
+        } else {
+            self.records.values().find(|t| t.id == id)
+        }
+    }
+}
+pub(crate) fn initialize_root(engine: &mut Unicorn<Trace>) -> Result<()> {
+    if engine.get_data().user_threads.root.is_some() {
+        return Ok(());
+    }
+    let bootstrap = user_bootstrap::report(engine).context("Root bootstrap missing")?;
+    engine.get_data_mut().user_threads.root = Some(Thread {
+        id: 1,
+        handle: ROOT_HANDLE,
+        entry: 0,
+        parameter: 0,
+        stack_size: bootstrap.stack_base - bootstrap.stack_limit,
+        stack: bootstrap.stack_limit,
+        teb: bootstrap.teb,
+        suspended: 0,
+        state: "running",
+        exit_code: None,
+        handle_closed: false,
+        backing_released: false,
+        cdecl_start: false,
+        auto_close: false,
+    });
+    Ok(())
+}
+#[derive(Debug, Serialize)]
+pub struct HandleReport {
+    pub handle: u64,
+    pub thread: u64,
+    pub access: u32,
+    pub flags: u32,
+}
+pub(crate) fn begin_entry(engine: &mut Unicorn<Trace>) {
+    engine.get_data_mut().user_threads.scheduler.begin_entry();
+}
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub current: u64,
     pub threads: Vec<Thread>,
+    pub root: Option<Thread>,
     pub pending: usize,
+    pub handles: Vec<HandleReport>,
     pub scope: &'static str,
 }
 
 pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
     let state = &engine.get_data().user_threads;
-    (!state.records.is_empty()).then(|| Report {
-        current: current_id(engine), threads: state.records.values().cloned().collect(), pending: state.pending.len(),
-        scope: "Bounded guest-only run-to-completion thread continuations with independent owned stack/TEB/static TLS/LastError, process-owned handles, actual thread attach/detach and shared run budgets. Suspended creation can resume before first execution. General quantum scheduling, live-thread suspension, blocking waits and FLS destructors remain M4 obligations.",
+    (state.root.is_some() || !state.records.is_empty()).then(|| Report {
+        root: state.root.clone(), current: current_id(engine), threads: state.records.values().cloned().collect(), pending: state.pending.len(),
+        handles: state.handles.iter().map(|(handle,h)| HandleReport { handle: *handle, thread: state.record(h.canonical).unwrap().id, access: h.access, flags: h.flags }).collect(),
+        scope: "Deterministic guest-only user thread contexts with owned stack/TEB/static TLS/LastError, round-robin instruction slices, process-owned handles, virtual waits and shared execution horizons.",
     })
 }
 pub(crate) fn current_id(engine: &Unicorn<Trace>) -> u64 {
@@ -88,6 +184,9 @@ pub(crate) fn current_id(engine: &Unicorn<Trace>) -> u64 {
 }
 pub(crate) fn queued(engine: &Unicorn<Trace>) -> bool {
     engine.get_data().user_threads.action
+}
+pub(crate) fn active(engine: &Unicorn<Trace>) -> bool {
+    !engine.get_data().user_threads.records.is_empty()
 }
 pub(crate) fn exiting(engine: &Unicorn<Trace>) -> bool {
     engine.get_data().user_threads.exit.is_some()
@@ -103,39 +202,48 @@ fn failure(engine: &mut Unicorn<Trace>, error: u32, result: u64) -> u64 {
     engine.get_data_mut().apis.last_error = error;
     result
 }
-fn valid(engine: &Unicorn<Trace>, handle: u64) -> bool {
-    engine
-        .get_data()
-        .user_threads
-        .records
-        .get(&handle)
-        .is_some_and(|thread| !thread.handle_closed)
+pub(crate) fn query_id(engine: &Unicorn<Trace>, handle: u64) -> std::result::Result<u64, u32> {
+    authority::resolve(engine, handle, 0x800)
+        .or_else(|_| authority::resolve(engine, handle, 0x40))
+        .map(|h| engine.get_data().user_threads.record(h).unwrap().id)
 }
-pub(crate) fn handle_id(engine: &Unicorn<Trace>, handle: u64) -> Option<u64> {
-    engine
-        .get_data()
-        .user_threads
-        .records
-        .get(&handle)
-        .filter(|thread| !thread.handle_closed)
-        .map(|thread| thread.id)
+pub(crate) fn wait_access(
+    engine: &Unicorn<Trace>,
+    handles: &[u64],
+) -> std::result::Result<(), u32> {
+    user_processes::wait_access(engine, handles)?;
+    let mut identities = std::collections::BTreeSet::new();
+    for handle in handles {
+        if engine.get_data().user_threads.handles.contains_key(handle) {
+            let canonical = authority::resolve(engine, *handle, 0x100000)?;
+            if !identities.insert(canonical) {
+                return Err(87);
+            }
+        }
+    }
+    Ok(())
 }
 pub(crate) fn close(engine: &mut Unicorn<Trace>, handle: u64) -> Option<u64> {
-    let thread = engine
-        .get_data_mut()
-        .user_threads
-        .records
-        .get_mut(&handle)?;
-    if thread.handle_closed {
-        return Some(failure(engine, 6, 0));
+    let entry = engine.get_data().user_threads.handles.get(&handle)?;
+    if entry.flags & 2 != 0 {
+        return Some(failure(engine, 5, 0));
     }
-    thread.handle_closed = true;
+    let canonical = entry.canonical;
+    engine.get_data_mut().user_threads.handles.remove(&handle);
+    if handle == canonical {
+        engine
+            .get_data_mut()
+            .user_threads
+            .record_mut(canonical)
+            .unwrap()
+            .handle_closed = true;
+    }
     Some(1)
 }
 fn queue(engine: &mut Unicorn<Trace>, handle: u64, result: u64, argc: usize) -> Result<()> {
     ensure!(
-        engine.get_data().user_threads.pending.len() < 16,
-        "User-thread continuation depth exceeds 16"
+        engine.get_data().user_threads.pending.len() < MAX_THREADS + 1,
+        "User-thread pending-call count exceeds its bound"
     );
     let architecture = engine.get_data().architecture;
     let sp = uc(engine.reg_read(sp_register(architecture)))?;
@@ -158,8 +266,18 @@ fn queue(engine: &mut Unicorn<Trace>, handle: u64, result: u64, argc: usize) -> 
             },
         )?,
         event: engine.get_data().apis.next_event_index(),
+        last_error: None,
     };
-    engine.get_data_mut().user_threads.pending.push(pending);
+    let id = current_id(engine);
+    ensure!(
+        !engine.get_data().user_threads.pending.contains_key(&id),
+        "User thread already owns a pending API continuation"
+    );
+    engine
+        .get_data_mut()
+        .user_threads
+        .pending
+        .insert(id, pending);
     engine.get_data_mut().user_threads.action = true;
     Ok(())
 }
@@ -168,72 +286,126 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
         engine.get_data().apis.user_bootstrap.is_some() && engine.get_data().threads.is_none(),
         "User thread lifecycle requires the submitted-user process authority"
     );
+    initialize_root(engine)?;
+    if let Call::Authority(call) = call {
+        return authority::invoke(engine, call, args);
+    }
+    let access = match call {
+        Call::Suspend | Call::Resume => 2,
+        Call::Terminate => 1,
+        Call::ExitCode => 0x40,
+        Call::Apc => 0x10,
+        _ => 0,
+    };
+    let mut resolved = args.to_vec();
+    if access != 0 {
+        let index = if matches!(call, Call::Apc) { 1 } else { 0 };
+        let pseudo = if engine.get_data().architecture == Architecture::X64 {
+            u64::MAX - 1
+        } else {
+            u32::MAX as u64 - 1
+        };
+        let root_pseudo = current_id(engine) == 1
+            && args[index] == pseudo
+            && matches!(call, Call::Terminate | Call::Apc);
+        match if root_pseudo {
+            Ok(args[index])
+        } else {
+            authority::resolve(engine, args[index], access)
+        } {
+            Ok(handle) => resolved[index] = handle,
+            Err(error) => {
+                return Ok(failure(
+                    engine,
+                    error,
+                    if matches!(call, Call::Suspend | Call::Resume) {
+                        u32::MAX as u64
+                    } else {
+                        0
+                    },
+                ));
+            }
+        }
+    }
+    let args = resolved.as_slice();
     match call {
-        Call::Create => {
-            if engine.get_data().loader_active {
-                return Ok(failure(engine, 50, 0));
-            }
-            if args[4] & !4 != 0 || args[1] > 16 * 1024 * 1024 {
-                return Ok(failure(engine, 87, 0));
-            }
-            if require(engine, args[2], 1, P::EXECUTE).is_err() {
-                return Ok(failure(engine, 998, 0));
-            }
-            if args[5] != 0 && require(engine, args[5], 4, P::WRITE).is_err() {
-                return Ok(failure(engine, 998, 0));
-            }
-            let count = engine.get_data().user_threads.records.len();
-            if count >= MAX_THREADS {
-                return Ok(failure(engine, 8, 0));
-            }
-            let stack_size = if args[1] == 0 {
-                1024 * 1024
+        Call::Begin(extended) => {
+            if extended {
+                create(engine, args, 6, false, false)
             } else {
-                args[1].max(65536).div_ceil(4096) * 4096
-            };
-            if user_loader::preflight_thread(engine, stack_size).is_err() {
-                return Ok(failure(engine, 8, 0));
+                create(engine, &[0, args[1], args[0], args[2], 0, 0], 3, true, true)
             }
-            let id = count as u64 + 2;
-            let handle = 0x6f000000 + id * 4;
-            if args[5] != 0 {
-                crate::cpu::write(engine, args[5], &(id as u32).to_le_bytes())?;
+        }
+        Call::End(extended) => invoke(engine, Call::Exit, &[if extended { args[0] } else { 0 }]),
+        Call::Apc => {
+            if require(engine, args[0], 1, P::EXECUTE).is_err() {
+                return Ok(failure(engine, 998, 0));
             }
-            let thread = Thread {
-                id,
-                handle,
-                entry: args[2],
-                parameter: args[3],
-                stack_size,
-                stack: 0,
-                teb: 0,
-                suspended: u32::from(args[4] == 4),
-                state: "created",
-                exit_code: None,
-                handle_closed: false,
-                backing_released: false,
+            let pseudo = if engine.get_data().architecture == Architecture::X64 {
+                u64::MAX - 1
+            } else {
+                u32::MAX as u64 - 1
             };
-            engine
-                .get_data_mut()
+            let id = if args[1] == pseudo {
+                current_id(engine)
+            } else if let Some(thread) = engine.get_data().user_threads.record(args[1]) {
+                thread.id
+            } else {
+                return Ok(failure(engine, 6, 0));
+            };
+            if engine
+                .get_data()
                 .user_threads
                 .records
-                .insert(handle, thread);
-            engine.get_data_mut().apis.last_error = 0;
-            if args[4] == 0 {
-                queue(engine, handle, handle, 6)?;
+                .values()
+                .any(|t| t.id == id && t.exit_code.is_some())
+            {
+                return Ok(failure(engine, 31, 0));
+            }
+            Ok(if scheduling::queue_apc(engine, id, args[0], args[2]) {
+                1
+            } else {
+                failure(engine, 8, 0)
+            })
+        }
+        Call::Yield => {
+            queue(engine, 0, 1, 0)?;
+            Ok(0)
+        }
+        Call::Suspend => {
+            if engine.get_data().user_threads.record(args[0]).is_none() {
+                return Ok(failure(engine, 6, u32::MAX as u64));
+            }
+            let record = engine
+                .get_data_mut()
+                .user_threads
+                .record_mut(args[0])
+                .unwrap();
+            if record.exit_code.is_some() {
+                return Ok(failure(engine, 5, u32::MAX as u64));
+            }
+            let previous = record.suspended;
+            if previous >= 127 {
+                return Ok(failure(engine, 298, u32::MAX as u64));
+            }
+            record.suspended += 1;
+            if record.id == current_id(engine) {
+                queue(engine, 0, previous as u64, 1)?;
                 return Ok(0);
             }
-            Ok(handle)
+            Ok(previous as u64)
         }
+        Call::Create => create(engine, args, 6, false, false),
         Call::Resume => {
-            if !valid(engine, args[0]) {
+            if engine.get_data().user_threads.record(args[0]).is_none() {
                 return Ok(failure(engine, 6, u32::MAX as u64));
             }
             if engine.get_data().loader_active {
                 return Ok(failure(engine, 50, u32::MAX as u64));
             }
-            let thread = &engine.get_data().user_threads.records[&args[0]];
+            let thread = engine.get_data().user_threads.record(args[0]).unwrap();
             if thread.state == "created"
+                && thread.stack == 0
                 && thread.suspended == 1
                 && user_loader::preflight_thread(engine, thread.stack_size).is_err()
             {
@@ -242,9 +414,11 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
             let thread = engine
                 .get_data_mut()
                 .user_threads
-                .records
-                .get_mut(&args[0])
+                .record_mut(args[0])
                 .unwrap();
+            if thread.exit_code.is_some() {
+                return Ok(failure(engine, 5, u32::MAX as u64));
+            }
             let previous = thread.suspended;
             if previous != 0 {
                 thread.suspended -= 1;
@@ -260,12 +434,9 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
                 !engine.get_data().loader_active,
                 "ExitThread during a loader notification cannot resume safely"
             );
-            if current_id(engine) == 1 {
-                user_lifecycle::request_exit(engine, args[0] as u32, false)?;
-            } else {
-                engine.get_data_mut().user_threads.exit = Some((args[0] as u32, false));
-                uc(engine.emu_stop())?;
-            }
+            engine.get_data_mut().user_threads.exit = Some((args[0] as u32, false));
+            engine.get_data_mut().user_threads.action = true;
+            uc(engine.emu_stop())?;
             Ok(0)
         }
         Call::Terminate => {
@@ -277,8 +448,8 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
             let current = current_id(engine);
             let id = if args[0] == pseudo {
                 current
-            } else if valid(engine, args[0]) {
-                engine.get_data().user_threads.records[&args[0]].id
+            } else if engine.get_data().user_threads.record(args[0]).is_some() {
+                engine.get_data().user_threads.record(args[0]).unwrap().id
             } else {
                 return Ok(failure(engine, 6, 0));
             };
@@ -287,35 +458,27 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
                     !engine.get_data().loader_active,
                     "TerminateThread during a loader notification cannot resume safely"
                 );
-                if id == 1 {
-                    user_lifecycle::request_exit(engine, args[1] as u32, true)?;
-                } else {
-                    engine.get_data_mut().user_threads.exit = Some((args[1] as u32, true));
-                    uc(engine.emu_stop())?;
-                }
+                engine.get_data_mut().user_threads.exit = Some((args[1] as u32, true));
+                engine.get_data_mut().user_threads.action = true;
+                uc(engine.emu_stop())?;
             } else {
-                let thread = engine
-                    .get_data_mut()
-                    .user_threads
-                    .records
-                    .get_mut(&args[0])
-                    .unwrap();
-                if thread.state == "running" {
-                    return Ok(failure(engine, 50, 0));
-                }
-                thread.state = "terminated";
-                thread.exit_code = Some(args[1] as u32);
+                scheduling::terminate_other(engine, id, args[1] as u32)?;
             }
             Ok(1)
         }
+        Call::Authority(_) => unreachable!(),
         Call::ExitCode => {
-            if !valid(engine, args[0]) {
+            if engine.get_data().user_threads.record(args[0]).is_none() {
                 return Ok(failure(engine, 6, 0));
             }
             if require(engine, args[1], 4, P::WRITE).is_err() {
                 return Ok(failure(engine, 998, 0));
             }
-            let value = engine.get_data().user_threads.records[&args[0]]
+            let value = engine
+                .get_data()
+                .user_threads
+                .record(args[0])
+                .unwrap()
                 .exit_code
                 .unwrap_or(259);
             crate::cpu::write(engine, args[1], &value.to_le_bytes())?;
@@ -328,135 +491,26 @@ pub(crate) fn transition(
     engine: &mut Unicorn<Trace>,
     horizon: &ExecutionHorizon,
 ) -> Result<Option<Outcome>> {
-    ensure!(queued(engine), "User thread continuation is not queued");
-    engine.get_data_mut().user_threads.action = false;
-    let pending = engine
-        .get_data()
-        .user_threads
-        .pending
-        .last()
-        .context("User thread caller is absent")?
-        .clone();
-    let thread = engine.get_data().user_threads.records[&pending.handle].clone();
-    let parent = current_id(engine);
-    let parent_teb =
-        user_bootstrap::active_teb(engine).context("User thread parent TEB is absent")?;
-    let mut context = uc(engine.context_init())?;
-    uc(engine.context_save(&mut context))?;
-    let stack = user_loader::allocate(engine, thread.stack_size)?;
-    let teb = user_loader::allocate(engine, 8192)?;
-    user_bootstrap::initialize_thread(engine, teb, stack, thread.stack_size, thread.id)?;
-    user_loader::attach_thread(engine, thread.id, teb)?;
-    {
-        let thread = engine
-            .get_data_mut()
-            .user_threads
-            .records
-            .get_mut(&pending.handle)
-            .unwrap();
-        thread.stack = stack;
-        thread.teb = teb;
-        thread.state = "running";
-    }
-    engine.get_data_mut().user_threads.current = thread.id;
-    let result = (|| -> Result<Option<Outcome>> {
-        user_bootstrap::activate_thread(engine, teb)?;
-        let top = stack + thread.stack_size - 0x200;
-        if let Some(outcome) = user_lifecycle::notify(engine, 2, top, horizon)? {
-            return Ok(Some(outcome));
-        }
-        let architecture = engine.get_data().architecture;
-        let marker = engine.get_data().return_marker + 0x500;
-        let sp = (top & !15)
-            - if architecture == Architecture::X64 {
-                40
-            } else {
-                8
-            };
-        let width = architecture.width();
-        let mut frame = vec![0; if width == 8 { 40 } else { 8 }];
-        frame[..width].copy_from_slice(&marker.to_le_bytes()[..width]);
-        if width == 4 {
-            frame[4..8].copy_from_slice(&(thread.parameter as u32).to_le_bytes());
-        }
-        crate::cpu::write(engine, sp, &frame)?;
-        uc(engine.reg_write(sp_register(architecture), sp))?;
-        if width == 8 {
-            uc(engine.reg_write(RegisterX86::RCX, thread.parameter))?;
-        }
-        let outcome = crate::threads::execute_horizon(engine, thread.entry, marker, horizon)?;
-        let exit = engine.get_data_mut().user_threads.exit.take();
-        if !outcome.returned && exit.is_none() {
-            return Ok(Some(outcome));
-        }
-        if outcome.returned {
-            ensure!(
-                uc(engine.reg_read(sp_register(architecture)))? == sp + 8,
-                "User thread start routine violated its STDCALL1/Win64 return frame"
-            );
-        }
-        let (code, forced) = exit.unwrap_or((outcome.value.unwrap_or(0) as u32, false));
-        if !forced && let Some(outcome) = user_lifecycle::notify(engine, 3, top, horizon)? {
-            return Ok(Some(outcome));
-        }
-        let record = engine
-            .get_data_mut()
-            .user_threads
-            .records
-            .get_mut(&pending.handle)
-            .unwrap();
-        record.exit_code = Some(code);
-        record.state = if forced { "terminated" } else { "exited" };
-        Ok(None)
-    })();
-    // Restore the real suspended parent on every path; global guest effects,
-    // instruction count and deadline remain shared across native contexts.
-    let switched = user_bootstrap::before_instruction(engine);
-    uc(engine.context_restore(&context))?;
-    engine.get_data_mut().user_threads.current = parent;
-    user_bootstrap::activate_thread(engine, parent_teb)?;
-    switched?;
-    match result {
-        Ok(None) => {
-            user_loader::detach_thread(engine, thread.id)?;
-            user_loader::release(engine, teb)?;
-            user_loader::release(engine, stack)?;
-            user_runtime::retire_thread(engine, thread.id);
-            engine
-                .get_data_mut()
-                .user_threads
-                .records
-                .get_mut(&pending.handle)
-                .unwrap()
-                .backing_released = true;
-            engine.get_data_mut().user_threads.resume = true;
-            Ok(None)
-        }
-        Ok(Some(outcome)) => {
-            engine
-                .get_data_mut()
-                .user_threads
-                .records
-                .get_mut(&pending.handle)
-                .unwrap()
-                .state = "interrupted";
-            Ok(Some(outcome))
-        }
-        Err(error) => {
-            engine
-                .get_data_mut()
-                .user_threads
-                .records
-                .get_mut(&pending.handle)
-                .unwrap()
-                .state = "interrupted";
-            Err(error)
-        }
-    }
+    scheduling::pump(engine, horizon, None)
 }
 
 pub(crate) fn cleanup_process(engine: &mut Unicorn<Trace>, forced: bool) -> Result<()> {
     let exit_code = engine.get_data().process_exit_code;
+    let mut callback_threads = engine.get_data().apis.user_callbacks.thread_ids();
+    callback_threads.push(1);
+    callback_threads.extend(
+        engine
+            .get_data()
+            .user_threads
+            .records
+            .values()
+            .map(|t| t.id),
+    );
+    callback_threads.sort_unstable();
+    callback_threads.dedup();
+    for id in callback_threads {
+        user_callbacks::cancel(engine, id, "aborted_by_process_exit");
+    }
     let records = engine
         .get_data()
         .user_threads
@@ -491,8 +545,18 @@ pub(crate) fn cleanup_process(engine: &mut Unicorn<Trace>, forced: bool) -> Resu
             record.exit_code = exit_code;
         }
     }
+    if let Some(root) = engine.get_data_mut().user_threads.root.as_mut()
+        && root.exit_code.is_none()
+    {
+        root.exit_code = exit_code;
+        root.state = if forced {
+            "process_terminated"
+        } else {
+            "process_exit"
+        };
+    }
     let pending = std::mem::take(&mut engine.get_data_mut().user_threads.pending);
-    for caller in pending {
+    for caller in pending.into_values() {
         if let Some(index) = caller.event
             && let Some(event) = engine.get_data_mut().apis.events.get_mut(index)
         {
@@ -500,22 +564,32 @@ pub(crate) fn cleanup_process(engine: &mut Unicorn<Trace>, forced: bool) -> Resu
             event.effect = Some("aborted_by_process_exit");
         }
     }
+    user_runtime::retire_thread(engine, 1);
+    engine.get_data_mut().user_threads.handles.clear();
+    engine.get_data_mut().user_threads.scheduler = scheduling::State::default();
+    engine.get_data_mut().user_threads.exit = None;
     engine.get_data_mut().user_threads.action = false;
-    engine.get_data_mut().user_threads.resume = false;
+
     Ok(())
 }
 
 pub(crate) fn resume_api(engine: &mut Unicorn<Trace>, pc: u64) -> Result<bool> {
-    if !engine.get_data().user_threads.resume {
+    let id = current_id(engine);
+    if !engine
+        .get_data_mut()
+        .user_threads
+        .scheduler
+        .ready
+        .remove(&id)
+    {
         return Ok(false);
     }
     let pending = engine
-        .get_data()
+        .get_data_mut()
         .user_threads
         .pending
-        .last()
-        .context("User thread resumed caller is absent")?
-        .clone();
+        .remove(&id)
+        .context("User wait caller absent")?;
     ensure!(
         pc == pending.pc
             && uc(engine.reg_read(sp_register(engine.get_data().architecture)))? == pending.sp
@@ -530,6 +604,9 @@ pub(crate) fn resume_api(engine: &mut Unicorn<Trace>, pc: u64) -> Result<bool> {
         },
         pending.result,
     ))?;
+    if let Some(error) = pending.last_error {
+        engine.get_data_mut().apis.last_error = error;
+    }
     let last_error = engine.get_data().apis.last_error;
     if let Some(index) = pending.event
         && let Some(event) = engine.get_data_mut().apis.events.get_mut(index)
@@ -540,7 +617,348 @@ pub(crate) fn resume_api(engine: &mut Unicorn<Trace>, pc: u64) -> Result<bool> {
         event.last_error = last_error;
         event.effect = Some("user_thread_return_ready");
     }
-    engine.get_data_mut().user_threads.pending.pop();
-    engine.get_data_mut().user_threads.resume = false;
     Ok(true)
+}
+
+fn create(
+    engine: &mut Unicorn<Trace>,
+    args: &[u64],
+    argc: usize,
+    cdecl_start: bool,
+    auto_close: bool,
+) -> Result<u64> {
+    if engine.get_data().loader_active {
+        return Ok(failure(engine, 50, 0));
+    }
+    let inherit = match user_sync::security_attributes(engine, args[0]) {
+        Ok(v) => v,
+        Err(e) => return Ok(failure(engine, e, 0)),
+    };
+    if args[4] & !0x10004 != 0 || args[1] > 16 * 1024 * 1024 {
+        return Ok(failure(engine, 87, 0));
+    }
+    if require(engine, args[2], 1, P::EXECUTE).is_err() {
+        return Ok(failure(engine, 998, 0));
+    }
+    if args[5] != 0 && require(engine, args[5], 4, P::WRITE).is_err() {
+        return Ok(failure(engine, 998, 0));
+    }
+    let count = engine.get_data().user_threads.records.len();
+    if count >= MAX_THREADS || !user_processes::thread_admission(engine) {
+        return Ok(failure(engine, 8, 0));
+    }
+    let stack_size = if args[1] == 0 {
+        1024 * 1024
+    } else {
+        args[1].max(65536).div_ceil(4096) * 4096
+    };
+    if user_loader::preflight_thread(engine, stack_size).is_err() {
+        return Ok(failure(engine, 8, 0));
+    }
+    let id = count as u64 + 2;
+    let public_id = user_processes::tid(user_processes::pid(engine), id);
+    let handle = 0x6f000000 + public_id * 4;
+    if args[5] != 0 {
+        crate::cpu::write(engine, args[5], &(public_id as u32).to_le_bytes())?;
+    }
+    let thread = Thread {
+        id,
+        handle,
+        entry: args[2],
+        parameter: args[3],
+        stack_size,
+        stack: 0,
+        teb: 0,
+        suspended: u32::from(args[4] & 4 != 0),
+        state: "created",
+        exit_code: None,
+        handle_closed: false,
+        backing_released: false,
+        cdecl_start,
+        auto_close,
+    };
+    engine
+        .get_data_mut()
+        .user_threads
+        .records
+        .insert(handle, thread);
+    engine.get_data_mut().user_threads.handles.insert(
+        handle,
+        authority::Handle {
+            canonical: handle,
+            access: authority::ALL,
+            flags: u32::from(inherit),
+        },
+    );
+    engine.get_data_mut().apis.last_error = 0;
+    if args[4] & 4 == 0 {
+        queue(engine, handle, handle, argc)?;
+        return Ok(0);
+    }
+    Ok(handle)
+}
+
+pub(crate) fn retirement_complete(engine: &mut Unicorn<Trace>, id: u64, code: u32) {
+    scheduling::retirement_complete(engine, id, code);
+}
+
+pub(crate) fn queue_process_api(engine: &mut Unicorn<Trace>, argc: usize) -> Result<()> {
+    initialize_root(engine)?;
+    queue(engine, 0, 0, argc)
+}
+pub(crate) fn complete_process_api(
+    engine: &mut Unicorn<Trace>,
+    result: u64,
+    error: u32,
+) -> Result<()> {
+    let id = current_id(engine);
+    let pending = engine
+        .get_data_mut()
+        .user_threads
+        .pending
+        .get_mut(&id)
+        .context("Process API continuation missing")?;
+    pending.result = result;
+    pending.last_error = Some(error);
+    engine.get_data_mut().user_threads.action = true;
+    Ok(())
+}
+pub(crate) fn process_thread(trace: &Trace, id: u64) -> Option<&Thread> {
+    trace.user_threads.by_id(id)
+}
+pub(crate) fn process_thread_count(trace: &Trace) -> usize {
+    1 + trace.user_threads.records.len()
+}
+pub(crate) fn process_suspended(trace: &Trace) -> bool {
+    trace
+        .user_threads
+        .root
+        .as_ref()
+        .is_some_and(|t| t.suspended != 0)
+        && trace
+            .user_threads
+            .records
+            .values()
+            .all(|t| t.suspended != 0 || t.exit_code.is_some())
+}
+pub(crate) fn process_waiting(trace: &Trace) -> bool {
+    trace.user_threads.scheduler.has_waits()
+}
+pub(crate) fn process_deadline(trace: &Trace) -> Option<u64> {
+    trace.user_threads.scheduler.deadline()
+}
+pub(crate) fn set_primary_suspended(engine: &mut Unicorn<Trace>, suspended: bool) -> Result<()> {
+    initialize_root(engine)?;
+    engine
+        .get_data_mut()
+        .user_threads
+        .root
+        .as_mut()
+        .unwrap()
+        .suspended = u32::from(suspended);
+    Ok(())
+}
+pub(crate) fn process_handle(trace: &Trace, handle: u64) -> Option<(u64, u32, u32)> {
+    let h = trace.user_threads.handles.get(&handle)?;
+    Some((
+        trace.user_threads.record(h.canonical)?.id,
+        h.access,
+        h.flags,
+    ))
+}
+pub(crate) fn inheritable_handles(trace: &Trace) -> Vec<HandleReport> {
+    trace
+        .user_threads
+        .handles
+        .iter()
+        .filter(|(_, handle)| handle.flags & 1 != 0)
+        .map(|(value, handle)| HandleReport {
+            handle: *value,
+            thread: trace.user_threads.record(handle.canonical).unwrap().id,
+            access: handle.access,
+            flags: handle.flags,
+        })
+        .collect()
+}
+pub(crate) fn inherit_alias_namespace(parent: &Trace, child: &mut Trace) {
+    child.user_threads.next_handle = parent.user_threads.next_handle;
+}
+pub(crate) fn close_process_handle(trace: &mut Trace, value: u64) -> std::result::Result<(), u32> {
+    let handle = *trace.user_threads.handles.get(&value).ok_or(6u32)?;
+    if handle.flags & 2 != 0 {
+        return Err(5);
+    }
+    trace.user_threads.handles.remove(&value);
+    if value == handle.canonical {
+        trace
+            .user_threads
+            .record_mut(handle.canonical)
+            .ok_or(6u32)?
+            .handle_closed = true;
+    }
+    Ok(())
+}
+pub(crate) fn remote_suspend(engine: &mut Unicorn<Trace>, id: u64, suspend: bool) -> Result<u64> {
+    let handle = engine
+        .get_data()
+        .user_threads
+        .by_id(id)
+        .context("Remote thread absent")?
+        .handle;
+    let thread = engine
+        .get_data_mut()
+        .user_threads
+        .record_mut(handle)
+        .unwrap();
+    if thread.exit_code.is_some() {
+        return Ok(failure(engine, 5, u32::MAX as u64));
+    }
+    let previous = thread.suspended;
+    if suspend {
+        if previous >= 127 {
+            return Ok(failure(engine, 298, u32::MAX as u64));
+        }
+        thread.suspended += 1;
+    } else {
+        thread.suspended = previous.saturating_sub(1);
+    }
+    schedule(engine);
+    Ok(previous as u64)
+}
+pub(crate) fn remote_terminate(engine: &mut Unicorn<Trace>, id: u64, code: u32) -> Result<u64> {
+    if id == current_id(engine) {
+        engine.get_data_mut().user_threads.exit = Some((code, true));
+    } else {
+        scheduling::terminate_other(engine, id, code)?;
+    }
+    schedule(engine);
+    Ok(1)
+}
+pub(crate) fn remote_create(
+    engine: &mut Unicorn<Trace>,
+    stack: u64,
+    entry: u64,
+    parameter: u64,
+    flags: u64,
+) -> Result<u64> {
+    initialize_root(engine)?;
+    let handle = create(
+        engine,
+        &[0, stack, entry, parameter, flags | 4, 0],
+        6,
+        false,
+        false,
+    )?;
+    if handle == 0 {
+        return Ok(0);
+    }
+    let record = engine
+        .get_data_mut()
+        .user_threads
+        .records
+        .get_mut(&handle)
+        .unwrap();
+    record.suspended = u32::from(flags & 4 != 0);
+    let id = record.id;
+    schedule(engine);
+    Ok(id)
+}
+pub(crate) fn remote_context(
+    engine: &mut Unicorn<Trace>,
+    id: u64,
+    buffer: u64,
+    set: bool,
+) -> Result<u64> {
+    let handle = engine
+        .get_data()
+        .user_threads
+        .by_id(id)
+        .context("Remote context thread absent")?
+        .handle;
+    let previous = engine.get_data_mut().user_threads.handles.insert(
+        handle,
+        authority::Handle {
+            canonical: handle,
+            access: authority::ALL,
+            flags: 0,
+        },
+    );
+    let result = scheduling::remote_context(engine, id, handle, buffer, set);
+    if let Some(previous) = previous {
+        engine
+            .get_data_mut()
+            .user_threads
+            .handles
+            .insert(handle, previous);
+    } else {
+        engine.get_data_mut().user_threads.handles.remove(&handle);
+    }
+    result
+}
+
+pub(super) fn detach_apc_wait(engine: &mut Unicorn<Trace>) -> Result<Pending> {
+    scheduling::detach_apc_wait(engine)
+}
+pub(super) fn restore_apc_wait(engine: &mut Unicorn<Trace>, pending: Pending) -> Result<()> {
+    scheduling::restore_apc_wait(engine, pending)
+}
+
+pub(super) fn abort_pending(engine: &mut Unicorn<Trace>, pending: Pending, reason: &'static str) {
+    if let Some(index) = pending.event
+        && let Some(event) = engine.get_data_mut().apis.events.get_mut(index)
+    {
+        event.pending = false;
+        event.error = Some(reason.into());
+        event.effect = Some(reason);
+    }
+}
+
+pub(crate) use exception_context::{capture as capture_context, restore as restore_context};
+
+pub(crate) fn stack_bounds(engine: &Unicorn<Trace>) -> Result<(u64, u64)> {
+    let id = current_id(engine);
+    if id == 1 {
+        let bootstrap = user_bootstrap::report(engine).context("User root stack missing")?;
+        Ok((bootstrap.stack_limit, bootstrap.stack_base))
+    } else {
+        let thread = engine
+            .get_data()
+            .user_threads
+            .by_id(id)
+            .context("User thread stack missing")?;
+        Ok((thread.stack, thread.stack + thread.stack_size))
+    }
+}
+
+pub(crate) fn schedule(engine: &mut Unicorn<Trace>) {
+    engine.get_data_mut().user_threads.action = true;
+}
+pub(crate) fn notification_complete(engine: &mut Unicorn<Trace>, id: u64, code: u32) {
+    scheduling::notification_complete(engine, id, code);
+}
+
+pub(crate) fn prepare_process_exit(engine: &mut Unicorn<Trace>, code: u32) -> Result<()> {
+    let current = current_id(engine);
+    if current != 1
+        && engine
+            .get_data()
+            .user_threads
+            .root
+            .as_ref()
+            .is_some_and(|root| root.exit_code.is_none())
+    {
+        scheduling::terminate_other(engine, 1, code)?;
+    }
+    let others = engine
+        .get_data()
+        .user_threads
+        .records
+        .values()
+        .filter(|thread| thread.id != current && thread.exit_code.is_none())
+        .map(|thread| thread.id)
+        .collect::<Vec<_>>();
+    for id in others {
+        scheduling::terminate_other(engine, id, code)?;
+    }
+    Ok(())
 }

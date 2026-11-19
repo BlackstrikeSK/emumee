@@ -558,8 +558,21 @@ pub(crate) fn execute(
     stack_top: u64,
     horizon: &ExecutionHorizon,
 ) -> Result<Outcome> {
+    execute_startup(engine, startup, root, stack_top, horizon, true)
+}
+pub(crate) fn execute_startup(
+    engine: &mut Unicorn<Trace>,
+    startup: Option<StaticStartup>,
+    root: &PeImage,
+    stack_top: u64,
+    horizon: &ExecutionHorizon,
+    enter: bool,
+) -> Result<Outcome> {
     let return_marker = engine.get_data().return_marker;
     let Some(startup) = startup else {
+        if !enter {
+            return Ok(Outcome { returned: true, value: None, error: None });
+        }
         return crate::threads::execute_horizon(
             engine,
             root.image_base + root.entry_rva as u64,
@@ -667,6 +680,9 @@ pub(crate) fn execute(
             "Root frame resumption failed; partial native effects are terminal: {error:#}"
         ));
         return Ok(failure(format!("{error:#}")));
+    }
+    if !enter {
+        return Ok(Outcome { returned: true, value: None, error: None });
     }
     crate::threads::execute_horizon(
         engine,

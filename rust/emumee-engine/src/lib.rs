@@ -293,6 +293,7 @@ pub struct NativeMemoryFault {
 struct Trace {
     pub(crate) quiescent_parked_requested: bool,
     process_exit_code: Option<u32>,
+    guest_failure_code: Option<u32>,
     architecture: Architecture,
     instructions: u64,
     entries: [TraceEntry; TAIL],
@@ -328,6 +329,8 @@ struct Trace {
     dynamic_loader: api::dynamic_loader::State,
     user_lifecycle: api::user_lifecycle::State,
     user_threads: api::user_threads::State,
+    processes: api::user_processes::State,
+    process: api::user_processes::Local,
     native_exceptions: native_exceptions::State,
     loader_native_effect_failure: Option<String>,
     loader_preparation_error: Option<String>,
@@ -367,6 +370,7 @@ impl Trace {
             architecture,
             quiescent_parked_requested: false,
             process_exit_code: None,
+            guest_failure_code: None,
             instructions: 0,
             entries: [TraceEntry::default(); TAIL],
             clock,
@@ -401,6 +405,8 @@ impl Trace {
             dynamic_loader: api::dynamic_loader::State::default(),
             user_lifecycle: api::user_lifecycle::State::default(),
             user_threads: api::user_threads::State::default(),
+            processes: api::user_processes::State::default(),
+            process: api::user_processes::Local::default(),
             native_exceptions: native_exceptions::State::default(),
             loader_native_effect_failure: None,
             loader_preparation_error: None,
@@ -450,6 +456,7 @@ pub struct Execution {
     pub user_loader: Option<api::user_loader::Report>,
     pub user_lifecycle: Option<api::user_lifecycle::Report>,
     pub user_threads: Option<api::user_threads::Report>,
+    pub user_processes: Vec<api::user_processes::ProcessReport>,
     pub file_storage: Option<emumee_core::filesystem::StorageReport>,
     pub kernel_callbacks: Option<CallbackReport>,
     pub kernel_cache_aware_rundown: Option<RundownReport>,
@@ -1343,7 +1350,10 @@ fn run_generated_with_fixture_configuration(
         if api_gate && engine.get_data().apis.kernel_callback_continuation.active() {
             api::kernel_callback_continuation::before_api(engine, pc);
         }
-        let architectural_boundary = api::native_loader::before_instruction(engine, pc)
+        let architectural_boundary = api::user_lifecycle::continuations::before_instruction(engine, pc)
+            || native_exceptions::user::before_instruction(engine, pc)
+            || api::user_callbacks::before_instruction(engine, pc)
+            || api::native_loader::before_instruction(engine, pc)
             || ipi::before_instruction(engine, pc)
             || threads::dpc::before_instruction(engine, pc, size);
         let scheduler_boundary = !architectural_boundary && threads::before_instruction(engine, pc);
@@ -1386,6 +1396,7 @@ fn run_generated_with_fixture_configuration(
                     return Ok(());
                 }
                 if api::user_threads::resume_api(engine, pc)? { return Ok(()); }
+                if api::user_callbacks::resume_api(engine, pc)? { return Ok(()); }
                 if api::crt_startup::resume_api(engine, pc)? {
                     return Ok(());
                 }
@@ -1413,6 +1424,7 @@ fn run_generated_with_fixture_configuration(
             Some(threads::Action::Wait { .. })
         ) && !matches!(engine.get_data().ipi_action, Some(ipi::Action::Begin))
             && !api::dynamic_loader::queued(engine)
+            && !api::user_callbacks::queued(engine)
             && !api::user_threads::queued(engine)
             && !api::crt_startup::queued(engine)
             && !native_exceptions::queued(engine)
@@ -1447,6 +1459,7 @@ fn run_generated_with_fixture_configuration(
             || engine.get_data().thread_action.is_some()
             || engine.get_data().ipi_action.is_some()
             || api::dynamic_loader::queued(engine)
+            || api::user_callbacks::queued(engine)
             || api::user_threads::queued(engine)
             || api::crt_startup::queued(engine)
             || native_exceptions::queued(engine)
@@ -1478,14 +1491,13 @@ fn run_generated_with_fixture_configuration(
                 }
                 if engine.get_data().native_memory_fault.is_none() {
                     let pc = engine.pc_read().unwrap_or(0);
-                    engine.get_data_mut().native_memory_fault = Some(NativeMemoryFault {
-                        access,
-                        address,
-                        size,
-                        pc,
-                    });
+                    engine.get_data_mut().native_memory_fault = Some(NativeMemoryFault { access, address, size, pc });
                 }
                 api::record_provider_access(engine, address, size, access);
+                if let Ok(pc) = engine.pc_read()
+                    && native_exceptions::user::queue_fault(engine, 0xc0000005, pc,
+                        vec![if access == "write" { 1 } else if access == "execute" { 8 } else { 0 }, address])
+                { return false; }
                 false
             }),
         )?;
@@ -1648,6 +1660,7 @@ fn run_generated_with_fixture_configuration(
         user_loader: api::user_loader::report(&engine),
         user_lifecycle: api::user_lifecycle::report(&engine),
         user_threads: api::user_threads::report(&engine),
+        user_processes: api::user_processes::report(&engine),
         file_storage,
         kernel_files,
         file_enumeration: (!trace.apis.kernel_mode).then(||trace.apis.file_metadata.searches.report()),
@@ -3263,3 +3276,8 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod m4_tests;
+#[cfg(test)]
+mod user_test_fixtures;

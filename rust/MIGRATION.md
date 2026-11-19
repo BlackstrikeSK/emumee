@@ -16,8 +16,14 @@ M3 now adds owned root PEB/TEB, FS/GS and process parameters projecting the
 existing persona/VFS/stdio/LastError authorities, with direct guest-memory and
 owned-backing refusal controls. See `../docs/native-pe/m3-user-bootstrap.md` for
 the exact first-checkbox scope and evidence. Loader lists, static TLS and
-complete loader/thread lifecycle remain separate obligations, not consequences
-of installing a root TEB.
+the bounded loader/thread lifecycle are qualified in
+`../docs/native-pe/m3-loader-lifecycle.md`. M4 now qualifies deterministic user
+scheduling, waits/FLS/APC callbacks, isolated virtual children and checked remote
+operations, x86 SEH/VEH/EH4 and AMD64 unwind/runtime tables. All run on owned guest
+state with shared budgets and one live native CPU; host child processes do not
+implement guest behavior. See `../docs/native-pe/m4-user-runtime.md` for the
+1,123-test source gate, 570 contained outcomes, chained seals and explicit limits.
+Full semantic API parity and later migration milestones remain open.
 
 The existing native API batch models CRT startup:MSVCRT mainargs, UCRT argument
 globals and initial environment/configuration, MSVCRT x86 global accessors, and

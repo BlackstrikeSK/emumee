@@ -197,6 +197,14 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
                 && engine.get_data().dynamic_loader.suspended.len() < 16,
         "Dynamic DLL initializer/detacher reentrancy is not modeled"
     );
+    ensure!(
+        !super::user_lifecycle::continuations::busy(engine)
+            || super::user_lifecycle::continuations::owns(
+                engine,
+                super::user_threads::current_id(engine)
+            ),
+        "Dynamic DLL operation cannot bypass another thread's loader notification lock"
+    );
     let nt = matches!(call, Call::LdrLoad | Call::LdrUnload);
     let load = matches!(call, Call::Load { .. } | Call::LdrLoad | Call::Procedure);
     let mut forwarded = None;

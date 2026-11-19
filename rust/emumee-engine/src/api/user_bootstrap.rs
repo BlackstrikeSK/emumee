@@ -222,10 +222,10 @@ pub(crate) fn initialize(
         (width as u64, stack_base),
         (2 * width as u64, stack),
         (if wide { 0x30 } else { 0x18 }, base),
-        (if wide { 0x40 } else { 0x20 }, OWNER),
+        (if wide { 0x40 } else { 0x20 }, super::user_processes::pid(engine)),
         (
             if wide { 0x48 } else { 0x24 },
-            crate::threads::current_id(engine),
+            super::user_processes::tid(super::user_processes::pid(engine), crate::threads::current_id(engine)),
         ),
         (if wide { 0x60 } else { 0x30 }, base + PEB),
     ] {
@@ -307,12 +307,14 @@ pub(crate) fn initialize(
         uc(engine.reg_write(RegisterX86::GS_BASE, base))?;
     } else {
         let tables = base + GDT;
-        put(engine, tables + 8, 0x00cf9a000000ffff, 8)?;
-        put(engine, tables + 16, 0x00cf92000000ffff, 8)?;
+        put(engine, tables + 8, 0x00cf9b000000ffff, 8)?;
+        put(engine, tables + 16, 0x00cf93000000ffff, 8)?;
+        // Pre-set the accessed bit: selector reloads must not ask the CPU to
+        // mutate the read-only owned GDT during an in-hook context restore.
         let descriptor = 0x1fffu64
             | ((base & 0xffff) << 16)
             | (((base >> 16) & 255) << 32)
-            | (0x92 << 40)
+            | (0x93 << 40)
             | (0x4 << 52)
             | (((base >> 24) & 255) << 56);
         put(engine, tables + 0x30, descriptor, 8)?;
@@ -377,8 +379,8 @@ pub(crate) fn initialize_thread(
         (width as u64, stack + size),
         (2 * width as u64, stack),
         (if wide { 0x30 } else { 0x18 }, teb),
-        (if wide { 0x40 } else { 0x20 }, OWNER),
-        (if wide { 0x48 } else { 0x24 }, thread),
+        (if wide { 0x40 } else { 0x20 }, super::user_processes::pid(engine)),
+        (if wide { 0x48 } else { 0x24 }, super::user_processes::tid(super::user_processes::pid(engine), thread)),
         (if wide { 0x60 } else { 0x30 }, root + PEB),
     ] {
         put(engine, teb + offset, value, width)?;
@@ -416,10 +418,12 @@ pub(crate) fn activate_thread(engine: &mut Unicorn<Trace>, teb: u64) -> Result<(
     if wide {
         uc(engine.reg_write(RegisterX86::GS_BASE, teb))?;
     } else {
+        // Pre-set the accessed bit: selector reloads must not ask the CPU to
+        // mutate the read-only owned GDT during an in-hook context restore.
         let descriptor = 0x1fffu64
             | ((teb & 0xffff) << 16)
             | (((teb >> 16) & 255) << 32)
-            | (0x92 << 40)
+            | (0x93 << 40)
             | (0x4 << 52)
             | (((teb >> 24) & 255) << 56);
         put(engine, tables + 0x30, descriptor, 8)?;
@@ -446,8 +450,8 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Option<Report> {
         image_base: state.image_base,
         stack_limit: state.stack_limit,
         stack_base: state.stack_base,
-        process_id: OWNER,
-        thread_id: crate::threads::current_id(engine),
+        process_id: super::user_processes::pid(engine),
+        thread_id: super::user_processes::tid(super::user_processes::pid(engine), crate::threads::current_id(engine)),
         last_error: engine.get_data().apis.last_error,
         mapped_bytes: SIZE,
         scope: "Owned submitted-user root bootstrap; existing persona/VFS/stdio authority, direct FS/GS TIB/PEB/process-parameter projection and shared LastError. Loader lists, static TLS and thread lifecycle are separate M3/M4 obligations.",

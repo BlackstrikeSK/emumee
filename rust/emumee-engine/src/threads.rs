@@ -261,7 +261,7 @@ pub(crate) fn current_id(engine: &Unicorn<Trace>) -> u64 {
         .map(|t| t.current_slot)
         .unwrap_or_else(|| crate::api::user_threads::current_id(engine))
 }
-fn pc_register(arch: Architecture) -> RegisterX86 {
+pub(crate) fn pc_register(arch: Architecture) -> RegisterX86 {
     if arch == Architecture::X64 {
         RegisterX86::RIP
     } else {
@@ -994,11 +994,27 @@ pub(crate) fn execute_horizon(
     state.maximum_continuation_depth = state
         .maximum_continuation_depth
         .max(state.continuation_depth);
-    let result = execute_horizon_inner(engine, entry, stop_marker, horizon);
+    let result = if engine.get_data().continuation_depth == 1
+        && engine.get_data().apis.user_bootstrap.is_some()
+        && !engine.get_data().loader_active && !engine.get_data().processes.running {
+        crate::api::user_processes::drive(engine, entry, stop_marker, horizon)
+    } else {
+        execute_horizon_inner(engine, entry, stop_marker, horizon)
+    };
+    if engine.get_data().continuation_depth == 1
+        && engine.get_data().process_exit_code.is_none()
+        && (!engine.get_data().loader_active
+            || crate::api::user_lifecycle::continuations::owns(
+                engine,
+                crate::api::user_threads::current_id(engine),
+            ))
+    {
+        crate::api::user_threads::terminal_restore(engine)?;
+    }
     engine.get_data_mut().continuation_depth -= 1;
     result
 }
-fn execute_horizon_inner(
+pub(crate) fn execute_horizon_inner(
     engine: &mut Unicorn<Trace>,
     entry: u64,
     stop_marker: u64,
@@ -1007,6 +1023,9 @@ fn execute_horizon_inner(
     let arch = engine.get_data().architecture;
     uc(engine.reg_write(pc_register(arch), entry))?;
     loop {
+        if crate::api::user_processes::yield_requested(engine) {
+            return Ok(Outcome { returned: false, value: None, error: None });
+        }
         let count = engine.get_data().instructions;
         let budget = horizon.budget;
         let elapsed = horizon.start.elapsed().as_micros();
@@ -1022,8 +1041,26 @@ fn execute_horizon_inner(
         // Bound every start by4096 instructions instead, so outer wall/budget
         // checks also cover single-thread and virtual-timeout continuations.
         let slice = (budget - count).min(4096) as usize;
-        let result = engine.emu_start(pc, stop_marker, 0, slice);
-        if let Err(error) = result {
+        let result = engine.emu_start(
+            pc,
+            if engine.get_data().continuation_depth == 1
+                && crate::api::user_threads::current_id(engine) != 1
+                && (!engine.get_data().loader_active
+                    || crate::api::user_lifecycle::continuations::owns(
+                        engine,
+                        crate::api::user_threads::current_id(engine),
+                    ))
+            {
+                engine.get_data().return_marker + 0x500
+            } else {
+                stop_marker
+            },
+            0,
+            slice,
+        );
+        if let Err(error) = result
+            && !crate::native_exceptions::queued(engine)
+        {
             return Ok(Outcome {
                 returned: false,
                 value: None,
@@ -1060,38 +1097,50 @@ fn execute_horizon_inner(
                 error: None,
             });
         }
-        if crate::api::user_threads::exiting(engine) {
+        if crate::api::user_threads::exiting(engine) && engine.get_data().continuation_depth != 1 {
             return Ok(Outcome {
                 returned: false,
                 value: None,
                 error: None,
             });
         }
-        if crate::api::user_threads::queued(engine) {
-            match crate::api::user_threads::transition(engine, horizon) {
-                Ok(Some(outcome)) => return Ok(outcome),
-                Ok(None) => continue,
-                Err(error) => {
-                    return Ok(Outcome {
-                        returned: false,
-                        value: None,
-                        error: Some(format!("{error:#}")),
-                    });
+        if crate::api::user_callbacks::queued(engine)
+            || crate::api::user_threads::queued(engine)
+            || crate::native_exceptions::queued(engine)
+            || crate::api::user_lifecycle::continuations::queued(engine)
+        {
+            // Each transition can queue another owned domain (retirement,
+            // APC or exception fallback). Drain it before restarting Unicorn.
+            let mut handoffs = 0;
+            while crate::api::user_callbacks::queued(engine)
+                || crate::api::user_threads::queued(engine)
+                || crate::native_exceptions::queued(engine)
+                || crate::api::user_lifecycle::continuations::queued(engine)
+            {
+                ensure!(handoffs < 64, "User continuation handoff bound exceeded");
+                handoffs += 1;
+                let result = if crate::api::user_callbacks::queued(engine) {
+                    crate::api::user_callbacks::transition(engine, horizon)
+                } else if crate::api::user_lifecycle::continuations::queued(engine) {
+                    crate::api::user_lifecycle::continuations::transition(engine)
+                } else if crate::api::user_threads::queued(engine) {
+                    crate::api::user_threads::transition(engine, horizon)
+                } else {
+                    crate::native_exceptions::transition(engine, horizon)
+                };
+                match result {
+                    Ok(Some(outcome)) => return Ok(outcome),
+                    Ok(None) => {}
+                    Err(error) => {
+                        return Ok(Outcome {
+                            returned: false,
+                            value: None,
+                            error: Some(format!("{error:#}")),
+                        });
+                    }
                 }
             }
-        }
-        if crate::native_exceptions::queued(engine) {
-            match crate::native_exceptions::transition(engine, horizon) {
-                Ok(Some(outcome)) => return Ok(outcome),
-                Ok(None) => continue,
-                Err(error) => {
-                    return Ok(Outcome {
-                        returned: false,
-                        value: None,
-                        error: Some(format!("{error:#}")),
-                    });
-                }
-            }
+            continue;
         }
         let mut deferred = None;
         if dpc::wake_pending(engine) {
@@ -1176,6 +1225,36 @@ fn execute_horizon_inner(
                 value: None,
                 error: Some("IPI callback escaped into DriverEntry return marker".into()),
             });
+        }
+        if engine.get_data().continuation_depth == 1
+            && (!engine.get_data().loader_active
+                || crate::api::user_lifecycle::continuations::owns(
+                    engine,
+                    crate::api::user_threads::current_id(engine),
+                ))
+            && engine.get_data().apis.user_bootstrap.is_some()
+            && (crate::api::user_threads::active(engine)
+                || crate::api::user_threads::exiting(engine))
+        {
+            if engine.get_data().instructions - count < slice as u64
+                && pc != stop_marker
+                && pc != engine.get_data().return_marker + 0x500
+                && !crate::api::user_threads::exiting(engine)
+            {
+                return Ok(Outcome {
+                    returned: false,
+                    value: None,
+                    error: Some(
+                        "Guest CPU halted or stopped before its instruction slice completed".into(),
+                    ),
+                });
+            }
+            if let Some(outcome) =
+                crate::api::user_threads::checkpoint(engine, horizon, stop_marker)?
+            {
+                return Ok(outcome);
+            }
+            continue;
         }
         if pc == stop_marker && stop_marker != engine.get_data().return_marker {
             return Ok(Outcome {

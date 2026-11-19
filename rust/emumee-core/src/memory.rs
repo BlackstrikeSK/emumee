@@ -53,6 +53,8 @@ pub struct AddressSpace {
     epoch: u64,
     #[serde(skip)]
     mapped_byte_limit: Option<u64>,
+    #[serde(skip)]
+    aggregate_allowance: Option<u64>,
 }
 impl AddressSpace {
     pub fn epoch(&self) -> u64 {
@@ -68,6 +70,7 @@ impl AddressSpace {
             next_mapping_id: 1,
             epoch: 0,
             mapped_byte_limit: None,
+            aggregate_allowance: None,
         }
     }
     pub fn limit_mapped_bytes(&mut self, limit: u64) -> Result<()> {
@@ -78,6 +81,13 @@ impl AddressSpace {
             self.mapped_byte_limit
                 .map_or(limit, |current| current.min(limit)),
         );
+        Ok(())
+    }
+    pub fn aggregate_allowance(&mut self, limit: u64) -> Result<()> {
+        if self.regions.values().map(|region| region.size).sum::<u64>() > limit {
+            return Err(MemoryError("aggregate mapped memory exceeds byte bound"));
+        }
+        self.aggregate_allowance = Some(limit);
         Ok(())
     }
     fn end(&self, address: u64, size: u64) -> Result<u64> {
@@ -113,14 +123,19 @@ impl AddressSpace {
         if self.regions.len() >= MAX_REGIONS {
             return Err(MemoryError("region count exceeds bound"));
         }
-        if self.mapped_byte_limit.is_some_and(|limit| {
-            self.regions
-                .values()
-                .map(|region| region.size)
-                .sum::<u64>()
-                .checked_add(size)
-                .is_none_or(|total| total > limit)
-        }) {
+        if self
+            .mapped_byte_limit
+            .into_iter()
+            .chain(self.aggregate_allowance)
+            .any(|limit| {
+                self.regions
+                    .values()
+                    .map(|region| region.size)
+                    .sum::<u64>()
+                    .checked_add(size)
+                    .is_none_or(|total| total > limit)
+            })
+        {
             return Err(MemoryError("mapped memory exceeds byte bound"));
         }
         if self
@@ -242,6 +257,40 @@ impl AddressSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn aggregate_allowance_refuses_excess_before_mapping_and_recovers_after_process_retirement() {
+        let mut memory = AddressSpace::new(Architecture::X64);
+        memory.limit_mapped_bytes(PAGE * 4).unwrap();
+        memory.aggregate_allowance(PAGE * 2).unwrap();
+        memory
+            .map(0x10000, PAGE, Permissions::RW, None, "first")
+            .unwrap();
+        assert!(
+            memory
+                .map(0x20000, PAGE * 2, Permissions::RW, None, "excess")
+                .is_err()
+        );
+        assert!(memory.region(0x20000).is_none());
+        memory
+            .map(0x20000, PAGE, Permissions::RW, None, "second")
+            .unwrap();
+        assert!(memory.aggregate_allowance(PAGE).is_err());
+        memory.aggregate_allowance(PAGE * 4).unwrap();
+        memory
+            .map(
+                0x30000,
+                PAGE * 2,
+                Permissions::RW,
+                None,
+                "released allowance",
+            )
+            .unwrap();
+        assert!(
+            memory
+                .map(0x40000, PAGE, Permissions::RW, None, "run-wide bound")
+                .is_err()
+        );
+    }
     #[test]
     fn total_mapping_bound_is_atomic_survives_splits_and_releases_on_unmap() {
         for architecture in [Architecture::X86, Architecture::X64] {

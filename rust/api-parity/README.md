@@ -7,10 +7,12 @@ Clone-safe scope and handoff live in `native-feature-matrix.md`,
 `../../docs/native-pe/worklist.json`, `../../docs/native-pe/evidence.json` and
 `native-session.md`. The exact API partition is `../../docs/native-pe/api-batches.json`.
 M0 baseline, M1 source accounting, M2 input foundations, M3 loader lifecycle
-and the bounded M4 user runtime are complete. M4 scope, source controls and
-same-source contained qualification are in
-`../../docs/native-pe/m4-user-runtime.md`. M5 CRT/allocation/string foundations
-is next. Global semantic
+the bounded M4 user runtime and the M5 CRT/allocation/string foundations are
+complete. M4 scope, source controls and same-source contained qualification are
+in `../../docs/native-pe/m4-user-runtime.md`; M5 scope, reviewed refusals, its
+compiler-produced exit criterion and what stays open are in
+`../../docs/native-pe/m5-crt-foundations.md`. M6 VFS, registry, persona and
+observation families are next. Global semantic
 and runtime qualification gates remain open. Bounded smoke and tooling completion
 are not API behavioral or stable-release qualification.
 

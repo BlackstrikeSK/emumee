@@ -105,8 +105,8 @@ def cases(root):
     return selected
 
 
-def verify(root, fixture):
-    run = root / 'm4' / fixture.name
+def verify(root, fixture, *, output_directory='m4'):
+    run = root / output_directory / fixture.name
     spec = json.loads((fixture / 'inputs.json').read_bytes())
     sources = [path for path in fixture.iterdir() if path.suffix.lower() in ('.exe', '.dll')]
     assert len(sources) == 1

@@ -379,6 +379,227 @@ pub fn wide_buffer(text: &str, count: usize, mode: BufferMode) -> Result<BufferP
         result,
     })
 }
+/// Narrow counterpart of `wide_buffer`. Input must already be rendered and
+/// ASCII, which the narrow profile guarantees. Exact legacy equality writes no
+/// NUL and succeeds; larger output writes only `count` bytes and returns -1.
+pub fn narrow_buffer(text: &str, count: usize, mode: BufferMode) -> Result<BufferPlan> {
+    if count == 0 || count > MAX_OUTPUT {
+        return Err(FormatError("invalid narrow output capacity"));
+    }
+    if !text.is_ascii() {
+        return Err(FormatError("narrow formatting requires ASCII"));
+    }
+    let bytes = text.as_bytes();
+    let length = bytes.len();
+    if length > MAX_OUTPUT {
+        return Err(FormatError("formatted output exceeds limit"));
+    }
+    let mut output: Vec<u8> = bytes.iter().copied().take(count).collect();
+    if length < count {
+        output.push(0);
+    }
+    let mut result = if length <= count { length as i32 } else { -1 };
+    if !matches!(mode, BufferMode::Legacy) && length >= count {
+        result = -1;
+        if matches!(mode, BufferMode::Truncate) {
+            output[count - 1] = 0;
+        } else {
+            output[0] = 0;
+        }
+    }
+    Ok(BufferPlan {
+        bytes: output,
+        result,
+    })
+}
+/// One assignment a scan directive produced. The adapter performs every guest
+/// write, so no guest pointer is dereferenced here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Assignment {
+    Integer { width: usize, value: u64 },
+    Text { start: usize, length: usize },
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanPlan {
+    pub assignments: Vec<Assignment>,
+    /// Characters consumed from the input.
+    pub consumed: usize,
+    /// True when the input ended before the first conversion could match.
+    pub exhausted: bool,
+}
+fn digit(byte: u8, radix: u32) -> Option<u32> {
+    char::from(byte).to_digit(radix)
+}
+/// Bounded narrow `sscanf`. Supports whitespace skipping, literal matching,
+/// assignment suppression, field widths, the length modifiers the format
+/// grammar already models and the %d %i %u %o %x %c %s %% conversions. Anything
+/// else is refused rather than silently skipped.
+pub fn scan(format: &str, input: &[u8]) -> Result<ScanPlan> {
+    if format.len() >= MAX_FORMAT || input.len() > MAX_OUTPUT {
+        return Err(FormatError("scan format or input exceeds limit"));
+    }
+    if !format.is_ascii() {
+        return Err(FormatError("narrow scanning requires ASCII"));
+    }
+    let chars: Vec<char> = format.chars().collect();
+    let mut plan = ScanPlan {
+        assignments: Vec::new(),
+        consumed: 0,
+        exhausted: false,
+    };
+    let mut at = 0usize;
+    let mut cursor = 0usize;
+    while cursor < chars.len() {
+        let character = chars[cursor];
+        if character.is_ascii_whitespace() {
+            while at < input.len() && input[at].is_ascii_whitespace() {
+                at += 1;
+            }
+            cursor += 1;
+            continue;
+        }
+        if character != '%' {
+            if at >= input.len() {
+                plan.exhausted = plan.assignments.is_empty();
+                break;
+            }
+            if input[at] != character as u8 {
+                break;
+            }
+            at += 1;
+            cursor += 1;
+            continue;
+        }
+        cursor += 1;
+        let suppress = chars.get(cursor) == Some(&'*');
+        if suppress {
+            cursor += 1;
+        }
+        let mut width = 0usize;
+        while chars.get(cursor).is_some_and(char::is_ascii_digit) {
+            if width > MAX_OUTPUT {
+                return Err(FormatError("scan field width exceeds limit"));
+            }
+            width = width * 10 + (chars[cursor] as usize - '0' as usize);
+            cursor += 1;
+        }
+        let mut bytes = 4usize;
+        for (modifier, size) in [("hh", 1), ("I64", 8), ("ll", 8), ("h", 2), ("l", 4)] {
+            if chars[cursor..].starts_with(&modifier.chars().collect::<Vec<_>>()[..]) {
+                bytes = size;
+                cursor += modifier.len();
+                break;
+            }
+        }
+        let Some(kind) = chars.get(cursor).copied() else {
+            return Err(FormatError("scan format ends inside a conversion"));
+        };
+        cursor += 1;
+        if kind == '%' {
+            if at >= input.len() || input[at] != b'%' {
+                break;
+            }
+            at += 1;
+            continue;
+        }
+        if !matches!(kind, 'd' | 'i' | 'u' | 'o' | 'x' | 'X' | 'c' | 's') {
+            return Err(FormatError("scan conversion is not modeled"));
+        }
+        if kind != 'c' {
+            while at < input.len() && input[at].is_ascii_whitespace() {
+                at += 1;
+            }
+        }
+        if at >= input.len() {
+            plan.exhausted = plan.assignments.is_empty();
+            break;
+        }
+        let limit = if width == 0 { usize::MAX } else { width };
+        match kind {
+            'c' => {
+                let taken = if width == 0 { 1 } else { width };
+                if input.len() - at < taken {
+                    plan.exhausted = plan.assignments.is_empty();
+                    break;
+                }
+                if !suppress {
+                    plan.assignments.push(Assignment::Text {
+                        start: at,
+                        length: taken,
+                    });
+                }
+                at += taken;
+            }
+            's' => {
+                let start = at;
+                while at < input.len() && !input[at].is_ascii_whitespace() && at - start < limit {
+                    at += 1;
+                }
+                if at == start {
+                    break;
+                }
+                if !suppress {
+                    plan.assignments.push(Assignment::Text {
+                        start,
+                        length: at - start,
+                    });
+                }
+            }
+            _ => {
+                let start = at;
+                let negative = matches!(input.get(at), Some(b'-')) && kind != 'u';
+                if negative || matches!(input.get(at), Some(b'+')) {
+                    at += 1;
+                }
+                let mut radix = match kind {
+                    'o' => 8,
+                    'x' | 'X' => 16,
+                    _ => 10,
+                };
+                if kind == 'i' && input.get(at) == Some(&b'0') {
+                    radix = if matches!(input.get(at + 1), Some(b'x') | Some(b'X')) {
+                        at += 2;
+                        16
+                    } else {
+                        8
+                    };
+                }
+                if matches!(kind, 'x' | 'X')
+                    && input.get(at) == Some(&b'0')
+                    && matches!(input.get(at + 1), Some(b'x') | Some(b'X'))
+                {
+                    at += 2;
+                }
+                let digits = at;
+                let mut value: u64 = 0;
+                while at < input.len() && at - start < limit {
+                    let Some(places) = digit(input[at], radix) else {
+                        break;
+                    };
+                    value = value
+                        .wrapping_mul(u64::from(radix))
+                        .wrapping_add(u64::from(places));
+                    at += 1;
+                }
+                if at == digits {
+                    at = start;
+                    break;
+                }
+                if !suppress {
+                    plan.assignments.push(Assignment::Integer {
+                        width: bytes,
+                        value: if negative { value.wrapping_neg() } else { value },
+                    });
+                }
+            }
+        }
+        if plan.assignments.len() > MAX_ARGUMENTS {
+            return Err(FormatError("scan assignment count exceeds limit"));
+        }
+    }
+    plan.consumed = at;
+    Ok(plan)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

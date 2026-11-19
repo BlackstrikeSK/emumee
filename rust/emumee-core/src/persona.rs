@@ -413,6 +413,71 @@ fn relative(directory: &str, path: &str) -> Result<String> {
         absolute(&format!("{directory}\\{path}"))
     }
 }
+/// Recovers arguments from a command line exactly as the frozen reference does
+/// (`shlex.split(command_line, posix=False)`): whitespace separates tokens, a
+/// quote only opens a quoted run at the start of a token, the closing quote
+/// ends that token, and both quote characters stay inside the token. This is
+/// the reference splitter, not the Microsoft CRT parser the builder above
+/// inverts; an unterminated quote is refused instead of being closed silently.
+pub fn split_command_line(text: &str) -> Result<Vec<String>> {
+    bounded(text, true)?;
+    enum State {
+        Between,
+        Word,
+        Quoted(char),
+    }
+    fn whitespace(character: char) -> bool {
+        matches!(character, ' ' | '\t' | '\r' | '\n')
+    }
+    let mut tokens: Vec<String> = Vec::new();
+    let mut token = String::new();
+    let mut state = State::Between;
+    let emit = |tokens: &mut Vec<String>, token: &mut String| -> Result<()> {
+        if tokens.len() >= MAX_ARGUMENTS {
+            return Err(error(87, "guest command line argument count limit"));
+        }
+        tokens.push(std::mem::take(token));
+        Ok(())
+    };
+    for character in text.chars() {
+        match state {
+            State::Between => {
+                if whitespace(character) {
+                    continue;
+                }
+                token.push(character);
+                state = if character == '"' || character == '\'' {
+                    State::Quoted(character)
+                } else {
+                    State::Word
+                };
+            }
+            State::Quoted(quote) => {
+                token.push(character);
+                if character == quote {
+                    emit(&mut tokens, &mut token)?;
+                    state = State::Between;
+                }
+            }
+            State::Word => {
+                if whitespace(character) {
+                    emit(&mut tokens, &mut token)?;
+                    state = State::Between;
+                } else {
+                    token.push(character);
+                }
+            }
+        }
+    }
+    match state {
+        State::Quoted(_) => {
+            return Err(error(87, "unterminated quote in guest command line"));
+        }
+        State::Word => emit(&mut tokens, &mut token)?,
+        State::Between => {}
+    }
+    Ok(tokens)
+}
 /// Microsoft CRT quoting, matching the legacy subprocess.list2cmdline builder.
 /// Force-quoted arguments may not contain quote characters, as in legacy CLI.
 pub fn command_line(argv: &[String], force_quotes: &[usize]) -> Result<String> {
@@ -668,6 +733,25 @@ impl Persona {
     }
     pub fn argv(&self, owner: u64) -> Result<&[String]> {
         Ok(&self.process(owner)?.argv)
+    }
+    /// Baseline CRT argument view. An explicitly configured argument list wins;
+    /// otherwise the arguments are recovered from the process command line by
+    /// the frozen reference splitter, exactly as the reference `get_argv` does.
+    /// Image identity keeps using `argv`: a command line whose first token is
+    /// not the image path must not redirect the module or process record.
+    pub fn crt_argv(&self, owner: u64) -> Result<Vec<String>> {
+        let process = self.process(owner)?;
+        if process.argv.len() > 1 {
+            return Ok(process.argv.clone());
+        }
+        let split = split_command_line(&process.command_line)?;
+        // A command line holding no token at all keeps the bounded image-rooted
+        // view; the reference would expose an empty argument vector instead.
+        Ok(if split.is_empty() {
+            process.argv.clone()
+        } else {
+            split
+        })
     }
     /// Returns owned addresses for engine cleanup. The caller must retire their
     /// guest mappings and stable commandline/PEB storage as part of process exit.
@@ -1158,6 +1242,65 @@ mod tests {
             b"literal supplied command\0"
         );
         assert_eq!(persona.argv(2).unwrap()[1], "argument");
+    }
+    #[test]
+    fn crt_arguments_follow_the_reference_command_line_splitter() {
+        // Vectors generated from the frozen reference splitter
+        // (`shlex.split(text, posix=False)`): quotes stay inside their token,
+        // open only at a token start and close that token.
+        let cases: &[(&str, &[&str])] = &[
+            (
+                r"C:\emumee\child.exe child-only",
+                &[r"C:\emumee\child.exe", "child-only"],
+            ),
+            ("a \"b c\" d", &["a", "\"b c\"", "d"]),
+            ("a\tb  c", &["a", "b", "c"]),
+            ("\"x\"y z", &["\"x\"", "y", "z"]),
+            ("a\"b c\"d", &["a\"b", "c\"d"]),
+            ("a'b c'd", &["a'b", "c'd"]),
+            ("a#b c", &["a#b", "c"]),
+            ("\"\"", &["\"\""]),
+            ("", &[]),
+            (" ", &[]),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(
+                split_command_line(text).unwrap(),
+                expected.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                "{text:?}"
+            );
+        }
+        assert_eq!(code(split_command_line("a \"unterminated")), 87);
+        assert_eq!(
+            code(split_command_line(&"x ".repeat(MAX_ARGUMENTS + 1))),
+            87
+        );
+        // A configured argument list wins; a raw command line alone is split.
+        let mut persona = persona();
+        let mut config = ProcessConfig::fixture();
+        config.arguments = vec!["argument".into()];
+        config.command_line = Some("literal supplied command".into());
+        persona.add_process(2, config).unwrap();
+        assert_eq!(persona.crt_argv(2).unwrap(), persona.argv(2).unwrap());
+        let mut config = ProcessConfig::fixture();
+        config.command_line = Some(r"C:\emumee\child.exe child-only".into());
+        persona.add_process(3, config).unwrap();
+        assert_eq!(
+            persona.crt_argv(3).unwrap(),
+            [r"C:\emumee\child.exe", "child-only"]
+        );
+        // Image identity never follows the command line's first token.
+        let image = persona.argv(3).unwrap()[0].clone();
+        let mut config = ProcessConfig::fixture();
+        config.command_line = Some("other.exe".into());
+        persona.add_process(4, config).unwrap();
+        assert_eq!(persona.argv(4).unwrap()[0], image);
+        assert_eq!(persona.crt_argv(4).unwrap(), ["other.exe"]);
+        // A command line holding no token keeps the bounded image-rooted view.
+        let mut config = ProcessConfig::fixture();
+        config.command_line = Some("   ".into());
+        persona.add_process(5, config).unwrap();
+        assert_eq!(persona.crt_argv(5).unwrap(), persona.argv(5).unwrap());
     }
     #[test]
     fn directory_normalization_temp_precedence_and_process_isolation() {

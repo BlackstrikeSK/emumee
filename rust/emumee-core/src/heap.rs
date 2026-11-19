@@ -115,6 +115,26 @@ impl Heaps {
         self.heap(heap, flags, 1)?;
         Ok(self.block(heap, address)?.size)
     }
+    /// HeapValidate. Only HEAP_NO_SERIALIZE is defined, a null pointer validates
+    /// the whole heap, and GetLastError is untouched either way. Without Windows
+    /// heap headers this proves membership and liveness, not arena consistency.
+    pub fn validate(&self, heap: u64, flags: u32, address: u64) -> bool {
+        if flags & !1 != 0 || !self.heaps.contains_key(&heap) {
+            return false;
+        }
+        address == 0 || self.blocks.get(&address).is_some_and(|b| b.heap == heap)
+    }
+    /// RtlSizeHeap, where a null heap matches the block's own heap. Nothing is
+    /// returned for an unknown heap, a retired block or an interior pointer.
+    pub fn any_size(&self, heap: u64, flags: u32, address: u64) -> Option<u64> {
+        if flags & !1 != 0 || address == 0 || (heap != 0 && !self.heaps.contains_key(&heap)) {
+            return None;
+        }
+        self.blocks
+            .get(&address)
+            .filter(|b| heap == 0 || b.heap == heap)
+            .map(|b| b.size)
+    }
     pub fn allocate(
         &self,
         vm: &VirtualMemory,

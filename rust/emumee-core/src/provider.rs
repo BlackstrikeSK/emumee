@@ -20,7 +20,7 @@ pub use reference_code::{
     CodeSection, CodeView, RelocatedCodeSection, RelocatedCodeView, inspect_pinned_nt22631,
     relocate_pinned_nt22631, relocate_pinned_nt26200,
 };
-pub use typed::{DataExport, catalog_image_with_data, image_with_data};
+pub use typed::{DataExport, catalog_image_with_data, image_with_data, image_with_mutable_data};
 
 #[derive(Debug, Error)]
 #[error("Synthetic PE provider: {0}")]

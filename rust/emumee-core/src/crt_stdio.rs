@@ -36,6 +36,8 @@ pub enum BackingKind {
     LegacyIob,
     UcrtIob,
     Errno(u64),
+    /// One page holding one opened FILE structure, keyed by its stream number.
+    Stream(u64),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Backing {
@@ -53,6 +55,63 @@ pub enum Request {
 struct Process {
     handles: [u64; 3],
     modes: [u32; 3],
+}
+/// One stream opened by the guest. The virtual file system owns the content and
+/// the position; this record only binds a guest FILE pointer to that handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Stream {
+    pub owner: u64,
+    pub number: u64,
+    pub address: u64,
+    pub handle: u64,
+    pub descriptor: i32,
+    pub readable: bool,
+    pub writable: bool,
+}
+/// How a stream was requested, after the mode string has been parsed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamMode {
+    pub readable: bool,
+    pub writable: bool,
+    pub append: bool,
+    pub binary: bool,
+    pub access: u32,
+    pub disposition: u32,
+}
+/// Parses a CRT fopen mode string. Only the documented combinations are
+/// accepted; anything else is refused instead of guessed.
+pub fn stream_mode(mode: &str) -> Result<StreamMode> {
+    let mut chars = mode.chars();
+    let Some(first) = chars.next() else {
+        return Err(StdioError::Unsupported("empty CRT stream mode"));
+    };
+    let mut update = false;
+    let mut binary = None;
+    for character in chars {
+        match character {
+            '+' if !update => update = true,
+            'b' if binary.is_none() => binary = Some(true),
+            't' if binary.is_none() => binary = Some(false),
+            // Commit-to-disk, no-inherit, sequential and encoding suffixes all
+            // change host or encoding behaviour this profile does not model.
+            _ => return Err(StdioError::Unsupported("CRT stream mode is not modeled")),
+        }
+    }
+    let (readable, writable, append, disposition) = match first {
+        'r' => (true, update, false, 3),
+        'w' => (update, true, false, 2),
+        'a' => (update, true, true, 4),
+        _ => return Err(StdioError::Unsupported("CRT stream mode is not modeled")),
+    };
+    Ok(StreamMode {
+        readable,
+        writable,
+        append,
+        binary: binary.unwrap_or(false),
+        access: (if readable { 0x8000_0000u32 } else { 0 })
+            | (if writable { 0x4000_0000 } else { 0 }),
+        disposition,
+    })
 }
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -137,6 +196,7 @@ pub struct Report {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct StateReport {
+    pub streams: Vec<Stream>,
     pub processes: Vec<ProcessReport>,
     pub backings: Vec<Backing>,
     pub scope: &'static str,
@@ -146,6 +206,8 @@ pub struct Stdio {
     architecture: Architecture,
     processes: BTreeMap<u64, Process>,
     backings: BTreeMap<(u64, BackingKind), Backing>,
+    streams: BTreeMap<u64, Stream>,
+    next_stream: u64,
     console: Console,
 }
 /// Public legacy _iobuf layout used by the Python bridge, not UCRT's opaque FILE.
@@ -173,6 +235,8 @@ impl Stdio {
             architecture,
             processes: BTreeMap::new(),
             backings: BTreeMap::new(),
+            streams: BTreeMap::new(),
+            next_stream: 1,
             console: Console::default(),
         }
     }
@@ -238,6 +302,7 @@ impl Stdio {
             BackingKind::LegacyIob => legacy_iob_image(self.architecture),
             BackingKind::UcrtIob => vec![0; 3 * 0x80],
             BackingKind::Errno(_) => vec![0; 4],
+            BackingKind::Stream(_) => vec![0; legacy_layout(self.architecture).0],
         };
         Ok(Request::Allocate { image, size: 4096 })
     }
@@ -293,6 +358,7 @@ impl Stdio {
     }
     pub fn cleanup_process(&mut self, owner: u64) -> Vec<Backing> {
         self.processes.remove(&owner);
+        self.streams.retain(|_, record| record.owner != owner);
         let backings = self
             .backings
             .values()
@@ -328,19 +394,83 @@ impl Stdio {
         if stream == 0 || !self.processes.contains_key(&owner) {
             return Ok(-1);
         }
+        if let Some(record) = self.opened(owner, stream) {
+            return Ok(record.descriptor);
+        }
         self.standard_index(owner, stream)
             .ok_or(StdioError::Unsupported(
                 "nonstandard, foreign or retired FILE pointer",
             ))
     }
     pub fn fflush(&self, owner: u64, stream: u64) -> Result<i32> {
-        if stream == 0 || self.standard_index(owner, stream).is_some() {
+        if stream == 0
+            || self.standard_index(owner, stream).is_some()
+            || self.opened(owner, stream).is_some()
+        {
             Ok(0)
         } else {
             Err(StdioError::Unsupported(
                 "nonstandard FILE flush; standard streams are unbuffered",
             ))
         }
+    }
+    /// The opened stream a guest FILE pointer names, if this process owns one.
+    pub fn opened(&self, owner: u64, stream: u64) -> Option<Stream> {
+        self.streams
+            .get(&stream)
+            .filter(|record| record.owner == owner)
+            .copied()
+    }
+    /// Reserves the next stream number and descriptor. The engine allocates the
+    /// page and writes the image before registering it.
+    pub fn next_stream(&mut self, owner: u64) -> Result<(u64, i32)> {
+        self.process(owner)?;
+        let number = self.next_stream;
+        let descriptor = 3 + i32::try_from(self.streams.len()).unwrap_or(i32::MAX);
+        if number > u64::from(u32::MAX) || descriptor >= 256 {
+            return Err(StdioError::Limit);
+        }
+        self.next_stream += 1;
+        Ok((number, descriptor))
+    }
+    /// The FILE image for one opened stream, in the documented legacy layout.
+    pub fn stream_image(&self, descriptor: i32, mode: StreamMode) -> Vec<u8> {
+        let (stride, flag, file) = legacy_layout(self.architecture);
+        let mut image = vec![0; stride];
+        let flags = (if mode.readable { 1u32 } else { 0 }) | (if mode.writable { 2 } else { 0 });
+        image[flag..flag + 4].copy_from_slice(&flags.to_le_bytes());
+        image[file..file + 4].copy_from_slice(&(descriptor as u32).to_le_bytes());
+        image
+    }
+    /// Commits a stream only after its guest page and handle both exist.
+    pub fn register_stream(&mut self, record: Stream) -> Result<()> {
+        self.process(record.owner)?;
+        if record.address == 0 || self.streams.contains_key(&record.address) {
+            return Err(StdioError::Invalid("duplicate or invalid guest FILE"));
+        }
+        if self.streams.len() >= MAX_BACKINGS {
+            return Err(StdioError::Limit);
+        }
+        self.streams.insert(record.address, record);
+        Ok(())
+    }
+    /// Retires one stream, returning its record so the engine can close the
+    /// handle and retire the page it owns.
+    pub fn retire_stream(&mut self, owner: u64, stream: u64) -> Result<Stream> {
+        let record = self
+            .opened(owner, stream)
+            .ok_or(StdioError::Unsupported("unknown or retired guest FILE"))?;
+        self.streams.remove(&stream);
+        self.backings
+            .remove(&(owner, BackingKind::Stream(record.number)));
+        Ok(record)
+    }
+    pub fn open_streams(&self, owner: u64) -> Vec<Stream> {
+        self.streams
+            .values()
+            .filter(|record| record.owner == owner)
+            .copied()
+            .collect()
     }
     pub fn setmode(&mut self, owner: u64, descriptor: i32, mode: u32) -> Result<u32> {
         if !(0..=2).contains(&descriptor)
@@ -587,7 +717,8 @@ impl Stdio {
                 })
                 .collect(),
             backings: self.backings.values().copied().collect(),
-            scope: "Guest-owned CRT metadata only. Console tokens are guest-only and the Windows console model validates handle/alias ownership separately. No arbitrary FILE streams; formatted events come from the separate bounded grammar.",
+            streams: self.streams.values().copied().collect(),
+            scope: "Guest-owned CRT metadata only. Console tokens are guest-only and the Windows console model validates handle/alias ownership separately. Opened streams bind one guest FILE page to one virtual file system handle; formatted events come from the separate bounded grammar.",
         }
     }
 }

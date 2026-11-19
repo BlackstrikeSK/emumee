@@ -1,8 +1,9 @@
 //! Bounded guest-owned legacy CRT standard streams. This adapter does not bind
 //! GetStdHandle/WriteFile: f001..3 are guest console metadata, never host handles.
 use super::*;
+use anyhow::Context;
 use emumee_core::{
-    crt_stdio::{BackingKind, CONSOLE_HANDLES, Request, Stdio},
+    crt_stdio::{BackingKind, CONSOLE_HANDLES, Request, Stdio, Stream, stream_mode},
     virtual_memory as vm,
 };
 const OWNER: u64 = 1024;
@@ -17,6 +18,13 @@ pub(super) enum Call {
     Isatty,
     OsHandle,
     Errno,
+    Open(bool),
+    Close,
+    Read,
+    Seek,
+    Tell,
+    PutChar,
+    Puts,
     Unsupported(&'static str),
 }
 pub(crate) struct State {
@@ -53,6 +61,14 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
         "_get_osfhandle" if msvcrt || ucrt || stdio => (Call::OsHandle, 1, T::Pointer),
         "_o__get_osfhandle" if private => (Call::OsHandle, 1, T::Pointer),
         "_errno" if msvcrt || ucrt || runtime => (Call::Errno, 0, T::Pointer),
+        "fopen" if msvcrt || ucrt || stdio => (Call::Open(false), 2, T::Pointer),
+        "_wfopen" if msvcrt || ucrt || stdio => (Call::Open(true), 2, T::Pointer),
+        "fclose" if msvcrt || ucrt || stdio => (Call::Close, 1, T::U32),
+        "fread" if msvcrt || ucrt || stdio => (Call::Read, 4, T::Pointer),
+        "fseek" if msvcrt || ucrt || stdio => (Call::Seek, 3, T::U32),
+        "ftell" if msvcrt || ucrt || stdio => (Call::Tell, 1, T::U32),
+        "fputc" | "putc" if msvcrt || ucrt || stdio => (Call::PutChar, 2, T::U32),
+        "puts" if msvcrt || ucrt || stdio => (Call::Puts, 1, T::U32),
         "_o__errno" if private => (Call::Errno, 0, T::Pointer),
         "printf" | "fprintf" | "wprintf" | "fwprintf" | "_vsnwprintf" | "swprintf_s"
         | "_snwprintf_s"
@@ -220,5 +236,201 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 .write(OWNER, descriptor, &bytes)? as u64
         }
         Call::Unsupported(reason) => bail!("{reason}"),
+        // fopen resolves the guest path through the virtual file system and
+        // binds one page-owned FILE to the handle it returns.
+        Call::Open(wide) => {
+            if args[0] == 0 || args[1] == 0 {
+                return Ok(0);
+            }
+            let path = super::files::path(engine, args[0], wide)?;
+            let mode = {
+                let raw = super::files::path(engine, args[1], wide)?;
+                stream_mode(&raw)?
+            };
+            let (number, descriptor) = engine
+                .get_data_mut()
+                .apis
+                .crt_stdio
+                .model
+                .next_stream(OWNER)?;
+            let opened = engine.get_data_mut().apis.files.open(
+                &path,
+                mode.access,
+                3,
+                mode.disposition,
+                OWNER,
+            );
+            let (handle, last) = match opened {
+                Ok(value) => value,
+                Err(error) => {
+                    engine.get_data_mut().apis.last_error = error.win32;
+                    return Ok(0);
+                }
+            };
+            engine.get_data_mut().apis.last_error = last;
+            if mode.append {
+                engine
+                    .get_data_mut()
+                    .apis
+                    .files
+                    .seek(handle, OWNER, 0, 2)?;
+            }
+            let address = backing(engine, BackingKind::Stream(number))?;
+            let image = engine
+                .get_data()
+                .apis
+                .crt_stdio
+                .model
+                .stream_image(descriptor, mode);
+            crate::cpu::write(engine, address, &image)?;
+            engine
+                .get_data_mut()
+                .apis
+                .crt_stdio
+                .model
+                .register_stream(Stream {
+                    owner: OWNER,
+                    number,
+                    address,
+                    handle,
+                    descriptor,
+                    readable: mode.readable,
+                    writable: mode.writable,
+                })?;
+            address
+        }
+        Call::Close => {
+            if args[0] == 0 {
+                return Ok(u64::from(u32::MAX));
+            }
+            let record = engine
+                .get_data_mut()
+                .apis
+                .crt_stdio
+                .model
+                .retire_stream(OWNER, args[0])?;
+            engine
+                .get_data_mut()
+                .apis
+                .files
+                .close(record.handle, OWNER)?;
+            // The FILE page stays mapped: retiring guest memory here would
+            // invalidate a pointer the guest may still hold.
+            0
+        }
+        Call::Read => {
+            let record = stream(engine, args[3])?;
+            ensure!(record.readable, "CRT stream was not opened for reading");
+            let Some(total) = args[1].checked_mul(args[2]) else {
+                return Ok(0);
+            };
+            if total == 0 || args[0] == 0 {
+                return Ok(0);
+            }
+            ensure!(
+                total <= emumee_core::crt_stdio::MAX_RAW as u64,
+                "CRT stream read exceeds the modeled transfer bound"
+            );
+            require(engine, args[0], total, P::WRITE)?;
+            let bytes = engine.get_data_mut().apis.files.read(
+                record.handle,
+                OWNER,
+                total as usize,
+            )?;
+            if !bytes.is_empty() {
+                crate::cpu::write(engine, args[0], &bytes)?;
+            }
+            // fread reports whole items, as the C contract requires.
+            bytes.len() as u64 / args[1]
+        }
+        Call::Seek => {
+            let record = stream(engine, args[0])?;
+            ensure!(args[2] <= 2, "CRT stream seek origin is not modeled");
+            let offset = args[1] as u32 as i32 as i64;
+            match engine
+                .get_data_mut()
+                .apis
+                .files
+                .seek(record.handle, OWNER, offset, args[2] as u32)
+            {
+                Ok(_) => 0,
+                Err(_) => u64::from(u32::MAX),
+            }
+        }
+        Call::Tell => {
+            let record = stream(engine, args[0])?;
+            match engine
+                .get_data_mut()
+                .apis
+                .files
+                .seek(record.handle, OWNER, 0, 1)
+            {
+                Ok(position) => position,
+                Err(_) => u64::from(u32::MAX),
+            }
+        }
+        // fputc writes one byte, unlike the frozen reference which only echoed
+        // the character back without producing output.
+        Call::PutChar => {
+            let byte = args[0] as u8;
+            if let Ok(descriptor) = engine
+                .get_data()
+                .apis
+                .crt_stdio
+                .model
+                .fileno(OWNER, args[1])
+                && (1..=2).contains(&descriptor)
+            {
+                engine
+                    .get_data_mut()
+                    .apis
+                    .crt_stdio
+                    .model
+                    .write(OWNER, descriptor, &[byte])?;
+                return Ok(u64::from(byte));
+            }
+            let record = stream(engine, args[1])?;
+            ensure!(record.writable, "CRT stream was not opened for writing");
+            engine
+                .get_data_mut()
+                .apis
+                .files
+                .write(record.handle, OWNER, &[byte])?;
+            u64::from(byte)
+        }
+        Call::Puts => {
+            ensure!(args[0] != 0, "CRT puts string pointer is null");
+            let mut text = Vec::new();
+            for index in 0..emumee_core::crt_stdio::MAX_WRITE as u64 {
+                let byte = read(engine, args[0] + index, 1)?[0];
+                if byte == 0 {
+                    break;
+                }
+                text.push(byte);
+            }
+            ensure!(
+                text.len() < emumee_core::crt_stdio::MAX_WRITE,
+                "CRT puts string exceeds the modeled output bound"
+            );
+            text.push(b'\n');
+            let written = engine
+                .get_data_mut()
+                .apis
+                .crt_stdio
+                .model
+                .write(OWNER, 1, &text)?;
+            // puts returns a nonnegative value on success.
+            u64::from(written != 0)
+        }
     })
+}
+/// The opened stream a guest FILE pointer names, or an explicit stop.
+fn stream(engine: &Unicorn<Trace>, address: u64) -> Result<Stream> {
+    engine
+        .get_data()
+        .apis
+        .crt_stdio
+        .model
+        .opened(OWNER, address)
+        .context("CRT stream pointer is not an opened guest FILE")
 }

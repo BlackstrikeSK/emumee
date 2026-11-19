@@ -83,5 +83,49 @@ class PackageFingerprintTests(unittest.TestCase):
         self.assertFalse((self.root / 'new-bundle').exists())
 
 
+@unittest.skipUnless(shutil.which('powershell'), 'Windows PowerShell is required')
+class BuildPointerTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='native build pointer ')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / 'tools').mkdir()
+        shutil.copyfile(ROOT / 'build.ps1', self.root / 'build.ps1')
+        self.package = self.root / 'tools/package_rust.ps1'
+        self.package.write_text(
+            'param([string]$Destination)\n'
+            'New-Item -ItemType Directory -Path $Destination | Out-Null\n'
+            '$global:LASTEXITCODE = 0\n', encoding='utf-8')
+
+    def run_build(self):
+        return subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File',
+                               str(self.root / 'build.ps1'), '-SkipBuild'],
+                              capture_output=True, text=True, timeout=30)
+
+    def test_windows_powershell_creates_and_atomically_replaces_bundle_pointer(self):
+        pointer = self.root / 'dist/current-rust-bundle.txt'
+        selected = []
+        for _ in range(2):
+            result = self.run_build()
+            self.assertEqual(0, result.returncode, result.stderr)
+            name = pointer.read_text(encoding='utf-8').strip()
+            self.assertRegex(name, r'^Emumee-rust-\d{8}T\d{6}Z-[0-9a-f]{8}$')
+            self.assertTrue((pointer.parent / name).is_dir())
+            self.assertEqual([], list(pointer.parent.glob('.current-*.tmp')))
+            selected.append(name)
+        self.assertNotEqual(*selected)
+        self.assertTrue((pointer.parent / selected[0]).is_dir())
+
+    def test_packaging_failure_preserves_selected_bundle(self):
+        pointer = self.root / 'dist/current-rust-bundle.txt'
+        pointer.parent.mkdir()
+        pointer.write_bytes(b'previous-bundle\n')
+        self.package.write_text('exit 9\n', encoding='utf-8')
+        result = self.run_build()
+        self.assertEqual(9, result.returncode, result.stderr)
+        self.assertEqual(b'previous-bundle\n', pointer.read_bytes())
+        self.assertEqual([], list(pointer.parent.glob('.current-*.tmp')))
+
+
 if __name__ == '__main__':
     unittest.main()

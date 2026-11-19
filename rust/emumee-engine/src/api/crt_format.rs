@@ -1,7 +1,9 @@
 //! Bounded legacy CRT formatting over guest integer slots and checked memory.
 //! No host printf, libc, locale, FILE pointer or variadic host call is used.
 use super::*;
-use emumee_core::crt_format::{self as format, BufferMode, Format, FormatError, Profile, Reader};
+use emumee_core::crt_format::{
+    self as format, Assignment, BufferMode, Format, FormatError, Profile, Reader,
+};
 const OWNER: u64 = 1024;
 #[derive(Clone, Debug, Serialize)]
 pub struct KernelFormatObservation {
@@ -71,6 +73,11 @@ pub(super) enum Call {
     CommonWide,
     CommonNarrow,
     KernelDebug,
+    NarrowBuffer { bounded: bool, list: bool },
+    NarrowConsole(bool),
+    WideLegacyBuffer,
+    CommonNarrowBuffer,
+    Scan,
 }
 pub(super) fn definition(
     architecture: Architecture,
@@ -99,7 +106,7 @@ pub(super) fn definition(
             },
             T::U32,
         ),
-        "__stdio_common_vfprintf" | "_o___stdio_common_vfprintf" if common => (
+        "__stdio_common_vfprintf" | "_o___stdio_common_vfprintf" if common || legacy => (
             Call::CommonNarrow,
             if architecture == Architecture::X86 {
                 6
@@ -108,6 +115,46 @@ pub(super) fn definition(
             },
             T::U32,
         ),
+        "__stdio_common_vsprintf" | "_o___stdio_common_vsprintf" if common || legacy => (
+            Call::CommonNarrowBuffer,
+            if architecture == Architecture::X86 {
+                7
+            } else {
+                6
+            },
+            T::U32,
+        ),
+        // sprintf writes as much as the rendered text needs; the counted forms
+        // stop at their capacity and report truncation with -1.
+        "sprintf" if legacy => (
+            Call::NarrowBuffer {
+                bounded: false,
+                list: false,
+            },
+            2,
+            T::U32,
+        ),
+        "_snprintf" if legacy => (
+            Call::NarrowBuffer {
+                bounded: true,
+                list: false,
+            },
+            3,
+            T::U32,
+        ),
+        "_vsnprintf" if legacy => (
+            Call::NarrowBuffer {
+                bounded: true,
+                list: true,
+            },
+            4,
+            T::U32,
+        ),
+        "_snwprintf" if legacy => (Call::WideLegacyBuffer, 3, T::U32),
+        // Direct variadic narrow output, the counterpart of the wide spellings.
+        "printf" if legacy => (Call::NarrowConsole(false), 1, T::U32),
+        "fprintf" if legacy => (Call::NarrowConsole(true), 2, T::U32),
+        "sscanf" if legacy => (Call::Scan, 2, T::U32),
         _ => return None,
     })
 }
@@ -218,6 +265,12 @@ fn rendered(
         index: 0,
     };
     Ok(parsed.render(&mut reader, engine.get_data().architecture.width())?)
+}
+/// The common formatting entry points carry an all-ones count for the
+/// unbounded sprintf and vsprintf spellings, which the C contract defines as
+/// "write as much as the result needs".
+fn unbounded(count: u64) -> bool {
+    count == u64::MAX || count == u64::from(u32::MAX)
 }
 fn common(args: &[u64], architecture: Architecture) -> (u64, &[u64]) {
     if architecture == Architecture::X86 {
@@ -405,7 +458,12 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 Profile::WideBuffer,
                 Arguments::List(args[4]),
             )?;
-            output(engine, args[0], args[1], &value, BufferMode::Legacy, None)
+            let count = if unbounded(args[1]) {
+                value.encode_utf16().count() as u64 + 1
+            } else {
+                args[1]
+            };
+            output(engine, args[0], count, &value, BufferMode::Legacy, None)
         }
         Call::CommonNarrow => {
             let (options, args) = common(args, architecture);
@@ -442,7 +500,191 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 .formatted_write(OWNER, descriptor, &value, false)?;
             Ok(result)
         }
+        // Output goes to the modeled console for a standard stream, or to the
+        // virtual file the guest opened. No host stdio is involved.
+        Call::NarrowConsole(stream) => {
+            let format_index = usize::from(stream);
+            let opened = stream
+                .then(|| {
+                    engine
+                        .get_data()
+                        .apis
+                        .crt_stdio
+                        .model
+                        .opened(OWNER, args[0])
+                })
+                .flatten();
+            let descriptor = match opened {
+                Some(_) => 0,
+                None if stream => engine
+                    .get_data()
+                    .apis
+                    .crt_stdio
+                    .model
+                    .fileno(OWNER, args[0])?,
+                None => 1,
+            };
+            ensure!(
+                opened.is_some() || matches!(descriptor, 1 | 2),
+                "CRT formatting profile unsupported: nonstandard output FILE"
+            );
+            let value = rendered(
+                engine,
+                args[format_index],
+                Profile::NarrowConsole,
+                Arguments::Direct(format_index + 1),
+            )?;
+            let result = value.len() as u64;
+            match opened {
+                Some(record) => {
+                    ensure!(
+                        record.writable,
+                        "CRT stream was not opened for writing"
+                    );
+                    engine.get_data_mut().apis.files.write(
+                        record.handle,
+                        OWNER,
+                        value.as_bytes(),
+                    )?;
+                }
+                None => {
+                    engine
+                        .get_data_mut()
+                        .apis
+                        .crt_stdio
+                        .model
+                        .formatted_write(OWNER, descriptor, &value, false)?;
+                }
+            }
+            Ok(result)
+        }
+        Call::NarrowBuffer { bounded, list } => {
+            let format_index = if bounded { 2 } else { 1 };
+            let source = if list {
+                ensure!(
+                    args[3] != 0,
+                    "CRT formatting profile unsupported: null variadic list"
+                );
+                Arguments::List(args[3])
+            } else {
+                Arguments::Direct(format_index + 1)
+            };
+            let value = rendered(engine, args[format_index], Profile::NarrowConsole, source)?;
+            // Unbounded sprintf is capacity equal to the rendered length plus
+            // its terminator, which is the contract the caller promises.
+            let count = if bounded {
+                args[1]
+            } else {
+                value.len() as u64 + 1
+            };
+            narrow_output(engine, args[0], count, &value, BufferMode::Legacy)
+        }
+        Call::WideLegacyBuffer => {
+            let value = rendered(engine, args[2], Profile::WideBuffer, Arguments::Direct(3))?;
+            output(
+                engine,
+                args[0],
+                args[1],
+                &value,
+                BufferMode::Legacy,
+                Some(("_snwprintf", args[2])),
+            )
+        }
+        Call::CommonNarrowBuffer => {
+            let (options, args) = common(args, architecture);
+            ensure!(
+                options & !3 == 0 && args[3] == 0,
+                "CRT formatting profile unsupported: locale or common formatting options"
+            );
+            ensure!(
+                args[4] != 0,
+                "CRT formatting profile unsupported: null variadic list"
+            );
+            let value = rendered(
+                engine,
+                args[2],
+                Profile::NarrowConsole,
+                Arguments::List(args[4]),
+            )?;
+            let count = if unbounded(args[1]) {
+                value.len() as u64 + 1
+            } else {
+                args[1]
+            };
+            narrow_output(engine, args[0], count, &value, BufferMode::Legacy)
+        }
+        // sscanf assigns through guest pointers taken from the ordinary variadic
+        // slots. Every destination is checked before anything is written, so a
+        // refused assignment leaves earlier ones in place exactly as the
+        // conversion order produced them.
+        Call::Scan => {
+            ensure!(
+                args[0] != 0 && args[1] != 0,
+                "CRT scanning profile unsupported: null input or format"
+            );
+            let format = text(engine, args[1], false)?;
+            let input = text(engine, args[0], false)?;
+            let plan = format::scan(&format, input.as_bytes())?;
+            if plan.assignments.is_empty() && plan.exhausted {
+                // EOF before the first conversion.
+                return Ok(u64::from(u32::MAX));
+            }
+            let width = engine.get_data().architecture.width();
+            let mut assigned = 0u64;
+            for (index, assignment) in plan.assignments.iter().enumerate() {
+                let slot = 2 + index;
+                let mut reader = GuestArguments {
+                    engine,
+                    source: Arguments::Direct(2),
+                    index: slot - 2,
+                };
+                let destination = reader.next()?;
+                ensure!(
+                    destination != 0,
+                    "CRT scanning profile unsupported: null assignment destination"
+                );
+                match *assignment {
+                    Assignment::Integer { width: bytes, value } => {
+                        ensure!(
+                            bytes <= 8,
+                            "CRT scanning profile unsupported: assignment width"
+                        );
+                        require(engine, destination, bytes as u64, P::WRITE)?;
+                        crate::cpu::write(engine, destination, &value.to_le_bytes()[..bytes])?;
+                    }
+                    Assignment::Text { start, length } => {
+                        let bytes = &input.as_bytes()[start..start + length];
+                        require(engine, destination, length as u64 + 1, P::WRITE)?;
+                        let mut payload = bytes.to_vec();
+                        payload.push(0);
+                        crate::cpu::write(engine, destination, &payload)?;
+                    }
+                }
+                assigned += 1;
+                let _ = width;
+            }
+            Ok(assigned)
+        }
     }
+}
+/// Writes one narrow formatted result, mirroring the wide planner: nothing is
+/// written until the plan and the destination have both been checked.
+fn narrow_output(
+    engine: &mut Unicorn<Trace>,
+    buffer: u64,
+    count: u64,
+    value: &str,
+    mode: BufferMode,
+) -> Result<u64> {
+    ensure!(
+        buffer != 0 && count > 0 && count <= format::MAX_OUTPUT as u64,
+        "CRT formatting profile unsupported: invalid narrow output destination/capacity"
+    );
+    let plan = format::narrow_buffer(value, count as usize, mode)?;
+    require(engine, buffer, plan.bytes.len() as u64, P::WRITE)?;
+    let effect = crate::cpu::write(engine, buffer, &plan.bytes);
+    super::kernel_rtl::format_write_result(engine, effect)?;
+    Ok(plan.result as u32 as u64)
 }
 
 #[cfg(test)]

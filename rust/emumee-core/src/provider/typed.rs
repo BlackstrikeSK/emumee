@@ -1,4 +1,4 @@
-//! Bounded typed READ/NX exports alongside modeled routine gates. Data RVAs
+//! Bounded typed READ/NX or explicit RW/NX exports alongside modeled routine gates. Data RVAs
 //! lie outside the export-directory range, so PE readers cannot treat values
 //! as forwarder strings. Existing routine-only image helpers remain unchanged.
 use super::*;
@@ -11,7 +11,11 @@ pub struct DataExport {
     pub bytes: Vec<u8>,
     pub alignment: usize,
 }
-fn layout(routines: &[(&str, u64)], data: &[DataExport]) -> Result<Vec<usize>, ProviderError> {
+fn layout(
+    routines: &[(&str, u64)],
+    data: &[DataExport],
+    bound: usize,
+) -> Result<Vec<usize>, ProviderError> {
     if data.len() > 32 {
         return Err(ProviderError("typed data export count exceeds 32"));
     }
@@ -24,7 +28,7 @@ fn layout(routines: &[(&str, u64)], data: &[DataExport]) -> Result<Vec<usize>, P
             || !item.name.bytes().all(|b| b.is_ascii_graphic())
             || !names.insert(item.name)
             || item.bytes.is_empty()
-            || item.bytes.len() > 4096
+            || item.bytes.len() > bound
             || !item.alignment.is_power_of_two()
             || item.alignment > 16
         {
@@ -37,7 +41,7 @@ fn layout(routines: &[(&str, u64)], data: &[DataExport]) -> Result<Vec<usize>, P
         cursor = cursor
             .checked_add(item.bytes.len())
             .ok_or(ProviderError("typed data size overflow"))?;
-        if cursor > 4096 {
+        if cursor > bound {
             return Err(ProviderError("typed data exports exceed reserved page"));
         }
     }
@@ -64,12 +68,39 @@ pub fn image_with_data(
     routines: &[(&str, u64)],
     data: &[DataExport],
 ) -> Result<Vec<u8>, ProviderError> {
-    let offsets = layout(routines, data)?;
+    typed_image(architecture, base, module, routines, data, false)
+}
+/// Mutable user-runtime globals. Existing kernel READ/NX exports retain their
+/// one-page limit and permissions; this opt-in section is bounded to 1 MiB.
+pub fn image_with_mutable_data(
+    architecture: Architecture,
+    base: u64,
+    module: &str,
+    routines: &[(&str, u64)],
+    data: &[DataExport],
+) -> Result<Vec<u8>, ProviderError> {
+    typed_image(architecture, base, module, routines, data, true)
+}
+fn typed_image(
+    architecture: Architecture,
+    base: u64,
+    module: &str,
+    routines: &[(&str, u64)],
+    data: &[DataExport],
+    writable: bool,
+) -> Result<Vec<u8>, ProviderError> {
+    let offsets = layout(routines, data, if writable { 1024 * 1024 } else { 4096 })?;
     if data.is_empty() {
         return image(architecture, base, module, routines);
     }
+    let size = offsets
+        .last()
+        .zip(data.last())
+        .map_or(0, |(offset, item)| offset + item.bytes.len())
+        .div_ceil(4096)
+        * 4096;
     let end = base
-        .checked_add(0x7000)
+        .checked_add(0x6000 + size as u64)
         .ok_or(ProviderError("typed provider base overflow"))?;
     if architecture == Architecture::X86 && end > 1u64 << 32 {
         return Err(ProviderError("typed provider exceeds x86 address space"));
@@ -78,10 +109,10 @@ pub fn image_with_data(
     all.extend(data.iter().map(|item| (item.name, 1)));
     let mut bytes = image(architecture, base, module, &all)?;
     let ordinals = ordinals(&bytes)?;
-    bytes.resize(0x6200, 0);
+    bytes.resize(0x5200 + size, 0);
     word(&mut bytes, 0x86, 3);
-    dword(&mut bytes, 0x98 + 8, 0x5000);
-    dword(&mut bytes, 0x98 + 56, 0x7000);
+    dword(&mut bytes, 0x98 + 8, 0x4000 + size as u32);
+    dword(&mut bytes, 0x98 + 56, 0x6000 + size as u32);
     let at =
         0x98 + if architecture == Architecture::X64 {
             0xf0
@@ -90,11 +121,11 @@ pub fn image_with_data(
         } + 80;
     bytes[at..at + 8].copy_from_slice(b".modeld\0");
     for (offset, value) in [
-        (8, 0x1000),
+        (8, size as u32),
         (12, 0x6000),
-        (16, 0x1000),
+        (16, size as u32),
         (20, 0x5200),
-        (36, 0x40000040),
+        (36, if writable { 0xc0000040 } else { 0x40000040 }),
     ] {
         dword(&mut bytes, at + offset, value);
     }
@@ -113,7 +144,7 @@ pub fn catalog_image_with_data(
     routines: &[(&str, u64)],
     data: &[DataExport],
 ) -> Result<CatalogImage, ProviderError> {
-    let offsets = layout(routines, data)?;
+    let offsets = layout(routines, data, 4096)?;
     if data
         .iter()
         .any(|item| kernel_export_kind(item.name) != Some("data"))
@@ -178,6 +209,62 @@ pub fn catalog_image_with_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mutable_user_data_spans_pages_without_making_exports_or_code_writable() {
+        for architecture in [Architecture::X86, Architecture::X64] {
+            let data = [DataExport {
+                name: "_acmdln",
+                bytes: vec![0x5a; 5000],
+                alignment: 8,
+            }];
+            let bytes = image_with_mutable_data(
+                architecture,
+                0x74000000,
+                "msvcrt.dll",
+                &[("__p__acmdln", 0x70000000)],
+                &data,
+            )
+            .unwrap();
+            let pe = PeImage::parse(&bytes, "msvcrt.dll").unwrap();
+            assert_eq!(pe.image_size, 0x8000);
+            let loaded = pe.materialize(&bytes, pe.image_base).unwrap();
+            let export = pe
+                .exports
+                .iter()
+                .find(|e| e.names.iter().any(|n| n == "_acmdln"))
+                .unwrap();
+            let ExportTarget::Address { rva } = export.target else {
+                panic!("data became a forwarder")
+            };
+            assert_eq!(&loaded[rva as usize..rva as usize + 5000], &data[0].bytes);
+            for section in &pe.sections {
+                assert_eq!(
+                    section.characteristics & 0xe0000000,
+                    match section.name.as_str() {
+                        ".text" => 0x60000000,
+                        ".modeld" => 0xc0000000,
+                        _ => 0x40000000,
+                    }
+                );
+            }
+            assert!(
+                image_with_data(architecture, pe.image_base, "msvcrt.dll", &[], &data).is_err()
+            );
+            assert!(
+                image_with_mutable_data(
+                    architecture,
+                    pe.image_base,
+                    "msvcrt.dll",
+                    &[],
+                    &[DataExport {
+                        bytes: vec![0; 1024 * 1024 + 1],
+                        ..data[0].clone()
+                    }]
+                )
+                .is_err()
+            );
+        }
+    }
     fn globals() -> Vec<DataExport> {
         vec![
             DataExport {

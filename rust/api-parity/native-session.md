@@ -1,6 +1,28 @@
 # Native PE session checkpoint
 
-## Current M4 completion checkpoint (2026-11-19)
+## Current M5 completion checkpoint (2026-11-19)
+
+M4 is committed at `2f2dc98`. All four M5 obligations and the milestone exit
+criterion are complete: the imported CRT data export and its aliases, the heap,
+local, global and virtual allocation families, CRT startup, teardown, atexit,
+reentrancy and state separation, and the string, conversion, locale, formatting,
+numeric and file/stdio contracts. 149 previously unmodeled exports across the
+crt, crt-format, crt-math, crt-stdio, allocation and strings families are now
+modeled or reviewed explicit refusals, with 110 contained guest controls across
+both architectures.
+
+The exit criterion is met by harmless compiler-produced C programs built with the
+installed MSVC toolchain against a generated legacy `msvcrt.dll` import library:
+one exercises startup accessors, strings, heap, formatting, file streams, console
+output and exit-time teardown and exits with a known code on x86 and x64, and one
+negative control stops explicitly on an unmodeled contract.
+
+Scope, intentional model policies, reviewed refusals, receipt locations and what
+stays open: `docs/native-pe/m5-crt-foundations.md`. Per-contract semantic rows,
+later milestones and M10 remain open; the frozen string reference corpus and
+baseline sources are unchanged.
+
+## Historical M4 completion checkpoint (2026-11-19)
 
 The bounded M4 runtime and source/package regression qualification are complete.
 All 1,123 workspace tests pass, including 539 engine tests and 43 M4 tests;

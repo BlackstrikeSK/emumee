@@ -19,5 +19,15 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $pointer = Join-Path $dist 'current-rust-bundle.txt'
 $temporary = Join-Path $dist ('.current-' + [Guid]::NewGuid().ToString('N') + '.tmp')
 [System.IO.File]::WriteAllText($temporary, $bundleName + "`n", [System.Text.UTF8Encoding]::new($false))
-[System.IO.File]::Move($temporary, $pointer, $true)
+try {
+    if ([System.IO.File]::Exists($pointer)) {
+        [System.IO.File]::Replace($temporary, $pointer, [NullString]::Value)
+    } else {
+        [System.IO.File]::Move($temporary, $pointer)
+    }
+} finally {
+    if ([System.IO.File]::Exists($temporary)) {
+        [System.IO.File]::Delete($temporary)
+    }
+}
 Write-Host "Rust Emumee bundle built in $destination."

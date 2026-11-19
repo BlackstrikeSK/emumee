@@ -55,7 +55,10 @@ fn stdio_rejects_unmodeled_encoding_buffers_descriptors_mapping_changes_and_form
             (F::OwnedFree, "CRT-owned FILE/errno"),
             (F::OwnedProtect, "CRT-owned FILE/errno"),
             (F::OwnedRecommit, "CRT-owned FILE/errno"),
-            (F::FormatUnsupported, "real guest format model"),
+            // Reviewed rebaseline: narrow formatting is modeled now, so a
+            // null FILE is refused for being a nonstandard stream instead of
+            // for the family being unmodeled. The control still refuses.
+            (F::FormatUnsupported, "nonstandard output FILE"),
         ] {
             let result = run_api_fixture(arch, ApiFixture::Stdio(kind), 2000).unwrap();
             assert_eq!(result.guest_entry_return, None, "{arch:?} {kind:?}");

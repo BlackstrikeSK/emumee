@@ -100,11 +100,17 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
         let mut exports = Vec::with_capacity(names.len());
         for name in &names {
             let binding = definition(architecture, &module, name);
+            if matches!(binding.model, Model::CrtStartup(crt_startup::Call::CommandLineData)) {
+                continue;
+            }
             exports.push((name.as_str(), install_binding(engine, binding)?));
         }
+        let data = crt_startup::command_line::data_exports(engine, &module)?;
+        let data_capacity = data.iter().fold(0usize, |cursor, item| cursor.next_multiple_of(item.alignment) + item.bytes.len());
+        let image_size = 0x6000 + data_capacity.div_ceil(4096) as u64 * 4096;
         let base =
-            dynamic_loader::place_image(engine, 0x74000000 + index as u64 * 0x100000, 0x6000)?;
-        let bytes = emumee_core::provider::image(architecture, base, &module, &exports)?;
+            dynamic_loader::place_image(engine, 0x74000000 + index as u64 * 0x100000, image_size)?;
+        let bytes = emumee_core::provider::image_with_mutable_data(architecture, base, &module, &exports, &data)?;
         let pe = PeImage::parse(&bytes, &module)?;
         crate::map_image(engine, &pe, &bytes, base)?;
         crate::protect_image(engine, &pe)?;
@@ -115,10 +121,11 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
             &format!(r"{}\{module}", system_directory.trim_end_matches('\\')),
             ModuleOrigin::SyntheticProvider,
         )?;
+        crt_startup::command_line::publish(engine, &module, &data)?;
         engine.get_data_mut().apis.providers.push(ProviderEvidence {
             module, base, exports: pe.exports.len(), image_size: pe.image_size,
             reference_catalog: None, metadata_only: None,
-            scope: "Finite generated user DLL export namespace from the modeled dispatcher and input bindings. Guest PE exports and IATs share call gates. Unsupported imported routines stop explicitly. Synthetic ordinals do not establish Windows ordinal compatibility or semantic parity.",
+            scope: "Finite generated user DLL export namespace from the modeled dispatcher and input bindings. Routine exports and IATs share call gates; typed CRT data exports use owned mutable RW/NX storage. Unsupported imported routines stop explicitly. Synthetic ordinals do not establish Windows ordinal compatibility or semantic parity.",
         });
     }
     Ok(())

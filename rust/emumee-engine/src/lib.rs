@@ -45,7 +45,21 @@ mod configured_tests;
 #[cfg(test)]
 mod cr8_tests;
 #[cfg(test)]
+mod crt_alloc_tests;
+#[cfg(test)]
+mod crt_data_tests;
+#[cfg(test)]
 mod crt_format_tests;
+#[cfg(test)]
+mod crt_runtime_tests;
+#[cfg(test)]
+mod crt_compiled_tests;
+#[cfg(test)]
+mod crt_file_tests;
+#[cfg(test)]
+mod crt_service_tests;
+#[cfg(test)]
+mod crt_text_tests;
 #[cfg(test)]
 mod crt_startup_tests;
 #[cfg(test)]
@@ -432,6 +446,7 @@ pub struct Execution {
     pub string_api_unsupported: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crt_startup: Option<api::crt_startup::Report>,
+    pub crt_runtime: Option<api::crt_misc::Report>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub process_exit_code: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1645,6 +1660,7 @@ fn run_generated_with_fixture_configuration(
     let value = if returned { outcome.value } else { None };
     let mut report = Execution {
         crt_startup: api::crt_startup::report(&engine),
+        crt_runtime: api::crt_misc::report(&engine),
         string_api_unsupported: engine.get_data().apis.winstrings.clone(),
         process_exit_code: trace.process_exit_code,
         native_exceptions: native_exceptions::report(&engine),
@@ -3281,3 +3297,7 @@ mod tests {
 mod m4_tests;
 #[cfg(test)]
 mod user_test_fixtures;
+#[cfg(test)]
+mod win_alloc_tests;
+#[cfg(test)]
+mod win_text_tests;

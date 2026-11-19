@@ -36,9 +36,43 @@ pub fn permissions(protection: u32) -> Result<Permissions> {
         _ => return Err(error(87, "unsupported private page protection")),
     })
 }
+pub const MEM_COMMIT: u32 = 0x1000;
+pub const MEM_RESERVE: u32 = 0x2000;
+pub const MEM_FREE: u32 = 0x10000;
+pub const MEM_PRIVATE: u32 = 0x20000;
+pub const MEM_IMAGE: u32 = 0x1000000;
+/// Win32 protection for mapped backing this model did not reserve itself, such
+/// as the guest image or a fixture mapping. Write-only backing does not exist on
+/// Windows, so a writable page reports PAGE_READWRITE or PAGE_EXECUTE_READWRITE.
+pub fn protection_of(permissions: Permissions) -> u32 {
+    let execute = permissions.contains(Permissions::EXECUTE);
+    if permissions.contains(Permissions::WRITE) {
+        if execute { 0x40 } else { 4 }
+    } else if permissions.contains(Permissions::READ) {
+        if execute { 0x20 } else { 2 }
+    } else if execute {
+        0x10
+    } else {
+        1
+    }
+}
+/// One MEMORY_BASIC_INFORMATION record. The engine encodes it per architecture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Query {
+    pub base: u64,
+    pub size: u64,
+    pub allocation_base: u64,
+    pub allocation_protect: u32,
+    pub state: u32,
+    pub protect: u32,
+    pub kind: u32,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Allocation {
     size: u64,
+    /// Protection requested when this reservation was made, reported as
+    /// AllocationProtect. Page protection lives in `pages`.
+    protection: u32,
     pages: Vec<Option<u32>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -200,6 +234,7 @@ impl VirtualMemory {
                 base,
                 Allocation {
                     size: extent,
+                    protection,
                     pages: vec![None; (extent / PAGE) as usize],
                 },
             );
@@ -310,6 +345,81 @@ impl VirtualMemory {
         }
         plan.result = 1;
         Ok(plan)
+    }
+    fn limit(&self) -> u64 {
+        if self.architecture == Architecture::X86 {
+            0x7fff0000
+        } else {
+            0x00007fff00000000
+        }
+    }
+    /// Describes the run of pages holding the queried address, as VirtualQuery
+    /// reports it. Runs stop at reservation boundaries and wherever commitment
+    /// or protection changes. Backing this model did not reserve is reported as
+    /// one committed region, MEM_IMAGE when its mapping is an image.
+    pub fn query(&self, memory: &AddressSpace, address: u64) -> Result<Query> {
+        let limit = self.limit();
+        if address >= limit {
+            return Err(error(87, "query address is outside the application range"));
+        }
+        let base = address & !(PAGE - 1);
+        if let Some((owner, allocation)) = self
+            .allocations
+            .range(..=base)
+            .next_back()
+            .filter(|(owner, a)| base < **owner + a.size)
+            .map(|(owner, a)| (*owner, a))
+        {
+            let first = ((base - owner) / PAGE) as usize;
+            let page = allocation.pages[first];
+            let run = allocation.pages[first..]
+                .iter()
+                .take_while(|state| **state == page)
+                .count() as u64;
+            return Ok(Query {
+                base,
+                size: run * PAGE,
+                allocation_base: owner,
+                allocation_protect: allocation.protection,
+                state: if page.is_some() { MEM_COMMIT } else { MEM_RESERVE },
+                protect: page.unwrap_or(0),
+                kind: MEM_PRIVATE,
+            });
+        }
+        if let Some(region) = memory.region(base) {
+            let protect = protection_of(region.permissions);
+            return Ok(Query {
+                base: region.base,
+                size: region.size,
+                allocation_base: region.base,
+                allocation_protect: protect,
+                state: MEM_COMMIT,
+                protect,
+                kind: if region.tag.contains("image") {
+                    MEM_IMAGE
+                } else {
+                    MEM_PRIVATE
+                },
+            });
+        }
+        // Free backing extends to the next mapped or reserved address.
+        let next = memory
+            .regions()
+            .map(|region| region.base)
+            .chain(self.allocations.keys().copied())
+            .filter(|start| *start > base)
+            .min()
+            .unwrap_or(limit)
+            .max(base + PAGE);
+        Ok(Query {
+            base,
+            size: next - base,
+            allocation_base: 0,
+            allocation_protect: 0,
+            state: MEM_FREE,
+            protect: 1,
+            kind: 0,
+        })
     }
 }
 

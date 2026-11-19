@@ -23,6 +23,12 @@ pub(super) enum Call {
     Dbcs,
     CharOem,
     Presence,
+    Concat(bool),
+    Copy { wide: bool, bounded: bool },
+    Ordinal { wide: bool, fold: bool },
+    CharType { locale: bool, narrow: bool },
+    MapString { wide: bool },
+    Ipv4Text,
 }
 pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T, C)> {
     let kernel = matches!(module, "kernel32" | "kernelbase");
@@ -67,6 +73,72 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T, C)
         "ApiSetQueryApiSetPresence" if module == "api-ms-win-core-apiquery-l1-1-0" => {
             (Call::Presence, 2, T::U32)
         }
+        "lstrcatA" | "lstrcatW" if kernel => (Call::Concat(name.ends_with('W')), 2, T::Pointer),
+        "lstrcpyA" | "lstrcpyW" if kernel => (
+            Call::Copy {
+                wide: name.ends_with('W'),
+                bounded: false,
+            },
+            2,
+            T::Pointer,
+        ),
+        "lstrcpynA" | "lstrcpynW" if kernel => (
+            Call::Copy {
+                wide: name.ends_with('W'),
+                bounded: true,
+            },
+            3,
+            T::Pointer,
+        ),
+        "lstrcmpA" | "lstrcmpW" if kernel => (
+            Call::Ordinal {
+                wide: name.ends_with('W'),
+                fold: false,
+            },
+            2,
+            T::U32,
+        ),
+        "lstrcmpiA" | "lstrcmpiW" if kernel => (
+            Call::Ordinal {
+                wide: name.ends_with('W'),
+                fold: true,
+            },
+            2,
+            T::U32,
+        ),
+        // GetStringTypeA takes a locale first and a narrow string.
+        // GetStringTypeWA and GetStringTypeWW keep the W signature and carry a
+        // narrow or wide string respectively.
+        "GetStringTypeA" if strings => (
+            Call::CharType {
+                locale: true,
+                narrow: true,
+            },
+            5,
+            T::U32,
+        ),
+        "GetStringTypeWA" if strings => (
+            Call::CharType {
+                locale: false,
+                narrow: true,
+            },
+            4,
+            T::U32,
+        ),
+        "GetStringTypeWW" | "GetStringTypeW" if strings => (
+            Call::CharType {
+                locale: false,
+                narrow: false,
+            },
+            4,
+            T::U32,
+        ),
+        "LCMapStringA" if strings => (Call::MapString { wide: false }, 6, T::U32),
+        "LCMapStringW" if strings => (Call::MapString { wide: true }, 6, T::U32),
+        // LCMapStringEx keeps the same first six parameters and adds version,
+        // reserved and sort-handle arguments this profile does not use.
+        "LCMapStringEx" if strings => (Call::MapString { wide: true }, 9, T::U32),
+        "RtlIpv4AddressToStringExW" if module == "ntdll" => (Call::Ipv4Text, 4, T::U32),
         _ => return None,
     };
     Some((call, count, returns, convention))
@@ -430,6 +502,228 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             }
             put(engine, args[1], &[u8::from(present)])?;
             engine.get_data_mut().apis.last_error = 0;
+            0
+        }
+        // lstrcat/lstrcpy/lstrcpyn return the destination, or null when either
+        // string is unreadable or the copy would leave the profile's bound.
+        Call::Concat(wide) => {
+            let step = if wide { 2 } else { 1 };
+            let (Some(destination), Some(source)) = (
+                raw(engine, args[0], -1, wide),
+                raw(engine, args[1], -1, wide),
+            ) else {
+                return Ok(fail(engine, 87));
+            };
+            if destination.len() + source.len() > LIMIT * step {
+                return Ok(fail(engine, 87));
+            }
+            let mut bytes = source;
+            bytes.extend(std::iter::repeat_n(0, step));
+            put(engine, args[0] + destination.len() as u64, &bytes)?;
+            args[0]
+        }
+        Call::Copy { wide, bounded } => {
+            let step = if wide { 2 } else { 1 };
+            if bounded && (args[2] == 0 || args[2] > LIMIT as u64) {
+                return Ok(fail(engine, 87));
+            }
+            let Some(source) = raw(engine, args[1], -1, wide) else {
+                return Ok(fail(engine, 87));
+            };
+            let keep = if bounded {
+                source.len().min((args[2] as usize - 1) * step)
+            } else {
+                source.len()
+            };
+            let mut bytes = source[..keep].to_vec();
+            bytes.extend(std::iter::repeat_n(0, step));
+            put(engine, args[0], &bytes)?;
+            args[0]
+        }
+        // Ordinal comparison over code units, folded for the i spellings. The
+        // frozen reference reports only equality; the sign is the real contract.
+        Call::Ordinal { wide, fold } => {
+            let (Some(left), Some(right)) = (
+                text(engine, args[0], -1, wide),
+                text(engine, args[1], -1, wide),
+            ) else {
+                return Ok(fail(engine, 87));
+            };
+            let (left, right) = if fold {
+                (left.to_lowercase(), right.to_lowercase())
+            } else {
+                (left, right)
+            };
+            let order = left
+                .encode_utf16()
+                .collect::<Vec<_>>()
+                .cmp(&right.encode_utf16().collect::<Vec<_>>());
+            engine.get_data_mut().apis.last_error = 0;
+            match order {
+                std::cmp::Ordering::Less => u64::from(u32::MAX),
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            }
+        }
+        // CT_CTYPE1 classification only: the frozen reference models no other
+        // information type, and a request for one stops explicitly.
+        Call::CharType { locale, narrow } => {
+            let base = usize::from(locale);
+            let kind = args[base] as u32;
+            let count = args[base + 2] as i32;
+            ensure!(
+                kind == 1,
+                "GetStringType information type {kind} is not modeled"
+            );
+            // One output word per source code unit: the narrow spellings decode
+            // through the modeled ANSI code page, which is single byte.
+            let units: Option<Vec<u16>> = if narrow {
+                text(engine, args[base + 1], count, false)
+                    .map(|value| value.encode_utf16().collect())
+            } else {
+                raw(engine, args[base + 1], count, true).map(|bytes| {
+                    bytes
+                        .chunks_exact(2)
+                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                        .collect()
+                })
+            };
+            let Some(units) = units else {
+                return Ok(fail(engine, 87));
+            };
+            let out = args[base + 3];
+            if out == 0 || units.is_empty() {
+                return Ok(fail(engine, 87));
+            }
+            let mut bytes = Vec::with_capacity(units.len() * 2);
+            for unit in units {
+                let mut flags: u16 = 0;
+                if let Some(character) = char::from_u32(u32::from(unit)) {
+                    if character.is_uppercase() {
+                        flags |= 1;
+                    }
+                    if character.is_lowercase() {
+                        flags |= 2;
+                    }
+                    if character.is_numeric() {
+                        flags |= 4;
+                    }
+                    if character.is_whitespace() {
+                        flags |= 8;
+                    }
+                    if character.is_ascii_punctuation() {
+                        flags |= 0x10;
+                    }
+                    if character.is_control() {
+                        flags |= 0x20;
+                    }
+                    if character == ' ' || character == '\t' {
+                        flags |= 0x40;
+                    }
+                    if character.is_ascii_hexdigit() {
+                        flags |= 0x80;
+                    }
+                    if character.is_alphabetic() {
+                        flags |= 0x100;
+                    }
+                    flags |= 0x200;
+                }
+                bytes.extend(flags.to_le_bytes());
+            }
+            put(engine, out, &bytes)?;
+            engine.get_data_mut().apis.last_error = 0;
+            1
+        }
+        // Only the invariant case mappings are modeled; sort keys, normalization
+        // and width folding stop explicitly rather than inventing an ordering.
+        Call::MapString { wide } => {
+            let base = 0;
+            let flags = args[base + 1] as u32;
+            let count = args[base + 3] as i32;
+            let capacity = args[base + 5] as i32;
+            const LOWER: u32 = 0x100;
+            const UPPER: u32 = 0x200;
+            ensure!(
+                flags == LOWER || flags == UPPER,
+                "LCMapString flags 0x{flags:x} are not modeled"
+            );
+            if count == 0 || count < -1 || capacity < 0 || capacity > LIMIT as i32 {
+                return Ok(fail(engine, 87));
+            }
+            let Some(source) = text(engine, args[base + 2], count, wide) else {
+                return Ok(fail(engine, 87));
+            };
+            let mapped = if flags == UPPER {
+                source.to_uppercase()
+            } else {
+                source.to_lowercase()
+            };
+            let units: Vec<u16> = mapped.encode_utf16().collect();
+            // Windows copies the terminator only when the source length was
+            // determined by scanning for one.
+            let produced = units.len() + usize::from(count < 0);
+            if capacity == 0 {
+                engine.get_data_mut().apis.last_error = 0;
+                return Ok(produced as u64);
+            }
+            if produced > capacity as usize || args[base + 4] == 0 {
+                return Ok(fail(engine, 122));
+            }
+            let mut bytes = Vec::with_capacity(produced * if wide { 2 } else { 1 });
+            for unit in &units {
+                if wide {
+                    bytes.extend(unit.to_le_bytes());
+                } else {
+                    ensure!(
+                        *unit <= 0x7f,
+                        "LCMapString narrow mapping outside invariant ASCII is not modeled"
+                    );
+                    bytes.push(*unit as u8);
+                }
+            }
+            if count < 0 {
+                bytes.extend(std::iter::repeat_n(0, if wide { 2 } else { 1 }));
+            }
+            put(engine, args[base + 4], &bytes)?;
+            engine.get_data_mut().apis.last_error = 0;
+            produced as u64
+        }
+        // RtlIpv4AddressToStringExW returns NTSTATUS and always reports the
+        // required length, including when the buffer is too small.
+        Call::Ipv4Text => {
+            const STATUS_INVALID_PARAMETER: u64 = 0xc000000d;
+            if args[0] == 0
+                || args[2] == 0
+                || !accessible(engine, args[0], 4, P::READ)
+                || !accessible(engine, args[3], 4, P::READ)
+                || !accessible(engine, args[3], 4, P::WRITE)
+            {
+                return Ok(STATUS_INVALID_PARAMETER);
+            }
+            let octets = read(engine, args[0], 4)?;
+            let capacity = u32::from_le_bytes(read(engine, args[3], 4)?.try_into().unwrap());
+            let port = (args[1] & 0xffff) as u16;
+            let mut rendered = format!(
+                "{}.{}.{}.{}",
+                octets[0], octets[1], octets[2], octets[3]
+            );
+            if port != 0 {
+                rendered.push(':');
+                rendered.push_str(&port.swap_bytes().to_string());
+            }
+            let required = rendered.chars().count() as u32 + 1;
+            if capacity < required || !accessible(engine, args[2], required as usize * 2, P::WRITE)
+            {
+                put(engine, args[3], &required.to_le_bytes())?;
+                return Ok(STATUS_INVALID_PARAMETER);
+            }
+            let mut bytes: Vec<u8> = rendered
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            bytes.extend([0, 0]);
+            put(engine, args[2], &bytes)?;
+            put(engine, args[3], &required.to_le_bytes())?;
             0
         }
     })

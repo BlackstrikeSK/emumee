@@ -11,7 +11,7 @@ pub(super) enum Call {
     Free,
     Destroy,
 }
-fn finish(
+pub(super) fn finish(
     engine: &mut Unicorn<Trace>,
     result: std::result::Result<Plan, HeapError>,
     set_error: bool,
@@ -54,6 +54,12 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         !engine.get_data().apis.kernel_mode,
         "User heap API is outside the kernel target profile"
     );
+    if !matches!(call, Call::Process | Call::Create) {
+        ensure!(
+            !crt_alloc::owns_heap(engine, args[0]),
+            "Win32 heap API cannot mutate CRT-owned heap state"
+        );
+    }
     match call {
         Call::Process => Ok(PROCESS_HEAP),
         Call::Create => {

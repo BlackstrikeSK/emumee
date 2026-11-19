@@ -17,6 +17,11 @@ pub use delay_imports::Observation as DelayImportObservation;
 mod abi_tests;
 pub(crate) mod callbacks;
 mod crt;
+mod crt_alloc;
+pub(crate) mod crt_misc;
+mod crt_strings;
+mod win_alloc;
+mod win_messages;
 mod crt_math;
 pub(crate) mod crt_startup;
 pub(crate) mod dynamic_loader;
@@ -87,6 +92,7 @@ const MAX_TRANSFER: u64 = 16 * 1024 * 1024;
 enum Model {
     UserProcess(user_processes::Call),
     CrtStartup(crt_startup::Call),
+    CrtAlloc(crt_alloc::Call),
     UserRuntime(user_runtime::Call),
     WinStrings(winstrings::Call),
     ExitProcess,
@@ -185,6 +191,11 @@ enum Model {
     Internet(internet::Call),
     Heap(heap::Call),
     Crt(crt::Call),
+    WinAlloc(win_alloc::Call),
+    CrtStrings(crt_strings::Call),
+    CrtMisc(crt_misc::Call),
+    FormatMessage,
+    ExplicitUnsupported(&'static str),
     CrtMath(crt_math::Call),
 }
 #[derive(Clone)]
@@ -268,6 +279,9 @@ pub(super) struct ApiState {
     pub persona: persona::State,
     pub crt_stdio: crt_stdio::State,
     pub crt_startup: crt_startup::State,
+    crt_alloc: crt_alloc::State,
+    crt_strings: crt_strings::State,
+    crt_misc: crt_misc::State,
     pub user_runtime: user_runtime::State,
     pub user_sync: emumee_core::user_sync::Dispatcher,
     pub user_callbacks: user_callbacks::State,
@@ -366,6 +380,9 @@ impl ApiState {
             persona,
             crt_stdio: crt_stdio::State::fixture(architecture),
             crt_startup: crt_startup::State::default(),
+            crt_alloc: crt_alloc::State::default(),
+            crt_strings: crt_strings::State::default(),
+            crt_misc: crt_misc::State::default(),
             user_runtime: user_runtime::State::default(),
             user_sync: emumee_core::user_sync::Dispatcher::default(),
             user_callbacks: user_callbacks::State::default(),
@@ -545,6 +562,46 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         binding.returns = returns;
         return binding;
     }
+    if let Some((count, returns)) = win_messages::definition(module, name) {
+        binding.model = Model::FormatMessage;
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = crt_misc::definition(module, name) {
+        binding.model = Model::CrtMisc(call);
+        binding.count = count;
+        binding.convention = C::Cdecl;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((reason, count, convention)) = explicit_unsupported(architecture, module, name) {
+        binding.model = Model::ExplicitUnsupported(reason);
+        binding.count = count;
+        binding.convention = convention;
+        binding.returns = T::U32;
+        return binding;
+    }
+    if let Some((call, count, returns)) = crt_strings::definition(module, name) {
+        binding.model = Model::CrtStrings(call);
+        binding.count = count;
+        binding.convention = C::Cdecl;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = win_alloc::definition(module, name) {
+        binding.model = Model::WinAlloc(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = crt_alloc::definition(module, name) {
+        binding.model = Model::CrtAlloc(call);
+        binding.count = count;
+        binding.convention = C::Cdecl;
+        binding.returns = returns;
+        return binding;
+    }
     if let Some((call, count, returns)) = crt_startup::definition(architecture, module, name) {
         binding.model = Model::CrtStartup(call);
         binding.count = count;
@@ -709,9 +766,15 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
     }
     if matches!(
         module,
-        "msvcrt" | "ucrtbase" | "api-ms-win-crt-string-l1-1-0"
+        "msvcrt"
+            | "ucrtbase"
+            | "api-ms-win-crt-string-l1-1-0"
+            | "api-ms-win-crt-private-l1-1-0"
     ) {
-        if let Some((call, count, returns)) = crt::definition(name) {
+        // The private API set forwards the same byte and code-unit helpers.
+        if let Some((call, count, returns)) =
+            crt::definition(name.strip_prefix("_o_").unwrap_or(name))
+        {
             binding.model = Model::Crt(call);
             binding.count = count;
             binding.convention = C::Cdecl;
@@ -991,12 +1054,59 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
     binding
 }
 
+/// Reviewed refusals. Each entry has a frozen reference behaviour that cannot be
+/// reproduced without a model this profile does not have, so the call stops with
+/// its reason instead of returning a value the guest would act on.
+fn explicit_unsupported(
+    architecture: Architecture,
+    module: &str,
+    name: &str,
+) -> Option<(&'static str, usize, C)> {
+    let crt = matches!(
+        module,
+        "msvcrt" | "ucrtbase" | "api-ms-win-crt-private-l1-1-0" | "vcruntime140"
+    );
+    if !crt {
+        return None;
+    }
+    Some(match name.strip_prefix("_o_").unwrap_or(name) {
+        // Returning from a throw would let the guest continue past code that can
+        // never continue on Windows.
+        "_CxxThrowException" => (
+            "C++ exception dispatch is not modeled; _CxxThrowException cannot return",
+            2,
+            C::Stdcall,
+        ),
+        // Installing an x86 C++ frame is pointless without that dispatcher, and
+        // a wrong frame would corrupt the guest exception chain.
+        "_EH_prolog" => (
+            "x86 C++ exception frame prologues require the unmodeled C++ dispatcher",
+            0,
+            C::Cdecl,
+        ),
+        // EH4 scope dispatch is an x86 mechanism; the x64 row has no contract.
+        "_except_handler4_common" if architecture == Architecture::X64 => (
+            "Scope-table exception dispatch is an x86 mechanism",
+            6,
+            C::Cdecl,
+        ),
+        // The frozen reference leaves the result register undefined; the real
+        // helper converts an x87 stack value this profile does not model.
+        "_ftol" => (
+            "x87 stack floating-point conversion is not modeled",
+            0,
+            C::Cdecl,
+        ),
+        _ => return None,
+    })
+}
 /// Read-only dispatcher inventory. A present model is not evidence of behavioral
 /// parity or admission of every argument combination. No CPU or host API runs.
 pub(crate) fn describe(architecture: Architecture, module: &str, name: &str) -> serde_json::Value {
     let binding = definition(architecture, module, name);
     let class = match binding.model {
         Model::Unsupported => "unmodeled",
+        Model::ExplicitUnsupported(_) => "explicit_unsupported",
         Model::CrtStdio(crt_stdio::Call::Unsupported(_)) => "explicit_unsupported",
         _ => "model",
     };
@@ -1060,6 +1170,10 @@ pub(super) fn bind(engine: &mut Unicorn<Trace>, pe: &PeImage) -> Result<()> {
         "Generated import table exceeds the current4096-import model bound"
     );
     for import in &pe.imports {
+        let name = match &import.name { ImportName::Name(name) => name.as_str(), _ => "" };
+        if matches!(definition(pe.sample.architecture, &import.module, name).model, Model::CrtStartup(crt_startup::Call::CommandLineData)) {
+            crt_startup::command_line::mark_import(engine);
+        }
         let address = import_target(engine, &import.module, &import.name)?;
         crate::cpu::write(
             engine,
@@ -1331,6 +1445,12 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::Persona(call) => persona::invoke(engine, args, call)?,
         Model::CrtStdio(call) => crt_stdio::invoke(engine, args, call)?,
         Model::CrtStartup(call) => crt_startup::invoke(engine, args, call)?,
+        Model::CrtAlloc(call) => crt_alloc::invoke(engine, args, call)?,
+        Model::WinAlloc(call) => win_alloc::invoke(engine, args, call)?,
+        Model::CrtStrings(call) => crt_strings::invoke(engine, args, call)?,
+        Model::CrtMisc(call) => crt_misc::invoke(engine, args, call)?,
+        Model::FormatMessage => win_messages::invoke(engine, args)?,
+        Model::ExplicitUnsupported(reason) => bail!("{reason}"),
         Model::UserRuntime(call) => user_runtime::invoke(engine, args, call)?,
         Model::UserProcess(call) => user_processes::invoke(engine, call, args)?,
         Model::WinStrings(call) => winstrings::invoke(engine, args, call)?,

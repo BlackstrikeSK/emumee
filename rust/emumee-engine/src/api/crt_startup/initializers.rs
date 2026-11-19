@@ -51,6 +51,21 @@ pub(super) fn queue(
 ) -> Result<u64> {
     let arch = engine.get_data().architecture;
     let count = initializer_count(arch, args[0], args[1]).map_err(anyhow::Error::msg)?;
+    if count != 0 {
+        require(engine, args[0], args[1] - args[0], P::READ)?;
+    }
+    queue_table(engine, args[0], count, error_returning)
+}
+/// Suspends this API gate and schedules a walk of `count` pointer slots starting
+/// at `begin`. The table may be the guest's own initializer array or
+/// emulator-owned teardown storage.
+pub(super) fn queue_table(
+    engine: &mut Unicorn<Trace>,
+    begin: u64,
+    count: u64,
+    error_returning: bool,
+) -> Result<u64> {
+    let arch = engine.get_data().architecture;
     ensure!(
         engine.get_data().threads.is_none(),
         "CRT initializers require ordinary user execution"
@@ -67,7 +82,6 @@ pub(super) fn queue(
     if count == 0 {
         return Ok(0);
     }
-    require(engine, args[0], args[1] - args[0], P::READ)?;
     let sp = uc(engine.reg_read(sp_register(arch)))?;
     ensure!(
         arch != Architecture::X64 || sp % 16 == 8,
@@ -78,7 +92,7 @@ pub(super) fn queue(
         pc: uc(engine.pc_read())?,
         sp,
         frame,
-        begin: args[0],
+        begin,
         count,
         error_returning,
         event: engine.get_data().apis.next_event_index(),
@@ -434,5 +448,11 @@ pub(crate) fn resume_api(engine: &mut Unicorn<Trace>, pc: u64) -> Result<bool> {
     state.pending = state.suspended.pop();
     state.active = state.pending.is_some();
     state.resume = false;
+    // A finished teardown walk never returns to its caller.
+    if let Some(code) = engine.get_data().apis.crt_startup.exiting
+        && engine.get_data().apis.crt_startup.pending.is_none()
+    {
+        super::user_lifecycle::request_exit(engine, code, false)?;
+    }
     Ok(true)
 }

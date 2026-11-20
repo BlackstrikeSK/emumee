@@ -18,15 +18,30 @@ pub(super) enum Call {
     FileCreate(bool),
     FileTransfer(bool),
     FileClose,
+    Allocate,
+    Window,
+    Title { wide: bool, set: bool },
+    CtrlHandler,
+    HistoryInfo,
 }
 pub(crate) struct State {
     pub model: Console,
+    /// Title the guest itself set. No title is published until then: this
+    /// profile has no window manager to supply a launcher's caption.
+    title: Option<String>,
+    /// Recorded Ctrl handlers. No console control event is ever delivered in
+    /// this profile, so a recorded handler is never dispatched.
+    ctrl_handlers: Vec<(u64, bool)>,
 }
 impl State {
     pub(crate) fn fixture() -> Self {
         let mut model = Console::new(437).expect("generated CP437 guest profile");
         model.add_process(OWNER).expect("generated console owner");
-        Self { model }
+        Self {
+            model,
+            title: None,
+            ctrl_handlers: Vec::new(),
+        }
     }
 }
 pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
@@ -56,6 +71,26 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
         "SetConsoleMode" if console => (Call::SetMode, 2, T::U32),
         "GetConsoleCP" | "GetConsoleOutputCP" if console => (Call::CodePage, 0, T::U32),
         "GetConsoleScreenBufferInfo" if console => (Call::Screen, 2, T::U32),
+        "AllocConsole" if console => (Call::Allocate, 0, T::U32),
+        "GetConsoleWindow" if console => (Call::Window, 0, T::Pointer),
+        "GetConsoleTitleA" | "GetConsoleTitleW" if console => (
+            Call::Title {
+                wide: name.ends_with('W'),
+                set: false,
+            },
+            2,
+            T::U32,
+        ),
+        "SetConsoleTitleA" | "SetConsoleTitleW" if console => (
+            Call::Title {
+                wide: name.ends_with('W'),
+                set: true,
+            },
+            1,
+            T::U32,
+        ),
+        "SetConsoleCtrlHandler" if console => (Call::CtrlHandler, 2, T::U32),
+        "SetConsoleHistoryInfo" if console => (Call::HistoryInfo, 1, T::U32),
         "CreateFileA" if file => (Call::FileCreate(false), 7, T::Pointer),
         "CreateFileW" if file => (Call::FileCreate(true), 7, T::Pointer),
         "WriteFile" if file => (Call::FileTransfer(true), 5, T::U32),
@@ -421,5 +456,123 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         Call::FileCreate(wide) => files::create(engine, args, wide),
         Call::FileTransfer(write) => files::transfer(engine, args, write),
         Call::FileClose => files::close(engine, args),
+        // A console is already attached to the modeled process, and Windows
+        // refuses a second one.
+        Call::Allocate => ordinary(engine, 5),
+        // There is no window manager, so the console has no window handle. This
+        // is the same answer Windows gives a process whose console has no
+        // associated window.
+        Call::Window => Ok(0),
+        Call::Title { wide, set } => {
+            if set {
+                let text = text_input(engine, args[0], wide)?;
+                engine.get_data_mut().apis.console.title = Some(text);
+                engine.get_data_mut().apis.last_error = 0;
+                Ok(1)
+            } else {
+                let title = engine
+                    .get_data()
+                    .apis
+                    .console
+                    .title
+                    .clone()
+                    .unwrap_or_default();
+                // The capacity is a DWORD, so only its low half is the
+                // caller's own value.
+                let capacity = u64::from(args[1] as u32);
+                if args[0] == 0 || capacity == 0 {
+                    return ordinary(engine, 87);
+                }
+                // Windows truncates rather than failing, and reports the
+                // character count it actually copied.
+                let width = if wide { 2usize } else { 1 };
+                let mut units: Vec<char> = title.chars().collect();
+                units.truncate((capacity - 1) as usize);
+                let text: String = units.into_iter().collect();
+                let encoding = if wide {
+                    emumee_core::persona::Encoding::Utf16
+                } else {
+                    emumee_core::persona::Encoding::Cp1252
+                };
+                let bytes = encoding.encode(&text, true);
+                if !writable(engine, args[0], bytes.len() as u64) {
+                    return ordinary(engine, 998);
+                }
+                crate::cpu::write(engine, args[0], &bytes)?;
+                engine.get_data_mut().apis.last_error = 0;
+                Ok(((bytes.len() / width) - 1) as u64)
+            }
+        }
+        Call::CtrlHandler => {
+            // A null routine with add set asks for Ctrl+C to be ignored; both
+            // forms are recorded and neither is ever dispatched, because no
+            // console control event exists in this profile.
+            // Add is a BOOL, a DWORD; the upper half of its stack slot is
+            // not the caller's value.
+            let add = args[1] as u32 != 0;
+            let handlers = &mut engine.get_data_mut().apis.console.ctrl_handlers;
+            if add {
+                if handlers.len() >= 32 {
+                    return ordinary(engine, 8);
+                }
+                handlers.push((args[0], true));
+            } else if let Some(index) = handlers
+                .iter()
+                .rposition(|(routine, _)| *routine == args[0])
+            {
+                handlers.remove(index);
+            } else {
+                return ordinary(engine, 87);
+            }
+            engine.get_data_mut().apis.last_error = 0;
+            Ok(1)
+        }
+        Call::HistoryInfo => {
+            // CONSOLE_HISTORY_INFO is four DWORDs. The modeled console keeps no
+            // command history, so the settings are validated and then have
+            // nothing to change.
+            if !engine
+                .get_data()
+                .apis
+                .memory
+                .allows(args[0], 16, P::READ)
+            {
+                return ordinary(engine, 998);
+            }
+            let size = u32::from_le_bytes(read(engine, args[0], 4)?.try_into().unwrap());
+            if size != 16 {
+                return ordinary(engine, 87);
+            }
+            engine.get_data_mut().apis.last_error = 0;
+            Ok(1)
+        }
     }
+}
+/// Read a NUL-terminated guest string for the console title.
+fn text_input(engine: &Unicorn<Trace>, address: u64, wide: bool) -> Result<String> {
+    ensure!(address != 0, "Null console title pointer");
+    let width = if wide { 2u64 } else { 1 };
+    let mut units = Vec::new();
+    for index in 0..1024u64 {
+        let at = address
+            .checked_add(index * width)
+            .ok_or_else(|| anyhow::anyhow!("Console title pointer overflow"))?;
+        let unit = if wide {
+            u16::from_le_bytes(read(engine, at, 2)?.try_into().unwrap())
+        } else {
+            u16::from(byte(engine, at)?)
+        };
+        if unit == 0 {
+            return if wide {
+                String::from_utf16(&units)
+                    .map_err(|_| anyhow::anyhow!("Invalid UTF-16 console title"))
+            } else {
+                emumee_core::persona::Encoding::Cp1252
+                    .decode(&units.into_iter().map(|u| u as u8).collect::<Vec<_>>())
+                    .map_err(Into::into)
+            };
+        }
+        units.push(unit);
+    }
+    bail!("Console title exceeds the modeled 1024 character bound")
 }

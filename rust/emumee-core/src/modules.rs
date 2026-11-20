@@ -76,8 +76,20 @@ pub struct ModuleCatalog {
     primary: Option<ModuleId>,
     loader_events: Vec<LoaderEvent>,
     retired_images: Vec<RetiredImage>,
+    force_unmapped: Vec<UnmappedSection>,
     ready_order: Vec<ModuleId>,
     dynamic_state: DynamicState,
+}
+/// An image removed by a forced section unmap (NtUnmapViewOfSection), recorded
+/// as a distinct observation because, unlike retirement, it runs no detach and
+/// respects no lifecycle phase. A process whose own primary image appears here
+/// has had its view replaced out from under it, the hollowing/RunPE signature.
+#[derive(Clone, Debug, Serialize)]
+pub struct UnmappedSection {
+    pub base: u64,
+    pub size: u64,
+    pub name: String,
+    pub was_primary: bool,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -107,6 +119,7 @@ impl ModuleCatalog {
             primary: None,
             loader_events: Vec::new(),
             retired_images: Vec::new(),
+            force_unmapped: Vec::new(),
             ready_order: Vec::new(),
             dynamic_state: DynamicState::default(),
         }

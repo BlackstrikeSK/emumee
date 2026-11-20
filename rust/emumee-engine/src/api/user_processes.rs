@@ -35,6 +35,7 @@ pub(super) enum Call {
     Duplicate,
     Flags(bool),
     NtQuery,
+    UnmapSection,
 }
 pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
     if module == "ntdll"
@@ -44,6 +45,11 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
         )
     {
         return Some((Call::NtQuery, 5, T::U32));
+    }
+    if module == "ntdll"
+        && matches!(name, "NtUnmapViewOfSection" | "ZwUnmapViewOfSection")
+    {
+        return Some((Call::UnmapSection, 2, T::U32));
     }
     if !matches!(module, "kernel32" | "kernelbase") && !module.starts_with("api-ms-win-core-") {
         return None;
@@ -142,7 +148,14 @@ pub(crate) struct State {
     next_handle: u64,
     request: Option<(Call, Vec<u64>)>,
     root_outcome: Option<Outcome>,
+    /// Forced section unmaps, run-wide. This state survives a process switch,
+    /// so an unmap observed inside a child is still reported after that child
+    /// exits and its address-space snapshot is released — which is exactly what
+    /// a hollowing loader does next.
+    forced: Vec<ForcedUnmap>,
 }
+/// Bound on the recorded unmaps, matching the module catalog's own bound.
+const MAX_FORCED_UNMAPS: usize = 64;
 pub(crate) fn pid(engine: &Unicorn<Trace>) -> u64 {
     engine.get_data().process.id
 }
@@ -172,6 +185,50 @@ pub(crate) fn report(engine: &Unicorn<Trace>) -> Vec<ProcessReport> {
         .values()
         .cloned()
         .collect()
+}
+/// One image removed by NtUnmapViewOfSection, attributed to the process whose
+/// address space held it. A `was_primary` entry against a process other than
+/// the caller is the process-hollowing signature.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ForcedUnmap {
+    pub process_id: u64,
+    pub base: u64,
+    pub size: u64,
+    pub name: String,
+    pub was_primary: bool,
+}
+/// Record one forced section unmap, attributed to the process whose address
+/// space held the image. The module catalog keeps its own per-process entry;
+/// this run-wide list is what the report publishes, because a child's catalog
+/// goes away with the child.
+pub(crate) fn record_forced_unmap(engine: &mut Unicorn<Trace>, base: u64, size: u64) {
+    let Some(section) = engine
+        .get_data()
+        .apis
+        .modules
+        .force_unmapped()
+        .iter()
+        .rev()
+        .find(|section| section.base == base)
+        .map(|section| ForcedUnmap {
+            process_id: pid(engine),
+            base: section.base,
+            size: section.size,
+            name: section.name.clone(),
+            was_primary: section.was_primary,
+        })
+    else {
+        return;
+    };
+    debug_assert_eq!(section.size, size);
+    let forced = &mut engine.get_data_mut().processes.forced;
+    if forced.len() < MAX_FORCED_UNMAPS {
+        forced.push(section);
+    }
+}
+/// Every forced section unmap this run observed, in the order they happened.
+pub(crate) fn forced_unmaps(engine: &Unicorn<Trace>) -> Vec<ForcedUnmap> {
+    engine.get_data().processes.forced.clone()
 }
 fn failure(engine: &mut Unicorn<Trace>, error: u32) -> u64 {
     engine.get_data_mut().apis.last_error = error;
@@ -582,7 +639,7 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
     if let Some(result) = handles::invoke(engine, call, args)? {
         return Ok(result);
     }
-    if matches!(call, Call::Memory(_) | Call::Virtual(0..=2))
+    if matches!(call, Call::Memory(_) | Call::Virtual(0..=2) | Call::UnmapSection)
         && handles::process(engine, args[0], 0) == Ok(pid(engine))
     {
         return remote::local_fallback(engine, call, args);

@@ -399,6 +399,32 @@ impl VirtualFileSystem {
         self.handles.get_mut(&handle).unwrap().position = end as u64;
         Ok(data.len())
     }
+    /// Move the end of the file to the handle's current position, growing with
+    /// zeroes or discarding the tail. Append-only access cannot shorten a file,
+    /// so write access is required rather than accepted as append.
+    pub fn set_end_of_file(&mut self, handle: u64, owner: u64) -> Result<u64> {
+        let h = self.handle(handle, owner)?;
+        if !h.access.write {
+            return Err(error(5, "file handle lacks write access"));
+        }
+        let position = h.position;
+        if position > MAX_FILE as u64 {
+            return Err(error(223, "file exceeds modeled bound"));
+        }
+        let position = position as usize;
+        let current = self.file_bytes(h).len();
+        if position > current {
+            let growth = position - current;
+            if self.total.checked_add(growth).is_none_or(|n| n > MAX_TOTAL) {
+                return Err(error(8, "guest filesystem capacity"));
+            }
+            self.total += growth;
+        } else {
+            self.total -= current - position;
+        }
+        self.file_bytes_mut(handle).resize(position, 0);
+        Ok(position as u64)
+    }
     pub fn contents(&self, path: &str) -> Result<Option<&[u8]>> {
         Ok(self.files.get(&self.path(path)?).map(Vec::as_slice))
     }

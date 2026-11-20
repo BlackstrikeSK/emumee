@@ -107,6 +107,13 @@ fn typed_image(
     }
     let mut all = routines.to_vec();
     all.extend(data.iter().map(|item| (item.name, 1)));
+    // The fixed offsets below assume the single-page stub geometry. A larger
+    // namespace must not silently land its data section somewhere else.
+    if all.len() > super::SINGLE_PAGE_EXPORTS {
+        return Err(ProviderError(
+            "typed data provider exceeds the single-page export layout",
+        ));
+    }
     let mut bytes = image(architecture, base, module, &all)?;
     let ordinals = ordinals(&bytes)?;
     bytes.resize(0x5200 + size, 0);

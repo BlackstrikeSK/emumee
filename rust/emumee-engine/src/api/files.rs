@@ -3,6 +3,49 @@ use super::*;
 use anyhow::Context;
 use emumee_core::filesystem::FileError;
 const OWNER: u64 = 1024;
+/// Handle-directed file operations beyond the create/transfer/seek/close core.
+#[derive(Clone, Copy)]
+pub(super) enum Call {
+    Size,
+    SeekEx,
+    EndOfFile,
+    Times { set: bool },
+    Information,
+    Flush,
+    LegacyOpen { wide: bool },
+    LegacyClose,
+    LegacySeek,
+}
+pub(super) fn definition(
+    architecture: Architecture,
+    module: &str,
+    name: &str,
+) -> Option<(Call, usize, T)> {
+    if !matches!(module, "kernel32" | "kernelbase") {
+        return None;
+    }
+    // A LARGE_INTEGER passed by value occupies two x86 stack slots.
+    let quad = usize::from(architecture == Architecture::X86);
+    Some(match name {
+        "GetFileSize" => (Call::Size, 2, T::U32),
+        "SetFilePointerEx" => (Call::SeekEx, 4 + quad, T::U32),
+        "SetEndOfFile" => (Call::EndOfFile, 1, T::U32),
+        "GetFileTime" => (Call::Times { set: false }, 4, T::U32),
+        "SetFileTime" => (Call::Times { set: true }, 4, T::U32),
+        "GetFileInformationByHandle" => (Call::Information, 2, T::U32),
+        "FlushFileBuffers" => (Call::Flush, 1, T::U32),
+        "_lopenA" | "_lopenW" => (
+            Call::LegacyOpen {
+                wide: name.ends_with('W'),
+            },
+            2,
+            T::U32,
+        ),
+        "_lclose" => (Call::LegacyClose, 1, T::U32),
+        "_llseek" => (Call::LegacySeek, 3, T::U32),
+        _ => return None,
+    })
+}
 fn fail(engine: &mut Unicorn<Trace>, error: FileError, failure: u64) -> Result<u64> {
     ensure!(error.win32 != 50, "{}", error);
     engine.get_data_mut().apis.last_error = error.win32;
@@ -191,5 +234,204 @@ pub(super) fn close(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
     match engine.get_data_mut().apis.files.close(args[0], OWNER) {
         Ok(()) => Ok(1),
         Err(error) => fail(engine, error, 0),
+    }
+}
+fn legacy_failure() -> u64 {
+    // HFILE_ERROR is -1 in the legacy 16-bit-derived file API.
+    u32::MAX as u64
+}
+pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> Result<u64> {
+    match call {
+        Call::Size => {
+            // The modeled file bound is far below 4 GiB, so the high output is
+            // always zero when the caller asks for it.
+            match engine.get_data().apis.files.size(args[0], OWNER) {
+                Ok(size) => {
+                    if args[1] != 0 {
+                        if !valid_output(engine, args[1], 4) {
+                            return Ok(u32::MAX as u64);
+                        }
+                        crate::cpu::write(engine, args[1], &((size >> 32) as u32).to_le_bytes())?;
+                    }
+                    engine.get_data_mut().apis.last_error = 0;
+                    Ok(size as u32 as u64)
+                }
+                Err(error) => fail(engine, error, u32::MAX as u64),
+            }
+        }
+        Call::SeekEx => {
+            let x86 = engine.get_data().architecture == Architecture::X86;
+            let (distance, output, method) = if x86 {
+                (
+                    ((args[2] << 32) | (args[1] & 0xffff_ffff)) as i64,
+                    args[3],
+                    args[4] as u32,
+                )
+            } else {
+                (args[1] as i64, args[2], args[3] as u32)
+            };
+            if output != 0 && !valid_output(engine, output, 8) {
+                return Ok(0);
+            }
+            match engine
+                .get_data_mut()
+                .apis
+                .files
+                .seek(args[0], OWNER, distance, method)
+            {
+                Ok(position) => {
+                    if output != 0 {
+                        crate::cpu::write(engine, output, &position.to_le_bytes())?;
+                    }
+                    engine.get_data_mut().apis.last_error = 0;
+                    Ok(1)
+                }
+                Err(error) => fail(engine, error, 0),
+            }
+        }
+        Call::EndOfFile => match engine
+            .get_data_mut()
+            .apis
+            .files
+            .set_end_of_file(args[0], OWNER)
+        {
+            Ok(_) => {
+                engine.get_data_mut().apis.last_error = 0;
+                Ok(1)
+            }
+            Err(error) => fail(engine, error, 0),
+        },
+        Call::Times { set } => {
+            if set {
+                let mut requested = [None; 3];
+                for (slot, at) in requested.iter_mut().zip([args[1], args[2], args[3]]) {
+                    if at == 0 {
+                        continue;
+                    }
+                    let value = u64::from_le_bytes(read(engine, at, 8)?.try_into().unwrap());
+                    // A zero FILETIME leaves the time alone, as a null pointer
+                    // does; the documented "do not update" sentinel is also
+                    // recorded rather than treated as a real timestamp.
+                    if value != 0 && value != u64::MAX {
+                        *slot = Some(value);
+                    }
+                }
+                match engine
+                    .get_data_mut()
+                    .apis
+                    .files
+                    .set_handle_times(args[0], OWNER, requested)
+                {
+                    Ok(()) => {
+                        engine.get_data_mut().apis.last_error = 0;
+                        Ok(1)
+                    }
+                    Err(error) => fail(engine, error, 0),
+                }
+            } else {
+                let times = match engine.get_data().apis.files.handle_times(args[0], OWNER) {
+                    Ok(times) => times,
+                    Err(error) => return fail(engine, error, 0),
+                };
+                for at in [args[1], args[2], args[3]] {
+                    if at != 0 && !valid_output(engine, at, 8) {
+                        return Ok(0);
+                    }
+                }
+                for (at, value) in [args[1], args[2], args[3]].into_iter().zip(times) {
+                    if at != 0 {
+                        crate::cpu::write(engine, at, &value.to_le_bytes())?;
+                    }
+                }
+                engine.get_data_mut().apis.last_error = 0;
+                Ok(1)
+            }
+        }
+        Call::Information => {
+            let information = match engine
+                .get_data()
+                .apis
+                .files
+                .handle_information(args[0], OWNER)
+            {
+                Ok(information) => information,
+                Err(error) => return fail(engine, error, 0),
+            };
+            let serial = engine.get_data().apis.persona.model.volume().serial();
+            if !valid_output(engine, args[1], 52) {
+                return Ok(0);
+            }
+            let mut image = vec![0u8; 52];
+            image[..4].copy_from_slice(&information.attributes.to_le_bytes());
+            for (index, time) in information.times.iter().enumerate() {
+                image[4 + index * 8..12 + index * 8].copy_from_slice(&time.to_le_bytes());
+            }
+            image[28..32].copy_from_slice(&serial.to_le_bytes());
+            image[32..36].copy_from_slice(&((information.size >> 32) as u32).to_le_bytes());
+            image[36..40].copy_from_slice(&(information.size as u32).to_le_bytes());
+            image[40..44].copy_from_slice(&information.links.to_le_bytes());
+            image[44..48].copy_from_slice(&((information.index >> 32) as u32).to_le_bytes());
+            image[48..52].copy_from_slice(&(information.index as u32).to_le_bytes());
+            crate::cpu::write(engine, args[1], &image)?;
+            engine.get_data_mut().apis.last_error = 0;
+            Ok(1)
+        }
+        Call::Flush => {
+            // Guest file bytes live in the owned virtual filesystem, so there
+            // is no write-behind cache to flush; the handle is still checked.
+            match engine.get_data().apis.files.size(args[0], OWNER) {
+                Ok(_) => {
+                    engine.get_data_mut().apis.last_error = 0;
+                    Ok(1)
+                }
+                Err(error) => fail(engine, error, 0),
+            }
+        }
+        Call::LegacyOpen { wide } => {
+            // OF_READ/OF_WRITE/OF_READWRITE in the low bits; the sharing and
+            // behavior bits above them have no model here.
+            let mode = args[1] as u32;
+            ensure!(
+                mode & !0x3 == 0,
+                "_lopen sharing and behavior flags 0x{mode:x} are not modeled"
+            );
+            let access = match mode & 0x3 {
+                0 => 0x80000000u32,
+                1 => 0x40000000,
+                2 => 0xc0000000,
+                _ => return Ok(legacy_failure()),
+            };
+            let name = path(engine, args[0], wide)?;
+            // The legacy opener never creates: OPEN_EXISTING only.
+            match engine
+                .get_data_mut()
+                .apis
+                .files
+                .open(&name, access, 0, 3, OWNER)
+            {
+                Ok((handle, last)) => {
+                    engine.get_data_mut().apis.last_error = last;
+                    Ok(handle)
+                }
+                Err(error) => fail(engine, error, legacy_failure()),
+            }
+        }
+        Call::LegacyClose => match engine.get_data_mut().apis.files.close(args[0], OWNER) {
+            // _lclose answers zero on success, unlike CloseHandle.
+            Ok(()) => Ok(0),
+            Err(error) => fail(engine, error, legacy_failure()),
+        },
+        Call::LegacySeek => {
+            let offset = args[1] as u32 as i32 as i64;
+            match engine
+                .get_data_mut()
+                .apis
+                .files
+                .seek(args[0], OWNER, offset, args[2] as u32)
+            {
+                Ok(position) => Ok(position as u32 as u64),
+                Err(error) => fail(engine, error, legacy_failure()),
+            }
+        }
     }
 }

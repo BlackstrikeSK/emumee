@@ -35,7 +35,12 @@ pub(super) enum Call {
     Startup(bool),
     SystemInfo(bool),
     Version,
-    VersionInfo { wide: bool, nt: bool },
+    /// `wide` is `None` for the generic `GetVersionEx` spelling, whose structure
+    /// width is decided by the caller's own size field.
+    VersionInfo { wide: Option<bool>, nt: bool },
+    VersionCondition,
+    VerifyVersion { nt: bool },
+    NtVersionNumbers,
     MemoryStatus(bool),
     InstalledMemory,
     Affinity,
@@ -89,7 +94,13 @@ pub(crate) fn retire_thread(engine: &mut Unicorn<Trace>, thread: u64) {
         .slots
         .retire_thread(thread);
 }
-pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
+pub(super) fn definition(
+    architecture: Architecture,
+    module: &str,
+    name: &str,
+) -> Option<(Call, usize, T)> {
+    // A ULONGLONG argument occupies two x86 stack slots and one x64 register.
+    let quad = usize::from(architecture == Architecture::X86);
     let kernel = matches!(module, "kernel32" | "kernelbase");
     let process = kernel || module.starts_with("api-ms-win-core-processthreads-");
     let sync = kernel || module.starts_with("api-ms-win-core-synch-");
@@ -240,20 +251,32 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
         "GetVersion" if system => (Call::Version, 0, T::U32),
         "GetVersionExA" | "GetVersionExW" if system => (
             Call::VersionInfo {
-                wide: name.ends_with('W'),
+                wide: Some(name.ends_with('W')),
                 nt: false,
             },
             1,
             T::U32,
         ),
+        "GetVersionEx" if system => (Call::VersionInfo { wide: None, nt: false }, 1, T::U32),
         "RtlGetVersion" if module == "ntdll" => (
             Call::VersionInfo {
-                wide: true,
+                wide: Some(true),
                 nt: true,
             },
             1,
             T::U32,
         ),
+        // VerSetConditionMask is a pure bit packer; both spellings share it.
+        "VerSetConditionMask" if system || module == "ntdll" => {
+            (Call::VersionCondition, 3 + quad, T::U64)
+        }
+        "VerifyVersionInfo" | "VerifyVersionInfoA" | "VerifyVersionInfoW" if system => {
+            (Call::VerifyVersion { nt: false }, 3 + quad, T::U32)
+        }
+        "RtlVerifyVersionInfo" if module == "ntdll" => {
+            (Call::VerifyVersion { nt: true }, 3 + quad, T::U32)
+        }
+        "RtlGetNtVersionNumbers" if module == "ntdll" => (Call::NtVersionNumbers, 3, T::Void),
         "GlobalMemoryStatusEx" if system => (Call::MemoryStatus(true), 1, T::U32),
         "GlobalMemoryStatus" if system => (Call::MemoryStatus(false), 1, T::Void),
         "GetPhysicallyInstalledSystemMemory" if system => (Call::InstalledMemory, 1, T::U32),
@@ -319,6 +342,44 @@ fn put(engine: &mut Unicorn<Trace>, address: u64, bytes: &[u8]) -> Result<()> {
 }
 fn p(bytes: &mut [u8], at: usize, value: u64, width: usize) {
     bytes[at..at + width].copy_from_slice(&value.to_le_bytes()[..width]);
+}
+/// The single modeled Windows identity every version query reports. Structure
+/// reads and VerifyVersionInfo comparisons share it, so a guest cannot observe
+/// one version through `GetVersionEx` and a different one through a predicate.
+struct ModeledVersion {
+    major: u32,
+    minor: u32,
+    build: u32,
+    platform: u32,
+    service_pack_major: u16,
+    service_pack_minor: u16,
+    suite_mask: u16,
+    product_type: u8,
+}
+fn modeled_version(engine: &Unicorn<Trace>) -> ModeledVersion {
+    ModeledVersion {
+        major: 10,
+        minor: 0,
+        build: engine.get_data().machine.windows_build(),
+        platform: 2,
+        service_pack_major: 0,
+        service_pack_minor: 0,
+        suite_mask: 0x100,
+        product_type: 1,
+    }
+}
+/// VER_EQUAL/GREATER/GREATER_EQUAL/LESS/LESS_EQUAL over one scalar field.
+/// VER_AND and VER_OR are only defined for the suite mask, so they answer
+/// `None` here and become an invalid-argument result.
+fn version_condition(actual: u64, requested: u64, condition: u8) -> Option<bool> {
+    Some(match condition {
+        1 => actual == requested,
+        2 => actual > requested,
+        3 => actual >= requested,
+        4 => actual < requested,
+        5 => actual <= requested,
+        _ => return None,
+    })
 }
 fn critical_bytes(engine: &Unicorn<Trace>, state: &CriticalSection) -> Vec<u8> {
     let w = engine.get_data().architecture.width();
@@ -794,7 +855,14 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         Call::Version => u64::from((engine.get_data().machine.windows_build() << 16) | 10),
         Call::VersionInfo { wide, nt } => {
             let size = u32::from_le_bytes(read(engine, args[0], 4)?.try_into().unwrap()) as usize;
-            let basic = if wide { 276 } else { 148 };
+            let basic = match wide {
+                Some(true) => 276,
+                Some(false) => 148,
+                // The generic spelling accepts either structure; only the
+                // caller's own size field distinguishes them.
+                None if size == 276 || size == 284 => 276,
+                None => 148,
+            };
             if size != basic && size != basic + 8 {
                 if nt {
                     return Ok(0xc000000d);
@@ -802,17 +870,185 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 return Ok(fail(engine, 87));
             }
             require(engine, args[0], size as u64, P::WRITE)?;
+            let version = modeled_version(engine);
             let mut b = vec![0; size];
             b[..4].copy_from_slice(&(size as u32).to_le_bytes());
-            b[4..8].copy_from_slice(&10u32.to_le_bytes());
-            b[12..16].copy_from_slice(&engine.get_data().machine.windows_build().to_le_bytes());
-            b[16..20].copy_from_slice(&2u32.to_le_bytes());
+            b[4..8].copy_from_slice(&version.major.to_le_bytes());
+            b[8..12].copy_from_slice(&version.minor.to_le_bytes());
+            b[12..16].copy_from_slice(&version.build.to_le_bytes());
+            b[16..20].copy_from_slice(&version.platform.to_le_bytes());
             if size > basic {
-                b[basic + 4..basic + 6].copy_from_slice(&0x100u16.to_le_bytes());
-                b[basic + 6] = 1;
+                b[basic..basic + 2].copy_from_slice(&version.service_pack_major.to_le_bytes());
+                b[basic + 2..basic + 4].copy_from_slice(&version.service_pack_minor.to_le_bytes());
+                b[basic + 4..basic + 6].copy_from_slice(&version.suite_mask.to_le_bytes());
+                b[basic + 6] = version.product_type;
             }
             put(engine, args[0], &b)?;
             if nt { 0 } else { 1 }
+        }
+        Call::VersionCondition => {
+            let x86 = engine.get_data().architecture == Architecture::X86;
+            let (mask, type_mask, condition) = if x86 {
+                (args[0] | (args[1] << 32), args[2] as u32, args[3])
+            } else {
+                (args[0], args[1] as u32, args[2])
+            };
+            let condition = condition & 0x07;
+            // A zero type mask or condition leaves the accumulated mask alone,
+            // which is what the documented packer does.
+            if type_mask == 0 || condition == 0 {
+                return Ok(mask);
+            }
+            // Exactly one slot is written per call, highest type bit first.
+            let slot = match type_mask {
+                _ if type_mask & 0x80 != 0 => 7,
+                _ if type_mask & 0x40 != 0 => 6,
+                _ if type_mask & 0x20 != 0 => 5,
+                _ if type_mask & 0x10 != 0 => 4,
+                _ if type_mask & 0x08 != 0 => 3,
+                _ if type_mask & 0x04 != 0 => 2,
+                _ if type_mask & 0x02 != 0 => 1,
+                _ if type_mask & 0x01 != 0 => 0,
+                _ => return Ok(mask),
+            };
+            mask | (condition << (slot * 3))
+        }
+        Call::VerifyVersion { nt } => {
+            let x86 = engine.get_data().architecture == Architecture::X86;
+            let type_mask = args[1] as u32;
+            let condition_mask = if x86 {
+                args[2] | (args[3] << 32)
+            } else {
+                args[2]
+            };
+            // ERROR_BAD_ARGUMENTS/STATUS_INVALID_PARAMETER and
+            // ERROR_OLD_WIN_VERSION/STATUS_REVISION_MISMATCH are the only
+            // failure shapes this predicate has.
+            let invalid = 0xc000_000du64;
+            let revision = 0xc000_0059u64;
+            if type_mask == 0 || type_mask & !0xff != 0 || condition_mask == 0 {
+                return Ok(if nt { invalid } else { fail(engine, 160) });
+            }
+            let size = u32::from_le_bytes(read(engine, args[0], 4)?.try_into().unwrap()) as usize;
+            // The predicate is defined over OSVERSIONINFOEX; the shorter
+            // structure has no suite, product or service-pack fields to read.
+            let basic = match size {
+                156 => 148,
+                284 => 276,
+                _ => return Ok(if nt { invalid } else { fail(engine, 160) }),
+            };
+            let requested = read(engine, args[0], size as u64)?;
+            let dword = |at: usize| {
+                u32::from_le_bytes(requested[at..at + 4].try_into().unwrap()) as u64
+            };
+            let word =
+                |at: usize| u16::from_le_bytes(requested[at..at + 2].try_into().unwrap()) as u64;
+            let version = modeled_version(engine);
+            let condition = |slot: u32| ((condition_mask >> (slot * 3)) & 0x07) as u8;
+            let mut mismatch = false;
+            // Product type, suite, platform and build are independent fields.
+            for (bit, slot, actual, asked) in [
+                (
+                    0x80u32,
+                    7u32,
+                    u64::from(version.product_type),
+                    word(basic + 6) & 0xff,
+                ),
+                (0x08, 3, u64::from(version.platform), dword(16)),
+                (0x04, 2, u64::from(version.build), dword(12)),
+            ] {
+                if type_mask & bit == 0 {
+                    continue;
+                }
+                match version_condition(actual, asked, condition(slot)) {
+                    Some(true) => {}
+                    Some(false) => mismatch = true,
+                    None => return Ok(if nt { invalid } else { fail(engine, 160) }),
+                }
+            }
+            if type_mask & 0x40 != 0 {
+                let actual = u64::from(version.suite_mask);
+                let asked = word(basic + 4);
+                let satisfied = match condition(6) {
+                    6 => asked & actual == asked,
+                    7 => asked == 0 || asked & actual != 0,
+                    _ => return Ok(if nt { invalid } else { fail(engine, 160) }),
+                };
+                if !satisfied {
+                    mismatch = true;
+                }
+            }
+            // Major, minor and the service-pack pair compare as one ordered
+            // sequence: the first field that differs decides the answer.
+            let sequence = [
+                (0x02u32, u64::from(version.major), dword(4)),
+                (0x01, u64::from(version.minor), dword(8)),
+                (
+                    0x20,
+                    u64::from(version.service_pack_major),
+                    word(basic),
+                ),
+                (
+                    0x10,
+                    u64::from(version.service_pack_minor),
+                    word(basic + 2),
+                ),
+            ];
+            if type_mask & 0x33 != 0 {
+                let slot = if type_mask & 0x02 != 0 {
+                    1
+                } else if type_mask & 0x01 != 0 {
+                    0
+                } else if type_mask & 0x20 != 0 {
+                    5
+                } else {
+                    4
+                };
+                let condition = condition(slot);
+                let mut selected = sequence
+                    .iter()
+                    .filter(|(bit, _, _)| type_mask & bit != 0)
+                    .map(|(_, actual, asked)| (*actual, *asked));
+                if condition == 1 {
+                    if selected.clone().any(|(actual, asked)| actual != asked) {
+                        mismatch = true;
+                    }
+                } else if !(1..=5).contains(&condition) {
+                    return Ok(if nt { invalid } else { fail(engine, 160) });
+                } else {
+                    let satisfied = match selected.find(|(actual, asked)| actual != asked) {
+                        None => matches!(condition, 3 | 5),
+                        Some((actual, asked)) => {
+                            if actual > asked {
+                                matches!(condition, 2 | 3)
+                            } else {
+                                matches!(condition, 4 | 5)
+                            }
+                        }
+                    };
+                    if !satisfied {
+                        mismatch = true;
+                    }
+                }
+            }
+            if mismatch {
+                return Ok(if nt { revision } else { fail(engine, 1150) });
+            }
+            if nt { 0 } else { 1 }
+        }
+        Call::NtVersionNumbers => {
+            let version = modeled_version(engine);
+            // The real helper reports the build with its high nibble set.
+            for (at, value) in [
+                (args[0], version.major),
+                (args[1], version.minor),
+                (args[2], version.build | 0xf000_0000),
+            ] {
+                if at != 0 {
+                    put(engine, at, &value.to_le_bytes())?;
+                }
+            }
+            0
         }
         Call::MemoryStatus(extended) => {
             let total = engine.get_data().machine.physical_pages() as u64 * 4096;

@@ -10,10 +10,13 @@ pub(super) enum Call {
     Query { wide: bool },
     Get { wide: bool },
     Delete { wide: bool },
+    DeleteValue { wide: bool },
     EnumValue { wide: bool },
     EnumKey { wide: bool },
+    EnumKeyLegacy { wide: bool },
     Info { wide: bool },
     Close,
+    ServiceControlHandler { extended: bool },
 }
 pub(super) fn definition(name: &str) -> Option<(Call, usize)> {
     let wide = name.ends_with('W');
@@ -50,10 +53,21 @@ pub(super) fn definition(name: &str) -> Option<(Call, usize)> {
         "RegQueryValueExA" | "RegQueryValueExW" => (Call::Query { wide }, 6),
         "RegGetValueA" | "RegGetValueW" => (Call::Get { wide }, 7),
         "RegDeleteKeyA" | "RegDeleteKeyW" => (Call::Delete { wide }, 2),
+        "RegDeleteValueA" | "RegDeleteValueW" => (Call::DeleteValue { wide }, 2),
         "RegEnumValueA" | "RegEnumValueW" => (Call::EnumValue { wide }, 8),
         "RegEnumKeyExA" | "RegEnumKeyExW" => (Call::EnumKey { wide }, 8),
-        "RegQueryInfoKeyA" | "RegQueryInfoKeyW" => (Call::Info { wide }, 12),
+        // Legacy generic RegEnumKey has no Ex tail and a by-value char capacity.
+        "RegEnumKey" => (Call::EnumKeyLegacy { wide }, 4),
+        "RegQueryInfoKeyA" | "RegQueryInfoKeyW" | "RegQueryInfoKey" => (Call::Info { wide }, 12),
         "RegCloseKey" => (Call::Close, 1),
+        "RegisterServiceCtrlHandlerA" | "RegisterServiceCtrlHandlerW"
+        | "RegisterServiceCtrlHandler" => {
+            (Call::ServiceControlHandler { extended: false }, 2)
+        }
+        "RegisterServiceCtrlHandlerExA" | "RegisterServiceCtrlHandlerExW"
+        | "RegisterServiceCtrlHandlerEx" => {
+            (Call::ServiceControlHandler { extended: true }, 3)
+        }
         _ => return None,
     })
 }
@@ -156,13 +170,17 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
     match call {
         Call::Open { wide, extended } | Call::Create { wide, extended } => {
             let create = matches!(call, Call::Create { .. });
+            // Reserved and dwOptions are DWORDs. A compiler-produced x64
+            // caller stores a 32-bit argument into its eight-byte stack slot
+            // and leaves the upper half undefined, so every DWORD argument is
+            // compared at its own declared width.
             let (output, desired, disposition) = if extended && create {
-                if args[2] != 0 || args[3] != 0 || args[4] != 0 || args[6] != 0 {
+                if args[2] as u32 != 0 || args[3] != 0 || args[4] as u32 != 0 || args[6] != 0 {
                     bail!("Registry creation options/security/class are not modeled");
                 }
                 (args[7], args[5] as u32, args[8])
             } else if extended {
-                if args[2] != 0 {
+                if args[2] as u32 != 0 {
                     bail!("Registry open options are not modeled");
                 }
                 (args[4], args[3] as u32, 0)
@@ -200,7 +218,8 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 Ok(path) => path.to_owned(),
                 Err(error) => return status(error),
             };
-            if args[2] != 0 {
+            // Reserved is a DWORD.
+            if args[2] as u32 != 0 {
                 return Ok(87);
             }
             let name = name(engine, args[1], wide)?;
@@ -310,6 +329,62 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 Ok(()) => Ok(0),
                 Err(error) => status(error),
             }
+        }
+        Call::DeleteValue { wide } => {
+            // A null value name addresses the key's default value, exactly as
+            // RegDeleteValue treats it on Windows.
+            let name = name(engine, args[1], wide)?;
+            match engine
+                .get_data_mut()
+                .apis
+                .registry
+                .delete_value(OWNER, args[0], &name)
+            {
+                Ok(()) => Ok(0),
+                Err(error) => status(error),
+            }
+        }
+        Call::EnumKeyLegacy { wide } => {
+            // RegEnumKey (no Ex) takes the output buffer capacity by value and
+            // has no length, class or timestamp outputs.
+            if args[2] == 0 {
+                return Ok(87);
+            }
+            let entry = match engine
+                .get_data()
+                .apis
+                .registry
+                .enum_key(OWNER, args[0], args[1] as u32)
+            {
+                Ok(entry) => entry,
+                Err(error) => return status(error),
+            };
+            let units = registry::text_units(&entry, wide);
+            if (args[3] as u32) <= units {
+                return Ok(234);
+            }
+            Ok(
+                if outputs(engine, &[(args[2], registry::encode_text(&entry, wide, true))])? {
+                    0
+                } else {
+                    998
+                },
+            )
+        }
+        Call::ServiceControlHandler { extended } => {
+            // The handler procedure is recorded by the guest's own ServiceMain
+            // and never dispatched in this bounded profile; a null procedure is
+            // the one rejected argument. lpContext (extended) is ignored exactly
+            // as the frozen reference ignores it.
+            let _ = extended;
+            if args[1] == 0 {
+                engine.get_data_mut().apis.last_error = 87;
+                return Ok(0);
+            }
+            let state = &mut engine.get_data_mut().apis;
+            state.service_control_handles += 1;
+            state.last_error = 0;
+            Ok(state.service_control_handles)
         }
         Call::EnumValue { wide } => {
             if args[2] == 0 || args[3] == 0 || args[4] != 0 || (args[6] != 0 && args[7] == 0) {

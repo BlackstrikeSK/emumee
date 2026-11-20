@@ -605,6 +605,20 @@ impl Registry {
         self.store(id, name, value_type, data, wide);
         Ok(())
     }
+    pub fn delete_value(&mut self, owner: u64, handle: u64, name: &str) -> Result<()> {
+        let id = self.resolve(owner, handle, KEY_SET_VALUE)?;
+        valid_name(name)?;
+        let key = self.keys.get_mut(&id).unwrap();
+        let index = key
+            .values
+            .iter()
+            .position(|value| fold(&value.name) == fold(name))
+            .ok_or_else(|| error(2, "registry value not found"))?;
+        let removed = key.values.remove(index);
+        self.total -= removed.data.len();
+        self.values -= 1;
+        Ok(())
+    }
     fn value(&self, id: u64, name: &str, wide: bool) -> Result<RegistryValue> {
         valid_name(name)?;
         self.keys[&id]

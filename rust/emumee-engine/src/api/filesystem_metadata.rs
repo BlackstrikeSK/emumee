@@ -17,6 +17,10 @@ pub(super) enum Call {
     Close,
     FullPath(bool),
     LongPath(bool),
+    ShortPath(bool),
+    FirstEx(bool),
+    TempFileName(bool),
+    BinaryType(bool),
     SetCurrent(bool),
 }
 #[derive(Default)]
@@ -54,11 +58,36 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
         "FindClose" if file => (Call::Close, 1, T::U32),
         "GetFullPathNameA" | "GetFullPathNameW" if file => (Call::FullPath(wide), 4, T::U32),
         "GetLongPathNameA" | "GetLongPathNameW" if file => (Call::LongPath(wide), 3, T::U32),
+        // The modeled volume generates no 8.3 aliases, exactly like a Windows
+        // volume with short-name creation disabled, so the short path is the
+        // long path.
+        "GetShortPathNameA" | "GetShortPathNameW" if file => (Call::ShortPath(wide), 3, T::U32),
+        // Only the generic spelling is declared; its structure and search
+        // arguments decide nothing this profile does not already model.
+        "FindFirstFileEx" if file => (Call::FirstEx(false), 6, T::Pointer),
+        "GetTempFileNameA" | "GetTempFileNameW" if file => {
+            (Call::TempFileName(wide), 4, T::U32)
+        }
+        "GetBinaryType" if kernel => (Call::BinaryType(false), 2, T::U32),
         "SetCurrentDirectoryA" | "SetCurrentDirectoryW" if process || file => {
             (Call::SetCurrent(wide), 1, T::U32)
         }
         _ => return None,
     })
+}
+/// The COFF machine of a guest PE image, read from its own headers.
+fn pe_machine(bytes: &[u8]) -> Option<u16> {
+    if bytes.len() < 0x40 || bytes[..2] != *b"MZ" {
+        return None;
+    }
+    let offset = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
+    let header = offset.checked_add(6)?;
+    if header > bytes.len() || bytes[offset..offset + 4] != *b"PE\0\0" {
+        return None;
+    }
+    Some(u16::from_le_bytes(
+        bytes[offset + 4..offset + 6].try_into().unwrap(),
+    ))
 }
 fn failure(engine: &mut Unicorn<Trace>, error: FileError, value: u64) -> Result<u64> {
     ensure!(error.win32 != 50, "{error}");
@@ -242,14 +271,18 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         | Call::SetAttributes(w)
         | Call::AttributesEx(w)
         | Call::First(w)
+        | Call::FirstEx(w)
         | Call::FullPath(w)
         | Call::LongPath(w)
+        | Call::ShortPath(w)
+        | Call::TempFileName(w)
+        | Call::BinaryType(w)
         | Call::SetCurrent(w) => w,
         _ => unreachable!(),
     };
     let fail_value = match call {
         Call::Attributes(_) => u32::MAX as u64,
-        Call::First(_) => invalid(engine),
+        Call::First(_) | Call::FirstEx(_) => invalid(engine),
         _ => 0,
     };
     let path = match name(engine, args[0], wide) {
@@ -312,7 +345,125 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             engine.get_data_mut().apis.last_error = 0;
             Ok(1)
         }
-        Call::First(wide) => {
+        Call::TempFileName(_) => {
+            // The directory must already exist as a directory; this call never
+            // creates one, and a file of that name is not one.
+            if !matches!(engine.get_data().apis.files.is_directory(&path), Ok(true)) {
+                return bad(engine, 3, 0);
+            }
+            let prefix: String = if args[1] == 0 {
+                String::new()
+            } else {
+                match name(engine, args[1], wide) {
+                    // Only the first three characters are used, as documented.
+                    Ok(text) => text.chars().take(3).collect(),
+                    Err(error) => return names_failure(engine, error, 0),
+                }
+            };
+            let compose = |unique: u32| format!("{path}\\{prefix}{unique:04x}.tmp");
+            // A zero request asks this call to pick a free name and create the
+            // file; a supplied number is used as given and creates nothing.
+            let (unique, create) = if args[2] as u32 == 0 {
+                let mut chosen = None;
+                for candidate in 1..=0xffffu32 {
+                    if matches!(
+                        engine.get_data().apis.files.exists(&compose(candidate)),
+                        Ok(false)
+                    ) {
+                        chosen = Some(candidate);
+                        break;
+                    }
+                }
+                match chosen {
+                    Some(candidate) => (candidate, true),
+                    None => return bad(engine, 80, 0),
+                }
+            } else {
+                (args[2] as u32 & 0xffff, false)
+            };
+            let chosen = compose(unique);
+            let encoding = if wide {
+                Encoding::Utf16
+            } else {
+                Encoding::Cp1252
+            };
+            let bytes = encoding.encode(&chosen, true);
+            if !writable(engine, args[3], bytes.len() as u64) {
+                return bad(engine, 998, 0);
+            }
+            if create {
+                // CREATE_NEW with write access, immediately closed, leaves the
+                // empty file the documented contract promises.
+                let handle = match engine
+                    .get_data_mut()
+                    .apis
+                    .files
+                    .open(&chosen, 0x40000000, 0, 1, OWNER)
+                {
+                    Ok((handle, _)) => handle,
+                    Err(error) => return failure(engine, error, 0),
+                };
+                if let Err(error) = engine.get_data_mut().apis.files.close(handle, OWNER) {
+                    return failure(engine, error, 0);
+                }
+            }
+            crate::cpu::write(engine, args[3], &bytes)?;
+            engine.get_data_mut().apis.last_error = 0;
+            Ok(unique.into())
+        }
+        Call::BinaryType(_) => {
+            if !writable(engine, args[1], 4) {
+                return bad(engine, 998, 0);
+            }
+            let contents = match engine.get_data().apis.files.contents(&path) {
+                Ok(Some(bytes)) => bytes.to_vec(),
+                Ok(None) => return bad(engine, 2, 0),
+                Err(error) => return failure(engine, error, 0),
+            };
+            // Classify from the guest file's own headers; no host image is
+            // consulted and no execution happens here.
+            let machine = pe_machine(&contents);
+            let kind = match machine {
+                Some(0x14c) => 0u32,
+                Some(0x8664) => 6,
+                // ERROR_BAD_EXE_FORMAT covers both a non-PE file and a machine
+                // this profile does not classify.
+                _ => return bad(engine, 193, 0),
+            };
+            crate::cpu::write(engine, args[1], &kind.to_le_bytes())?;
+            engine.get_data_mut().apis.last_error = 0;
+            Ok(1)
+        }
+        Call::ShortPath(_) => {
+            match engine
+                .get_data()
+                .apis
+                .files
+                .long_path(&path, wide, args[2] as u32)
+            {
+                Ok(plan) => path_output(engine, plan, args[1], 0),
+                Err(error) => failure(engine, error, 0),
+            }
+        }
+        Call::First(wide) | Call::FirstEx(wide) => {
+            // The extended spelling takes its output buffer after the
+            // information level, so the structure address differs.
+            let output = if let Call::FirstEx(_) = call {
+                // FindExInfoStandard/FindExInfoBasic over a name match, with no
+                // filter and no additional flags, is the whole modeled profile.
+                // The information level, the search operation and the
+                // additional flags are DWORDs; only the filter is a pointer.
+                ensure!(
+                    matches!(args[1] as u32, 0 | 1)
+                        && args[3] as u32 == 0
+                        && args[4] == 0
+                        && args[5] as u32 == 0,
+                    "FindFirstFileEx information level, search operation, filter or flags are not modeled"
+                );
+                args[2]
+            } else {
+                args[1]
+            };
             let entries = match engine.get_data().apis.files.enumerate(&path) {
                 Ok(entries) => entries,
                 Err(error) => return failure(engine, error, fail_value),
@@ -331,10 +482,10 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 Ok(image) => image,
                 Err(error) => return failure(engine, error, fail_value),
             };
-            if !writable(engine, args[1], image.len() as u64) {
+            if !writable(engine, output, image.len() as u64) {
                 return bad(engine, 998, fail_value);
             }
-            crate::cpu::write(engine, args[1], &image)?;
+            crate::cpu::write(engine, output, &image)?;
             engine
                 .get_data_mut()
                 .apis

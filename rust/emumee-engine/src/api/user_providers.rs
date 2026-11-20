@@ -93,8 +93,10 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
         if engine.get_data().apis.modules.module(&module)?.is_some() {
             continue;
         }
+        // The provider image holds 512 export stubs across two pages; typed
+        // data namespaces keep the single-page geometry and are checked there.
         ensure!(
-            !names.is_empty() && names.len() <= 256,
+            !names.is_empty() && names.len() <= 512,
             "User provider export quota exceeded: {module}"
         );
         let mut exports = Vec::with_capacity(names.len());
@@ -107,7 +109,11 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
         }
         let data = crt_startup::command_line::data_exports(engine, &module)?;
         let data_capacity = data.iter().fold(0usize, |cursor, item| cursor.next_multiple_of(item.alignment) + item.bytes.len());
-        let image_size = 0x6000 + data_capacity.div_ceil(4096) as u64 * 4096;
+        // Reserve what the image will actually declare: one or two stub pages,
+        // the export directory, and any typed data pages.
+        let stubs = if exports.len() + data.len() > 256 { 0x2000u64 } else { 0x1000 };
+        let image_size =
+            0x1000 + stubs + 0x4000 + data_capacity.div_ceil(4096) as u64 * 4096;
         let base =
             dynamic_loader::place_image(engine, 0x74000000 + index as u64 * 0x100000, image_size)?;
         let bytes = emumee_core::provider::image_with_mutable_data(architecture, base, &module, &exports, &data)?;

@@ -22,6 +22,14 @@ pub(super) enum Call {
     User(Encoding),
     CommandLine(Encoding),
     Blocks(blocks::Call),
+    Lcid,
+    LangId,
+    UiLanguage,
+    ValidLocale,
+    SessionId,
+    PackageId,
+    FeatureConfiguration,
+    FirmwareTable,
 }
 #[derive(Clone, Debug)]
 struct StableText {
@@ -108,6 +116,7 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
                 | "api-ms-win-core-processenvironment-l1-2-0"
         );
     let system = kernel || module == "api-ms-win-core-sysinfo-l1-1-0";
+    let localization = kernel || module == "api-ms-win-core-localization-l1-2-0";
     let file = kernel
         || matches!(
             module,
@@ -140,7 +149,8 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
         "GetCurrentDirectoryA" | "GetCurrentDirectoryW" if environment => {
             (Call::Directory(Directory::Current, ansi), 2, T::U32)
         }
-        "GetWindowsDirectoryA"
+        "GetWindowsDirectory"
+        | "GetWindowsDirectoryA"
         | "GetWindowsDirectoryW"
         | "GetSystemWindowsDirectoryA"
         | "GetSystemWindowsDirectoryW"
@@ -168,6 +178,20 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T)> {
             (Call::ComputerEx(ansi), 3, T::U32)
         }
         "GetUserNameA" | "GetUserNameW" if module == "advapi32" => (Call::User(ansi), 2, T::U32),
+        // One modeled locale serves the system and user defaults alike; this
+        // profile has no separate per-user regional selection.
+        "GetSystemDefaultLCID" | "GetUserDefaultLCID" if system => (Call::Lcid, 0, T::U32),
+        "GetSystemDefaultLangID" | "GetUserDefaultLangID" if system => (Call::LangId, 0, T::U32),
+        "GetSystemDefaultUILanguage" | "GetUserDefaultUILanguage" if localization => {
+            (Call::UiLanguage, 0, T::U32)
+        }
+        "IsValidLocale" if system => (Call::ValidLocale, 2, T::U32),
+        "WTSGetActiveConsoleSessionId" if kernel => (Call::SessionId, 0, T::U32),
+        "GetCurrentPackageId" if kernel => (Call::PackageId, 2, T::U32),
+        "RtlQueryFeatureConfiguration" if module == "ntdll" => {
+            (Call::FeatureConfiguration, 4, T::U32)
+        }
+        "GetSystemFirmwareTable" if kernel => (Call::FirmwareTable, 4, T::U32),
         _ => return None,
     })
 }
@@ -431,6 +455,71 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             }
             Call::CommandLine(encoding) => stable_command_line(engine, encoding),
             Call::Blocks(call) => blocks::invoke(engine, args, call),
+            Call::Lcid => Ok(engine.get_data().apis.persona.model.lcid().into()),
+            Call::LangId | Call::UiLanguage => {
+                Ok(engine.get_data().apis.persona.model.langid().into())
+            }
+            Call::ValidLocale => {
+                // LCID_INSTALLED and LCID_SUPPORTED are the only modeled
+                // classes; alternate sorts have no ordering model here.
+                let flags = args[1] as u32;
+                if flags == 0 || flags & !0x3 != 0 {
+                    engine.get_data_mut().apis.last_error = 1004;
+                    return Ok(0);
+                }
+                let locale = engine.get_data().apis.persona.model.lcid();
+                // The configured locale and the invariant locale exist; no
+                // other LCID is installed in this profile.
+                Ok(u64::from(args[0] as u32 == locale || args[0] as u32 == 0x7f))
+            }
+            Call::SessionId => Ok(engine.get_data().apis.persona.model.session_id().into()),
+            // The modeled process has no package identity, so the documented
+            // APPMODEL_ERROR_NO_PACKAGE is the whole contract and no output is
+            // written. The frozen reference reported success without filling
+            // the buffer, which would hand the guest uninitialized bytes.
+            Call::PackageId => Ok(15700),
+            Call::FeatureConfiguration => {
+                // An empty boot/runtime override store with a stable change
+                // stamp: every feature query is answered "not found".
+                let kind = args[1] as u32;
+                let writable = |at: u64, size: u64| {
+                    at != 0 && engine.get_data().apis.memory.allows(at, size, P::WRITE)
+                };
+                if !matches!(kind, 0 | 1) || !writable(args[2], 8) || !writable(args[3], 12) {
+                    return Ok(0xc000_000d);
+                }
+                crate::cpu::write(engine, args[2], &1u64.to_le_bytes())?;
+                Ok(0xc000_0225)
+            }
+            Call::FirmwareTable => {
+                // Provider 'RSMB' is the raw SMBIOS table that fingerprinting
+                // code reads; the modeled machine exposes exactly one, table 0.
+                // Other providers report no table, as a machine without that
+                // firmware interface does, rather than inventing bytes.
+                const RSMB: u32 = u32::from_be_bytes(*b"RSMB");
+                if args[0] as u32 != RSMB || args[1] as u32 != 0 {
+                    engine.get_data_mut().apis.last_error = 0;
+                    return Ok(0);
+                }
+                let table = engine.get_data().apis.persona.model.firmware().raw_smbios();
+                let capacity = args[3] as u32 as usize;
+                // A null buffer or a short buffer reports the required size and
+                // writes nothing, as the documented contract requires.
+                if args[2] != 0 && capacity >= table.len() {
+                    if !engine
+                        .get_data()
+                        .apis
+                        .memory
+                        .allows(args[2], table.len() as u64, P::WRITE)
+                    {
+                        engine.get_data_mut().apis.last_error = 998;
+                        return Ok(0);
+                    }
+                    crate::cpu::write(engine, args[2], &table)?;
+                }
+                engine.get_data_mut().apis.last_error = 0;
+                Ok(table.len() as u64)
+            }
         }
     })();
     match result {

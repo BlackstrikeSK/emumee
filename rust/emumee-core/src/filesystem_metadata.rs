@@ -16,6 +16,9 @@ const MAX_DISPLAY_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub(super) struct MetadataState {
     attributes: BTreeMap<String, u32>,
+    /// Per-path creation/access/write overrides recorded by SetFileTime. An
+    /// absent entry reports the one seeded filesystem time.
+    times: BTreeMap<String, [u64; 3]>,
     pub(in crate::filesystem) native_seeded: BTreeSet<String>,
     created_directories: BTreeSet<String>,
     filetime: u64,
@@ -26,6 +29,7 @@ impl Default for MetadataState {
     fn default() -> Self {
         Self {
             attributes: BTreeMap::new(),
+            times: BTreeMap::new(),
             native_seeded: BTreeSet::new(),
             created_directories: BTreeSet::new(),
             filetime: DEFAULT_FILETIME,
@@ -89,6 +93,26 @@ pub struct Entry {
     pub path: String,
     pub name: String,
     pub metadata: Metadata,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct HandleInformation {
+    pub attributes: u32,
+    pub times: [u64; 3],
+    pub size: u64,
+    pub links: u32,
+    pub index: u64,
+}
+/// A stable per-path file index. Windows reports an NTFS file identifier; this
+/// profile has no master file table, so the index is a deterministic function
+/// of the canonical path: identical on every read of the same file, different
+/// for different files, and never zero.
+fn file_index(path: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash | 1
 }
 fn encode(text: &str, wide: bool) -> Result<Vec<u8>> {
     let encoding = if wide {
@@ -191,9 +215,103 @@ impl VirtualFileSystem {
                 .get(&path)
                 .copied()
                 .unwrap_or(if directory { 0x10 } else { 0x80 }),
-            times: [self.metadata.filetime; 3],
+            times: self
+                .metadata
+                .times
+                .get(&path)
+                .copied()
+                .unwrap_or([self.metadata.filetime; 3]),
             size,
         })
+    }
+    /// Everything BY_HANDLE_FILE_INFORMATION reports, except the volume serial
+    /// number, which is persona identity rather than filesystem state.
+    pub fn handle_information(&self, handle: u64, owner: u64) -> Result<HandleInformation> {
+        let h = self.handle(handle, owner)?;
+        let times = self.handle_times(handle, owner)?;
+        Ok(HandleInformation {
+            attributes: if h.unlinked.is_some() {
+                0x80
+            } else {
+                self.metadata
+                    .attributes
+                    .get(&h.path)
+                    .copied()
+                    .unwrap_or(0x80)
+            },
+            times,
+            size: self.file_bytes(h).len() as u64,
+            // Hard links are not modeled, so every file has exactly one name.
+            links: 1,
+            index: file_index(&h.path),
+        })
+    }
+    /// Times behind a live handle. Unnamed storage left by the immediate-unlink
+    /// profile has no directory entry, so it reports the seeded filesystem time.
+    pub fn handle_times(&self, handle: u64, owner: u64) -> Result<[u64; 3]> {
+        let h = self.handle(handle, owner)?;
+        if h.unlinked.is_some() {
+            return Ok([self.metadata.filetime; 3]);
+        }
+        Ok(self
+            .metadata
+            .times
+            .get(&h.path)
+            .copied()
+            .unwrap_or([self.metadata.filetime; 3]))
+    }
+    /// Record times through a handle. Changing a time is a write to the file's
+    /// directory entry, so a read-only handle cannot do it, and unnamed storage
+    /// has no entry to carry them.
+    pub fn set_handle_times(
+        &mut self,
+        handle: u64,
+        owner: u64,
+        requested: [Option<u64>; 3],
+    ) -> Result<()> {
+        let h = self.handle(handle, owner)?;
+        if !h.access.write && !h.access.append {
+            return Err(error(5, "file handle lacks write access"));
+        }
+        if h.unlinked.is_some() {
+            return Err(error(5, "unlinked guest file has no directory entry"));
+        }
+        let path = h.path.clone();
+        let mut times = self
+            .metadata
+            .times
+            .get(&path)
+            .copied()
+            .unwrap_or([self.metadata.filetime; 3]);
+        for (slot, value) in times.iter_mut().zip(requested) {
+            if let Some(value) = value {
+                *slot = value;
+            }
+        }
+        self.metadata.times.insert(path, times);
+        Ok(())
+    }
+    /// Record creation/access/write times. `None` leaves a time unchanged, which
+    /// is what both a null pointer and a zero FILETIME mean to SetFileTime.
+    /// Every later metadata read observes what the guest stored.
+    pub fn set_times(&mut self, path: &str, requested: [Option<u64>; 3]) -> Result<()> {
+        let path = self.path(path)?;
+        if !self.directories.contains(&path) && !self.files.contains_key(&path) {
+            return Err(error(2, "guest path does not exist"));
+        }
+        let mut times = self
+            .metadata
+            .times
+            .get(&path)
+            .copied()
+            .unwrap_or([self.metadata.filetime; 3]);
+        for (slot, value) in times.iter_mut().zip(requested) {
+            if let Some(value) = value {
+                *slot = value;
+            }
+        }
+        self.metadata.times.insert(path, times);
+        Ok(())
     }
     pub fn set_attributes(&mut self, path: &str, requested: u32) -> Result<()> {
         let path = self.path(path)?;
@@ -275,6 +393,16 @@ impl VirtualFileSystem {
             self.metadata.display_bytes -= display.len();
         }
         Ok(())
+    }
+    /// Guest-only directory existence query, the directory counterpart of
+    /// `exists`, which answers only for files. Unsupported namespaces stay
+    /// explicit; a malformed or absent path is simply not a directory.
+    pub fn is_directory(&self, path: &str) -> Result<bool> {
+        match self.path(path) {
+            Ok(path) => Ok(self.directories.contains(&path)),
+            Err(failure) if failure.win32 != 50 => Ok(false),
+            Err(failure) => Err(failure),
+        }
     }
     pub fn directory_plan(&self, path: &str) -> Result<DirectoryPlan> {
         let display = self.normalize_path(path, false, false)?;

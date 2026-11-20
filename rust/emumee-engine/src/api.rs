@@ -27,6 +27,7 @@ pub(crate) mod crt_startup;
 pub(crate) mod dynamic_loader;
 mod files;
 mod filesystem_metadata;
+mod volumes;
 mod filesystem_mutation;
 mod heap;
 mod internet;
@@ -109,6 +110,8 @@ enum Model {
     CrtStdio(crt_stdio::Call),
     Console(console::Call),
     FileMetadata(filesystem_metadata::Call),
+    FileHandle(files::Call),
+    Volumes(volumes::Call),
     FileMutation(filesystem_mutation::Call),
     CrtFormat(crt_format::Call),
     Mdl(mdl::Call),
@@ -289,6 +292,7 @@ pub(super) struct ApiState {
     pub kernel_formatting: crt_format::KernelFormatting,
     pub console: console::State,
     pub file_metadata: filesystem_metadata::State,
+    pub volumes: volumes::State,
     pub mdls: mdl::State,
     pub registry: emumee_core::registry::Registry,
     pub kernel_registry: kernel_registry::State,
@@ -320,6 +324,7 @@ pub(super) struct ApiState {
     pub base: u64,
     pub end: u64,
     pub(crate) last_error: u32,
+    pub(crate) service_control_handles: u64,
     pub(crate) user_bootstrap: Option<user_bootstrap::State>,
     pub(crate) user_loader: user_loader::State,
     pub calls: u64,
@@ -389,6 +394,7 @@ impl ApiState {
             winstrings: Vec::new(),
             console: console::State::fixture(),
             file_metadata: filesystem_metadata::State::default(),
+            volumes: volumes::State::default(),
             mdls: mdl::State::new(architecture),
             registry,
             kernel_registry: kernel_registry::State::default(),
@@ -418,6 +424,7 @@ impl ApiState {
             base: BASE,
             end: BASE,
             last_error: 0,
+            service_control_handles: 0,
             user_bootstrap: None,
             user_loader: user_loader::State::default(),
             calls: 0,
@@ -543,6 +550,18 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         binding.returns = returns;
         return binding;
     }
+    if let Some((call, count, returns)) = volumes::definition(module, name) {
+        binding.model = Model::Volumes(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = files::definition(architecture, module, name) {
+        binding.model = Model::FileHandle(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
     if let Some((call, count, returns)) = filesystem_metadata::definition(module, name) {
         binding.model = Model::FileMetadata(call);
         binding.count = count;
@@ -623,7 +642,7 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         binding.convention = convention;
         return binding;
     }
-    if let Some((call, count, returns)) = user_runtime::definition(module, name) {
+    if let Some((call, count, returns)) = user_runtime::definition(architecture, module, name) {
         if matches!(call, user_runtime::Call::Exception(crate::native_exceptions::user::Call::Eh4)) {
             if architecture != Architecture::X86 {
                 return binding;
@@ -1062,6 +1081,105 @@ fn explicit_unsupported(
     module: &str,
     name: &str,
 ) -> Option<(&'static str, usize, C)> {
+    if matches!(module, "kernel32" | "kernelbase") {
+        // Locale text, calendar text and firmware tables have no owned model
+        // here. The frozen reference answers these from the host C library's
+        // locale and from fabricated table bytes, neither of which is a
+        // deterministic guest model, so the call stops with its reason instead
+        // of handing the guest text or bytes it would act on.
+        match name {
+            "GetLocaleInfoA" | "GetLocaleInfoW" => {
+                return Some((
+                    "Locale information strings require a locale data model this profile does not have",
+                    4,
+                    C::Stdcall,
+                ));
+            }
+            "GetDateFormatA" | "GetDateFormatW" => {
+                return Some((
+                    "Locale date pictures require a calendar and locale name model this profile does not have",
+                    6,
+                    C::Stdcall,
+                ));
+            }
+            "GetTimeFormatA" | "GetTimeFormatW" => {
+                return Some((
+                    "Locale time pictures require a calendar and locale name model this profile does not have",
+                    6,
+                    C::Stdcall,
+                ));
+            }
+            // Detaching the console would retire the modeled standard handles
+            // and console streams, which this profile keeps for the life of the
+            // process. Reporting success while they stayed usable would be a
+            // state the guest could catch us in.
+            "FreeConsole" => {
+                return Some(("Console detachment is not modeled", 0, C::Stdcall));
+            }
+            _ => {}
+        }
+    }
+    // Section objects, interprocess channels, device control and serial ports
+    // have no model in this offline single-process profile. Returning a handle
+    // or a view the guest could then read or write would be inventing storage
+    // and peers that do not exist.
+    if matches!(
+        module,
+        "kernel32" | "kernelbase" | "api-ms-win-core-memory-l1-1-0"
+    ) {
+        let section = match name {
+            "CreateFileMappingA" | "CreateFileMappingW" => Some((
+                "File mapping objects are not modeled; no section model backs a guest view",
+                6,
+            )),
+            "OpenFileMappingA" | "OpenFileMappingW" => Some((
+                "Named section objects are not modeled; no mapping namespace exists",
+                3,
+            )),
+            "MapViewOfFile" => Some((
+                "Mapped views are not modeled; view storage would not be coherent with the virtual filesystem",
+                5,
+            )),
+            "UnmapViewOfFile" => Some(("Mapped views are not modeled; no view can exist to unmap", 1)),
+            "FlushViewOfFile" => Some((
+                "Mapped views are not modeled; there is no view to write back",
+                2,
+            )),
+            _ => None,
+        };
+        if let Some((reason, count)) = section {
+            return Some((reason, count, C::Stdcall));
+        }
+    }
+    if matches!(module, "kernel32" | "kernelbase") {
+        let channel = match name {
+            "CreateNamedPipeA" | "CreateNamedPipeW" => {
+                Some(("Named pipe servers are not modeled; no pipe namespace exists", 8))
+            }
+            "ConnectNamedPipe" => Some(("Named pipes are not modeled; no client can connect", 2)),
+            "DisconnectNamedPipe" => Some(("Named pipes are not modeled; no connection exists", 1)),
+            // Both ends of an anonymous pipe belong to the caller, so this one
+            // needs no peer: it is an unbuilt in-process buffer object, not an
+            // impossible contract.
+            "PeekNamedPipe" => Some(("Pipe buffer objects are not modeled", 6)),
+            "CreatePipe" => Some(("Anonymous pipe buffer objects are not modeled", 4)),
+            "CreateIoCompletionPort" => Some((
+                "Completion ports require the pending I/O model this profile does not have",
+                4,
+            )),
+            "GetMailslotInfo" => Some(("Mailslots are not modeled; no mailslot can be opened", 5)),
+            "DeviceIoControl" => Some((
+                "No device objects exist in this user profile; a control code has no target",
+                8,
+            )),
+            "GetCommProperties" => Some(("Serial ports are not modeled", 2)),
+            "GetCommTimeouts" => Some(("Serial ports are not modeled", 2)),
+            _ => None,
+        };
+        if let Some((reason, count)) = channel {
+            return Some((reason, count, C::Stdcall));
+        }
+    }
     let crt = matches!(
         module,
         "msvcrt" | "ucrtbase" | "api-ms-win-crt-private-l1-1-0" | "vcruntime140"
@@ -1456,6 +1574,8 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::WinStrings(call) => winstrings::invoke(engine, args, call)?,
         Model::Console(call) => console::invoke(engine, args, call)?,
         Model::FileMetadata(call) => filesystem_metadata::invoke(engine, args, call)?,
+        Model::FileHandle(call) => files::invoke(engine, args, call)?,
+        Model::Volumes(call) => volumes::invoke(engine, args, call)?,
         Model::FileMutation(call) => filesystem_mutation::invoke(engine, args, call)?,
         Model::CrtFormat(call) => crt_format::invoke(engine, args, call)?,
         Model::Objects(call) => kernel_objects::call(engine, call, args)?,

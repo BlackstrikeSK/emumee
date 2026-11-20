@@ -296,6 +296,215 @@ pub struct PersonaConfig {
     pub temp_directory: String,
     pub logical_processors: u32,
     pub environment: Vec<(String, String)>,
+    /// BCP-47 locale tag, e.g. "en-US"; drives LCID/LANGID reporting.
+    #[serde(default = "default_locale")]
+    pub locale: String,
+    /// Active console session identifier.
+    #[serde(default = "default_session_id")]
+    pub session_id: u32,
+    /// Identity and capacity of the single modeled guest volume.
+    #[serde(default)]
+    pub volume: VolumeConfig,
+    /// Firmware identity a guest reads through GetSystemFirmwareTable. These are
+    /// the strings sandbox-aware code inspects, so they are persona-controlled:
+    /// the default presents a consumer OEM machine, and a document can present
+    /// any identity a scenario needs.
+    #[serde(default)]
+    pub firmware: FirmwareConfig,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirmwareConfig {
+    pub bios_vendor: String,
+    pub bios_version: String,
+    pub bios_date: String,
+    pub system_manufacturer: String,
+    pub system_product: String,
+    pub system_version: String,
+    pub system_serial: String,
+    pub system_family: String,
+    pub baseboard_manufacturer: String,
+    pub baseboard_product: String,
+    /// System UUID as a plain 32-hex-digit string; non-hex characters are zero.
+    pub uuid: String,
+}
+impl Default for FirmwareConfig {
+    fn default() -> Self {
+        Self {
+            bios_vendor: "Dell Inc.".into(),
+            bios_version: "2.21.0".into(),
+            bios_date: "09/15/2024".into(),
+            system_manufacturer: "Dell Inc.".into(),
+            system_product: "OptiPlex 7090".into(),
+            system_version: "01".into(),
+            system_serial: "7KQ4ZL3".into(),
+            system_family: "OptiPlex".into(),
+            baseboard_manufacturer: "Dell Inc.".into(),
+            baseboard_product: "0K240Y".into(),
+            uuid: "4c4c454400514b104c8042c04f5a4c33".into(),
+        }
+    }
+}
+impl FirmwareConfig {
+    fn uuid_bytes(&self) -> [u8; 16] {
+        let mut bytes = [0u8; 16];
+        let digits: Vec<u8> = self
+            .uuid
+            .chars()
+            .filter_map(|c| c.to_digit(16).map(|d| d as u8))
+            .collect();
+        for (index, pair) in digits.chunks(2).take(16).enumerate() {
+            bytes[index] = (pair[0] << 4) | pair.get(1).copied().unwrap_or(0);
+        }
+        bytes
+    }
+    /// The exact bytes GetSystemFirmwareTable returns for the RSMB provider: a
+    /// RawSMBIOSData header followed by Type 0 (BIOS), Type 1 (System), Type 2
+    /// (Baseboard) and the Type 127 end marker. It is a modeled table built from
+    /// the persona identity, not a captured host firmware image.
+    pub fn raw_smbios(&self) -> Vec<u8> {
+        fn structure(table: &mut Vec<u8>, kind: u8, handle: u16, fixed: &[u8], strings: &[&str]) {
+            // Header: type, length (header + fixed fields), handle.
+            let length = 4 + fixed.len();
+            table.push(kind);
+            table.push(length as u8);
+            table.extend(handle.to_le_bytes());
+            table.extend(fixed);
+            if strings.iter().all(|s| s.is_empty()) {
+                // No strings: the set is a single terminating null.
+                table.push(0);
+            } else {
+                for text in strings {
+                    table.extend(text.as_bytes());
+                    table.push(0);
+                }
+            }
+            table.push(0);
+        }
+        let mut table = Vec::new();
+        // Type 0: BIOS. The string references are 1-based indices into the set.
+        structure(
+            &mut table,
+            0,
+            0x0000,
+            &[
+                1, // Vendor
+                2, // BIOS Version
+                0x00, 0xf0, // Starting address segment
+                3,    // Release Date
+                0xff, // ROM size (64 KB * (n+1)); 0xff defers to extended field
+                0x7f, 0x9a, 0x8b, 0x5e, 0x00, 0x00, 0x00, 0x00, // Characteristics
+                0x03, 0x0c, // Characteristics extension bytes
+                0x02, 0x15, // System BIOS major/minor
+                0xff, 0xff, // Embedded controller version absent
+            ],
+            &[&self.bios_vendor, &self.bios_version, &self.bios_date],
+        );
+        // Type 1: System.
+        let mut system = vec![1u8, 2, 3, 4]; // Manufacturer, Product, Version, Serial
+        system.extend(self.uuid_bytes());
+        system.push(0x06); // Wake-up type: power switch
+        system.push(0); // SKU number string: none
+        system.push(5); // Family string index
+        structure(
+            &mut table,
+            1,
+            0x0100,
+            &system,
+            &[
+                &self.system_manufacturer,
+                &self.system_product,
+                &self.system_version,
+                &self.system_serial,
+                &self.system_family,
+            ],
+        );
+        // Type 2: Baseboard.
+        structure(
+            &mut table,
+            2,
+            0x0200,
+            &[
+                1, // Manufacturer
+                2, // Product
+                0, // Version string: none
+                0, // Serial string: none
+                0, // Asset tag string: none
+                0x09, // Feature flags: hosting board
+                0,    // Location in chassis string: none
+                0x00, 0x03, // Chassis handle
+                0x0a, // Board type: motherboard
+                0,    // Contained object handles count
+            ],
+            &[&self.baseboard_manufacturer, &self.baseboard_product],
+        );
+        // Type 127: end of table.
+        structure(&mut table, 127, 0x7f00, &[], &[]);
+        let mut raw = vec![
+            0x00, // Used20CallingMethod
+            0x03, // SMBIOS major version
+            0x04, // SMBIOS minor version
+            0x00, // DMI revision
+        ];
+        raw.extend((table.len() as u32).to_le_bytes());
+        raw.extend(table);
+        raw
+    }
+}
+/// The one guest volume this profile models. Capacity and free space are
+/// reported figures, not an allocator: writing a guest file does not consume
+/// them, and the virtual filesystem keeps its own separate byte bound.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VolumeConfig {
+    pub guid: String,
+    pub label: String,
+    pub filesystem: String,
+    pub capacity_bytes: u64,
+    pub free_bytes: u64,
+}
+impl Default for VolumeConfig {
+    fn default() -> Self {
+        Self {
+            guid: "{6f2a9e4d-81b7-4f03-a73c-2d0e6f12a5b8}".into(),
+            label: String::new(),
+            filesystem: "NTFS".into(),
+            capacity_bytes: 549755813888,
+            free_bytes: 343597383680,
+        }
+    }
+}
+impl VolumeConfig {
+    /// Windows reports a 32-bit volume serial number. It is derived from the
+    /// configured volume GUID's leading 32 bits so one document field decides
+    /// both the GUID a guest can read and the serial number it sees.
+    pub fn serial(&self) -> u32 {
+        let digits: String = self
+            .guid
+            .chars()
+            .filter(|c| c.is_ascii_hexdigit())
+            .take(8)
+            .collect();
+        u32::from_str_radix(&digits, 16).unwrap_or(0)
+    }
+}
+fn default_locale() -> String {
+    "en-US".into()
+}
+fn default_session_id() -> u32 {
+    1
+}
+/// Primary LANGID for the bounded set of admitted locales. Matches the locales
+/// the full-persona validator accepts; an unknown tag falls back to en-US, as
+/// the legacy thread UI-language model does.
+pub fn locale_langid(tag: &str) -> u16 {
+    match tag.to_ascii_lowercase().replace('_', "-").as_str() {
+        "en-us" => 0x0409,
+        "en-gb" => 0x0809,
+        "de-de" => 0x0407,
+        "fr-fr" => 0x040c,
+        _ => 0x0409,
+    }
 }
 impl PersonaConfig {
     /// Explicit generated literals for harmless tests; never host defaults.
@@ -311,6 +520,10 @@ impl PersonaConfig {
             temp_directory: r"C:\Users\Alex\AppData\Local\Temp".into(),
             logical_processors: 12,
             environment: Vec::new(),
+            locale: default_locale(),
+            session_id: default_session_id(),
+            volume: VolumeConfig::default(),
+            firmware: FirmwareConfig::default(),
         }
     }
 }
@@ -549,6 +762,49 @@ impl Persona {
         if !(1..=64).contains(&config.logical_processors) {
             return Err(error(50, "persona supports one logical processor group"));
         }
+        bounded(&config.locale, false)?;
+        if config.locale.len() > 85 || config.locale.chars().any(|c| c < ' ') {
+            return Err(error(87, "persona locale tag exceeds profile"));
+        }
+        // An unnamed volume is ordinary, so the label may be empty; the GUID
+        // and filesystem name may not.
+        for (text, allow_empty) in [
+            (&config.volume.guid, false),
+            (&config.volume.label, true),
+            (&config.volume.filesystem, false),
+        ] {
+            bounded(text, allow_empty)?;
+            if text.encode_utf16().count() > 63 || text.chars().any(|c| c < ' ') {
+                return Err(error(87, "persona volume text exceeds profile"));
+            }
+        }
+        if config.volume.free_bytes > config.volume.capacity_bytes
+            || config.volume.filesystem.is_empty()
+        {
+            return Err(error(
+                50,
+                "persona volume free space exceeds capacity or has no filesystem name",
+            ));
+        }
+        for text in [
+            &config.firmware.bios_vendor,
+            &config.firmware.bios_version,
+            &config.firmware.bios_date,
+            &config.firmware.system_manufacturer,
+            &config.firmware.system_product,
+            &config.firmware.system_version,
+            &config.firmware.system_serial,
+            &config.firmware.system_family,
+            &config.firmware.baseboard_manufacturer,
+            &config.firmware.baseboard_product,
+        ] {
+            bounded(text, true)?;
+            // Each becomes a null-terminated SMBIOS string, so no embedded NUL
+            // and a bounded length.
+            if text.encode_utf16().count() > 128 || text.chars().any(|c| c < ' ') {
+                return Err(error(87, "persona firmware text exceeds profile"));
+            }
+        }
         config.user_profile = absolute(&config.user_profile)?;
         config.current_directory = absolute(&config.current_directory)?;
         config.windows_directory = absolute(&config.windows_directory)?;
@@ -628,6 +884,27 @@ impl Persona {
     }
     pub fn config(&self) -> &PersonaConfig {
         &self.config
+    }
+    pub fn locale(&self) -> &str {
+        &self.config.locale
+    }
+    /// Primary LANGID for the configured locale.
+    pub fn langid(&self) -> u16 {
+        locale_langid(&self.config.locale)
+    }
+    /// LCID for the configured locale. The modeled locales all use the default
+    /// sub-language and default sort, so the LCID is the LANGID.
+    pub fn lcid(&self) -> u32 {
+        self.langid().into()
+    }
+    pub fn session_id(&self) -> u32 {
+        self.config.session_id
+    }
+    pub fn volume(&self) -> &VolumeConfig {
+        &self.config.volume
+    }
+    pub fn firmware(&self) -> &FirmwareConfig {
+        &self.config.firmware
     }
     fn process(&self, owner: u64) -> Result<&Process> {
         self.processes
@@ -1451,6 +1728,60 @@ mod tests {
                 command_line(&argv, forced).unwrap(),
                 *expected,
                 "{argv:?} {forced:?}"
+            );
+        }
+    }
+    #[test]
+    fn raw_smbios_is_a_well_formed_table_carrying_the_persona_identity() {
+        let firmware = FirmwareConfig::default();
+        let raw = firmware.raw_smbios();
+        // RawSMBIOSData header: version 3.4 and a length that covers the rest.
+        assert_eq!(raw[0], 0);
+        assert_eq!((raw[1], raw[2]), (3, 4));
+        let length = u32::from_le_bytes(raw[4..8].try_into().unwrap()) as usize;
+        assert_eq!(length, raw.len() - 8);
+        // Walk the structures: header + fixed fields, then a double-null string
+        // set, collecting every string across the whole table.
+        let mut cursor = 8;
+        let mut kinds = Vec::new();
+        let mut strings = Vec::new();
+        while cursor < raw.len() {
+            let kind = raw[cursor];
+            let fixed = raw[cursor + 1] as usize;
+            assert!(fixed >= 4, "structure {kind} shorter than its header");
+            kinds.push(kind);
+            let mut at = cursor + fixed;
+            // The string set ends at a double null. An empty set is one null.
+            if raw[at] == 0 && raw[at + 1] == 0 {
+                at += 2;
+            } else {
+                while raw[at] != 0 {
+                    let start = at;
+                    while raw[at] != 0 {
+                        at += 1;
+                    }
+                    strings.push(String::from_utf8(raw[start..at].to_vec()).unwrap());
+                    at += 1;
+                }
+                at += 1;
+            }
+            cursor = at;
+            if kind == 127 {
+                break;
+            }
+        }
+        assert_eq!(cursor, raw.len(), "table has trailing bytes");
+        assert_eq!(kinds, vec![0, 1, 2, 127]);
+        for expected in [
+            firmware.bios_vendor.as_str(),
+            firmware.system_manufacturer.as_str(),
+            firmware.system_product.as_str(),
+            firmware.system_serial.as_str(),
+            firmware.baseboard_product.as_str(),
+        ] {
+            assert!(
+                strings.iter().any(|s| s == expected),
+                "firmware string {expected:?} absent from {strings:?}"
             );
         }
     }

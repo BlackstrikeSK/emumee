@@ -26,6 +26,12 @@ pub use typed::{DataExport, catalog_image_with_data, image_with_data, image_with
 #[error("Synthetic PE provider: {0}")]
 pub struct ProviderError(pub &'static str);
 
+/// Virtual and raw size of the export-directory section in every provider.
+pub(crate) const EDATA: usize = 0x4000;
+/// Export count a provider image can hold before its stub section needs a
+/// second page. Typed data providers keep this single-page geometry.
+pub(crate) const SINGLE_PAGE_EXPORTS: usize = 256;
+
 fn word(data: &mut [u8], at: usize, value: u16) {
     data[at..at + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -45,14 +51,22 @@ pub fn image(
 ) -> Result<Vec<u8>, ProviderError> {
     let valid_name =
         |s: &str| !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_graphic());
+    // Each export owns a 16-byte jump stub, so the stub section takes a second
+    // page once a modeled namespace passes 256 exports. Everything else keeps
+    // its original geometry, and the raw-to-virtual delta stays 0xe00 in both
+    // tiers, so every smaller provider image is byte-for-byte unchanged.
+    let stubs = if exports.len() <= 256 { 0x1000usize } else { 0x2000 };
+    let directory = 0x200 + stubs;
+    let directory_rva = 0x1000 + stubs;
+    let image_size = 0x1000 + stubs + EDATA;
     let end = base
-        .checked_add(0x6000)
+        .checked_add(image_size as u64)
         .ok_or(ProviderError("base overflow"))?;
     if base == 0
         || base % 4096 != 0
         || !valid_name(module)
         || exports.is_empty()
-        || exports.len() > 256
+        || exports.len() > 512
     {
         return Err(ProviderError("invalid base, module or export count"));
     }
@@ -72,7 +86,7 @@ pub fn image(
     }
     let mut exports = exports.to_vec();
     exports.sort_unstable_by_key(|(name, _)| *name);
-    let mut data = vec![0u8; 0x5200];
+    let mut data = vec![0u8; directory + EDATA];
     data[..2].copy_from_slice(b"MZ");
     dword(&mut data, 0x3c, 0x80);
     data[0x80..0x84].copy_from_slice(b"PE\0\0");
@@ -82,28 +96,35 @@ pub fn image(
     word(&mut data, 0x96, 0x2023); // Fixed-base synthetic DLL; relocations stripped.
     let o = 0x98;
     word(&mut data, o, if wide { 0x20b } else { 0x10b });
-    dword(&mut data, o + 4, 0x1000);
-    dword(&mut data, o + 8, 0x4000);
+    dword(&mut data, o + 4, stubs as u32);
+    dword(&mut data, o + 8, EDATA as u32);
     dword(&mut data, o + 20, 0x1000);
     if wide {
         qword(&mut data, o + 24, base);
     } else {
-        dword(&mut data, o + 24, 0x2000);
+        dword(&mut data, o + 24, directory_rva as u32);
         dword(&mut data, o + 28, base as u32);
     }
     dword(&mut data, o + 32, 4096);
     dword(&mut data, o + 36, 512);
-    dword(&mut data, o + 56, 0x6000);
+    dword(&mut data, o + 56, image_size as u32);
     dword(&mut data, o + 60, 512);
     word(&mut data, o + 68, 3);
     dword(&mut data, o + if wide { 108 } else { 92 }, 16);
     let dd = o + if wide { 112 } else { 96 };
-    dword(&mut data, dd, 0x2000);
-    dword(&mut data, dd + 4, 0x4000);
+    dword(&mut data, dd, directory_rva as u32);
+    dword(&mut data, dd + 4, EDATA as u32);
     let table = o + if wide { 0xf0 } else { 0xe0 };
     for (index, name, rva, raw, size, flags) in [
-        (0, b".text\0\0\0", 0x1000, 0x200, 0x1000, 0x60000020),
-        (1, b".edata\0\0", 0x2000, 0x1200, 0x4000, 0x40000040),
+        (0, b".text\0\0\0", 0x1000u32, 0x200u32, stubs as u32, 0x60000020u32),
+        (
+            1,
+            b".edata\0\0",
+            directory_rva as u32,
+            directory as u32,
+            EDATA as u32,
+            0x40000040,
+        ),
     ] {
         let at = table + index * 40;
         data[at..at + 8].copy_from_slice(name);
@@ -115,10 +136,18 @@ pub fn image(
     // ntoskrnl modeled surface needs disjoint export arrays; 256 stubs still
     // fit exactly in the dedicated .text page.
     let (address_table, name_table, ordinal_table, mut string) = if exports.len() <= 128 {
-        (0x1240usize, 0x1440usize, 0x1640usize, 0x1800usize)
+        (0x40usize, 0x240usize, 0x440usize, 0x600usize)
+    } else if exports.len() <= 256 {
+        (0x40usize, 0x440usize, 0x840usize, 0xa40usize)
     } else {
-        (0x1240usize, 0x1640usize, 0x1a40usize, 0x1c40usize)
+        (0x40usize, 0x840usize, 0x1040usize, 0x1440usize)
     };
+    let (address_table, name_table, ordinal_table) = (
+        directory + address_table,
+        directory + name_table,
+        directory + ordinal_table,
+    );
+    string += directory;
     for (offset, value) in [
         (16, 1),
         (20, exports.len() as u32),
@@ -127,9 +156,9 @@ pub fn image(
         (32, (name_table + 0xe00) as u32),
         (36, (ordinal_table + 0xe00) as u32),
     ] {
-        dword(&mut data, 0x1200 + offset, value);
+        dword(&mut data, directory + offset, value);
     }
-    dword(&mut data, 0x120c, (string + 0xe00) as u32);
+    dword(&mut data, directory + 0xc, (string + 0xe00) as u32);
     data[string..string + module.len()].copy_from_slice(module.as_bytes());
     string += module.len() + 1;
     for (index, (name, gate)) in exports.iter().enumerate() {
@@ -216,7 +245,9 @@ mod tests {
             } else {
                 0x82000000
             };
-            for count in [129usize, 256] {
+            // 257 and above cross into the two-page stub tier, which shifts the
+            // export directory and both lookup arrays.
+            for count in [129usize, 256, 257, 512] {
                 let names: Vec<_> = (0..count)
                     .map(|index| format!("Export{index:03}"))
                     .collect();
@@ -241,9 +272,29 @@ mod tests {
                 let last = 0x1000 + (count - 1) * 16;
                 assert_eq!(&loaded[last..last + 2], &[0xff, 0x25]);
             }
-            let names: Vec<_> = (0..257).map(|index| format!("Export{index:03}")).collect();
+            let names: Vec<_> = (0..513).map(|index| format!("Export{index:03}")).collect();
             let exports: Vec<_> = names.iter().map(|name| (name.as_str(), gate)).collect();
             assert!(image(architecture, base, "ntoskrnl.exe", &exports).is_err());
+            // A typed data provider keeps the single-page geometry, so it must
+            // refuse the larger namespace instead of relocating its data.
+            let routines: Vec<_> = names[..256]
+                .iter()
+                .map(|name| (name.as_str(), gate))
+                .collect();
+            assert!(
+                typed::image_with_mutable_data(
+                    architecture,
+                    base,
+                    "ntoskrnl.exe",
+                    &routines,
+                    &[typed::DataExport {
+                        name: "Datum",
+                        alignment: 8,
+                        bytes: vec![0; 8],
+                    }],
+                )
+                .is_err()
+            );
         }
     }
     #[test]

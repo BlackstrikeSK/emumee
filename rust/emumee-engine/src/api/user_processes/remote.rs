@@ -1,6 +1,11 @@
 use super::*;
 
 pub(super) fn local_fallback(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> Result<u64> {
+    // NtUnmapViewOfSection against the calling process itself unmaps one of its
+    // own images, the self-replacement path. It returns an NTSTATUS directly.
+    if let Call::UnmapSection = call {
+        return unmap_current_section(engine, args[1]);
+    }
     let call = match call {
         Call::Memory(write) => user_runtime::Call::ProcessMemory(write),
         Call::Virtual(operation @ 0..=2) => user_runtime::Call::VirtualEx(operation),
@@ -8,6 +13,75 @@ pub(super) fn local_fallback(engine: &mut Unicorn<Trace>, call: Call, args: &[u6
         _ => return Ok(failure(engine, 50)),
     };
     user_runtime::invoke(engine, args, call)
+}
+/// NtUnmapViewOfSection semantics against whichever address space is current:
+/// remove the image mapped exactly at `base`, running no detach and respecting
+/// no lifecycle phase, as the native call does. Returns an NTSTATUS. The caller
+/// has already entered the target process's space when the handle is remote.
+fn unmap_current_section(engine: &mut Unicorn<Trace>, base: u64) -> Result<u64> {
+    const STATUS_SUCCESS: u64 = 0;
+    const STATUS_NOT_MAPPED_VIEW: u64 = 0xc000_0019;
+    // The address must be an image's own base. An interior address, a private
+    // VirtualAlloc reservation or free memory is not a mapped section.
+    if !engine
+        .get_data()
+        .apis
+        .modules
+        .modules()
+        .any(|module| module.base == base)
+    {
+        return Ok(STATUS_NOT_MAPPED_VIEW);
+    }
+    let mut catalog = engine.get_data().apis.modules.clone();
+    let size = match catalog.unmap_section(base) {
+        Ok(size) => size,
+        Err(_) => return Ok(STATUS_NOT_MAPPED_VIEW),
+    };
+    let mut memory = engine.get_data().apis.memory.clone();
+    memory
+        .unmap(base, size)
+        .context("NtUnmapViewOfSection model unmap")?;
+    uc(engine.mem_unmap(base, size))
+        .with_context(|| format!("NtUnmapViewOfSection native unmap at {base:#x}+{size:#x}"))?;
+    engine.get_data_mut().apis.modules = catalog;
+    engine.get_data_mut().apis.memory = memory;
+    engine.get_data_mut().cpu.cache.invalidate(base, size as usize);
+    uc(engine.ctl_remove_cache(base, base + size))?;
+    super::record_forced_unmap(engine, base, size);
+    // Refresh the PEB loader list; the primary image may now be gone, which is
+    // exactly the state a replacement loader expects to rebuild.
+    super::user_loader::sync(engine)?;
+    Ok(STATUS_SUCCESS)
+}
+/// NtUnmapViewOfSection against another process: enter its space, unmap, return.
+fn section(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    const STATUS_INVALID_HANDLE: u64 = 0xc000_0008;
+    const STATUS_PROCESS_IS_TERMINATING: u64 = 0xc000_010a;
+    // Resolve with no access demand first: the access-gated resolution refuses
+    // an exited target, which would otherwise hide the terminating answer
+    // behind an invalid-handle one.
+    let id = match handles::process(engine, args[0], 0) {
+        Ok(id) => id,
+        Err(_) => return Ok(STATUS_INVALID_HANDLE),
+    };
+    if engine
+        .get_data()
+        .processes
+        .records
+        .get(&id)
+        .is_some_and(|record| record.exit_code.is_some())
+    {
+        return Ok(STATUS_PROCESS_IS_TERMINATING);
+    }
+    // PROCESS_VM_OPERATION is the access NtUnmapViewOfSection requires.
+    if handles::process(engine, args[0], 8).is_err() {
+        return Ok(STATUS_INVALID_HANDLE);
+    }
+    let caller = pid(engine);
+    switch(engine, id)?;
+    let result = unmap_current_section(engine, args[1]);
+    switch(engine, caller)?;
+    result
 }
 fn put_count(engine: &mut Unicorn<Trace>, pointer: u64, count: u64) -> Result<()> {
     if pointer != 0 {
@@ -409,6 +483,7 @@ pub(super) fn dispatch(
             Ok(0)
         }
         Call::Memory(write) => memory(engine, args, write),
+        Call::UnmapSection => section(engine, args),
         Call::Virtual(operation) => virtual_memory(engine, args, operation),
         Call::Thread(call) => thread(engine, args, call),
         Call::Terminate => {

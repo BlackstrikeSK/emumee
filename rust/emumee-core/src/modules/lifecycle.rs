@@ -508,6 +508,40 @@ impl ModuleCatalog {
         Ok(())
     }
     /// Call only after actual required detach returned and native image unmap succeeded.
+    pub fn force_unmapped(&self) -> &[crate::modules::UnmappedSection] {
+        &self.force_unmapped
+    }
+    /// Forcibly unmap the image mapped exactly at `base`, as
+    /// NtUnmapViewOfSection does. Unlike retirement this runs no detach and
+    /// respects no lifecycle phase: a mapped section is removed whole. The
+    /// address must be the image's own base; an interior address is not a
+    /// mapped-section base. Returns the removed image size so the caller can
+    /// release the backing, and records the removal for observation.
+    pub fn unmap_section(&mut self, base: u64) -> Result<u64> {
+        if self.force_unmapped.len() >= MAX_STATIC_COMPANIONS {
+            return Err(ModuleError("forced unmap count exceeds bound"));
+        }
+        let name = self
+            .modules
+            .iter()
+            .find(|(_, module)| module.base == base)
+            .map(|(name, _)| name.clone())
+            .ok_or(ModuleError("no mapped section at this base"))?;
+        let module = self.modules.remove(&name).unwrap();
+        self.export_count -= module.exports.len();
+        let was_primary = self.primary == Some(module.id);
+        if was_primary {
+            self.primary = None;
+        }
+        self.ready_order.retain(|ready| *ready != module.id);
+        self.force_unmapped.push(crate::modules::UnmappedSection {
+            base: module.base,
+            size: module.size,
+            name: module.name,
+            was_primary,
+        });
+        Ok(module.size)
+    }
     pub fn retire_static(&mut self, id: ModuleId) -> Result<()> {
         let m = self
             .by_identity(id)

@@ -170,6 +170,7 @@ mod vfs_mutation_tests;
 #[cfg(test)]
 mod winstrings_guest_tests;
 pub use api::ApiRegion;
+pub use api::user_processes::ForcedUnmap;
 pub use api::EnvironmentBlockReport;
 pub use api::KernelReport;
 pub use api::ProviderDenial;
@@ -545,6 +546,8 @@ pub struct Execution {
     pub kernel_export_queries_omitted: u64,
     pub kernel_formatting: Option<KernelFormattingReport>,
     pub loaded_modules: Vec<ModuleEvidence>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forced_unmaps: Vec<ForcedUnmap>,
     pub image_load: ImageLoad,
     pub artifacts: Vec<Artifact>,
     pub capture_summary: CaptureSummary,
@@ -1204,7 +1207,11 @@ fn run_generated_with_fixture_configuration(
         }
     }
     protect_image(&mut engine, &pe)?;
-    if submitted_driver_service.is_some() {
+    // A submitted sample writing inside its own image is what unpacking and
+    // self-modifying code look like, so the observation covers the user route
+    // as well as the driver one. It is passive: it changes no guest
+    // instruction, permission or result.
+    if submitted_driver_service.is_some() || submitted_user {
         image_writes::install(&mut engine, base, pe.image_size as u64)?;
     }
     for companion in &parsed {
@@ -1774,6 +1781,7 @@ fn run_generated_with_fixture_configuration(
                 size: m.size,
             })
             .collect(),
+        forced_unmaps: api::user_processes::forced_unmaps(&engine),
         artifacts: captures.items,
         capture_summary: captures.summary,
         kernel_state: if trace.apis.kernel_mode {
@@ -3295,6 +3303,10 @@ mod tests {
 
 #[cfg(test)]
 mod m4_tests;
+#[cfg(test)]
+mod m6_compiled_tests;
+#[cfg(test)]
+mod m6_tests;
 #[cfg(test)]
 mod user_test_fixtures;
 #[cfg(test)]

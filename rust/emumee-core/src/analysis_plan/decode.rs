@@ -171,6 +171,40 @@ pub(super) fn named_fields(value: &Value) -> Result<()> {
                 "temp_directory",
                 "logical_processors",
                 "environment",
+                "locale",
+                "session_id",
+                "volume",
+                "firmware",
+            ],
+            "unsupported_persona_field",
+        )?;
+        keys(
+            &model["process"]["firmware"],
+            "persona.value.process.firmware",
+            &[
+                "bios_vendor",
+                "bios_version",
+                "bios_date",
+                "system_manufacturer",
+                "system_product",
+                "system_version",
+                "system_serial",
+                "system_family",
+                "baseboard_manufacturer",
+                "baseboard_product",
+                "uuid",
+            ],
+            "unsupported_persona_field",
+        )?;
+        keys(
+            &model["process"]["volume"],
+            "persona.value.process.volume",
+            &[
+                "guid",
+                "label",
+                "filesystem",
+                "capacity_bytes",
+                "free_bytes",
             ],
             "unsupported_persona_field",
         )?;

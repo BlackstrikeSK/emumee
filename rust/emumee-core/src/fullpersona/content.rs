@@ -411,6 +411,22 @@ pub(super) fn projection(
         temp_directory: format!(r"C:\Users\{user}\AppData\Local\Temp"),
         logical_processors: model.cores * model.threads_per_core,
         environment: vec![],
+        // Locale and session identity come from the validated document so the
+        // guest's own locale reporting matches the same persona the registry
+        // seeds and environment describe. The OS build stays with the machine
+        // projection, which is the single version source the runtime reads.
+        locale: p["locale"].as_str().unwrap().into(),
+        session_id: 1,
+        volume: crate::persona::VolumeConfig {
+            guid: p["volume_guid"].as_str().unwrap().into(),
+            label: String::new(),
+            filesystem: "NTFS".into(),
+            capacity_bytes: p["volume_capacity_bytes"].as_u64().unwrap(),
+            free_bytes: p["volume_free_bytes"].as_u64().unwrap(),
+        },
+        // The document carries no firmware block yet, so the modeled machine
+        // uses the default consumer-OEM identity.
+        firmware: crate::persona::FirmwareConfig::default(),
     };
     crate::persona::Persona::new(guest.clone())
         .map_err(|e| error("persona_projection", e.to_string()))?;

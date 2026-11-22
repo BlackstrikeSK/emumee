@@ -17,6 +17,9 @@ pub enum ArtifactKind {
     /// Structural PE evidence, including reconstructed images; never a claim
     /// that execution completed or a driver was successfully unpacked.
     CarvedImage,
+    /// Bytes a guest offered to or received from the network. Capturing them is
+    /// never a claim that they were transmitted.
+    Network,
 }
 #[derive(Debug, Serialize)]
 pub struct Observation {
@@ -424,6 +427,7 @@ pub fn valid_observation_json_with_profile(value: &Value, profile: CaptureProfil
             "container_stream",
             "registry_value",
             "carved_image",
+            "network",
         ]
         .contains(&kind)
     }) || object
@@ -604,6 +608,11 @@ mod tests {
                 .iter()
                 .all(|item| valid_observation_json(&serde_json::to_value(item).unwrap()))
         );
+        // Bytes a guest offered to the network are an accepted observation
+        // kind, and carry no required context of their own.
+        assert!(valid_observation_json(&serde_json::json!(
+            {"kind":"network","source":"icmp_echo_request","guest_path":"127.0.0.1"}
+        )));
         catalog.add_with_context(
             b"invalid".to_vec(),
             ArtifactKind::CarvedImage,

@@ -134,6 +134,15 @@ impl Probe {
         let raw = (rva - 0xe00) as usize;
         self.data[raw..raw + bytes.len()].copy_from_slice(bytes);
     }
+    /// Place a resource directory blob at `rva` and record it as the image's
+    /// resource data directory (entry 2). Used by the M7 resource family so a
+    /// guest can walk its own `.rsrc` through the real APIs.
+    pub(super) fn resources(&mut self, rva: u64, blob: &[u8]) {
+        self.write(rva, blob);
+        let dd = 0x98 + if self.wide { 112 } else { 96 };
+        put32(&mut self.data, dd + 16, rva as u32);
+        put32(&mut self.data, dd + 20, blob.len() as u32);
+    }
     /// Place guest text in the family's own width and answer its address.
     pub(super) fn string(&mut self, value: &str) -> u64 {
         let bytes = encoded(value, self.unicode, true);
@@ -161,6 +170,29 @@ impl Probe {
     }
     pub(super) fn call(&mut self, index: usize, args: &[Arg]) {
         call(&mut self.code, self.wide, self.base, self.slots[index], args);
+    }
+    /// Call through an object's vtable, exactly as compiled COM code does: the
+    /// first argument is the interface pointer and `slot` is the method's
+    /// vtable index. The object's vtable pointer is read from the object, then
+    /// the slot is called indirectly, so a wrong vtable layout faults here
+    /// rather than being papered over.
+    pub(super) fn call_vtable(&mut self, slot: usize, args: &[Arg]) {
+        super::winhttp::marshal(&mut self.code, self.wide, args);
+        let offset = slot * if self.wide { 8 } else { 4 };
+        if self.wide {
+            // this is in RCX; RAX = [RCX] is the vtable.
+            self.code.extend([0x48, 0x8b, 0x01]);
+        } else {
+            // this was pushed last, so it sits at [ESP]; EAX = [[ESP]].
+            self.code.extend([0x8b, 0x04, 0x24]);
+            self.code.extend([0x8b, 0x00]);
+        }
+        if offset < 128 {
+            self.code.extend([0xff, 0x50, offset as u8]);
+        } else {
+            self.code.extend([0xff, 0x90]);
+            self.code.extend((offset as u32).to_le_bytes());
+        }
     }
     /// The 32-bit return value the guest itself checks.
     pub(super) fn eax(&mut self, value: u32) {
@@ -238,6 +270,42 @@ impl Probe {
     /// Store the pointer-width return value for use as a later argument.
     pub(super) fn save(&mut self, address: u64) {
         store(&mut self.code, self.wide, address);
+    }
+    /// Follow a pointer a model wrote: read the pointer stored at `address`,
+    /// then copy the pointer-width value `offset` bytes into the structure it
+    /// addresses into `target`. This is how a control walks a linked structure
+    /// a model published on the guest heap, whose address it cannot predict.
+    pub(super) fn indirect(&mut self, address: u64, offset: u64, target: u64) {
+        self.pointer_into_accumulator(address);
+        if self.wide {
+            // mov rax, [rax + offset]
+            self.code.extend([0x48, 0x8b, 0x80]);
+        } else {
+            self.code.extend([0x8b, 0x80]);
+        }
+        self.code.extend((offset as u32).to_le_bytes());
+        store(&mut self.code, self.wide, target);
+    }
+    /// The word `offset` bytes into the structure addressed by the pointer at
+    /// `address` must equal `value`.
+    pub(super) fn indirect_dword(&mut self, address: u64, offset: u64, value: u32) {
+        self.pointer_into_accumulator(address);
+        // mov eax, [rax/eax + offset]
+        self.code.extend([0x8b, 0x80]);
+        self.code.extend((offset as u32).to_le_bytes());
+        self.code.push(0x3d);
+        self.code.extend(value.to_le_bytes());
+        self.code.extend([0x74, 1, 0xcc]);
+    }
+    /// Load a whole pointer from `address` into the accumulator.
+    fn pointer_into_accumulator(&mut self, address: u64) {
+        if self.wide {
+            self.code.extend([0x48, 0xa1]);
+            self.code.extend(address.to_le_bytes());
+        } else {
+            self.code.push(0xa1);
+            self.code.extend((address as u32).to_le_bytes());
+        }
     }
     pub(super) fn poison(&mut self, address: u64, dwords: u64) {
         for index in 0..dwords {

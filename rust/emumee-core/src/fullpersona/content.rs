@@ -424,9 +424,11 @@ pub(super) fn projection(
             capacity_bytes: p["volume_capacity_bytes"].as_u64().unwrap(),
             free_bytes: p["volume_free_bytes"].as_u64().unwrap(),
         },
-        // The document carries no firmware block yet, so the modeled machine
-        // uses the default consumer-OEM identity.
+        // The document carries no firmware or adapter block yet, so the
+        // modeled machine uses the default consumer-OEM identity and the
+        // default single-homed adapter.
         firmware: crate::persona::FirmwareConfig::default(),
+        adapter: crate::persona::AdapterConfig::default(),
     };
     crate::persona::Persona::new(guest.clone())
         .map_err(|e| error("persona_projection", e.to_string()))?;

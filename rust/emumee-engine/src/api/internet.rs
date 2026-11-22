@@ -20,6 +20,67 @@ pub(super) enum Call {
     Read,
     Available,
     Close,
+    CrackUrl(bool),
+    ErrorDialog,
+    ConnectedState,
+    QueryOption,
+    SetOption,
+}
+
+// WinINet handle types, as wininet.h numbers them.
+const HANDLE_TYPE_INTERNET: u32 = 1;
+const HANDLE_TYPE_CONNECT_HTTP: u32 = 4;
+const HANDLE_TYPE_HTTP_REQUEST: u32 = 13;
+// Options this model answers, and the defaults it answers them with.
+const OPTION_CONNECT_TIMEOUT: u32 = 2;
+const OPTION_CONNECT_RETRIES: u32 = 3;
+const OPTION_SEND_TIMEOUT: u32 = 5;
+const OPTION_RECEIVE_TIMEOUT: u32 = 6;
+const OPTION_DATA_SEND_TIMEOUT: u32 = 7;
+const OPTION_DATA_RECEIVE_TIMEOUT: u32 = 8;
+const OPTION_HANDLE_TYPE: u32 = 9;
+const OPTION_REQUEST_FLAGS: u32 = 23;
+const OPTION_SECURITY_FLAGS: u32 = 31;
+const OPTION_URL: u32 = 34;
+const OPTION_REFRESH: u32 = 37;
+const OPTION_PROXY: u32 = 38;
+const OPTION_SETTINGS_CHANGED: u32 = 39;
+const OPTION_USER_AGENT: u32 = 41;
+const OPTION_CONNECTED_STATE: u32 = 50;
+const OPTION_HTTP_DECODING: u32 = 65;
+const OPTION_MAX_CONNS_PER_SERVER: u32 = 73;
+/// ERROR_INTERNET_INVALID_OPTION.
+const INVALID_OPTION: u32 = 12_009;
+const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_SUCCESS: u64 = 0;
+/// ERROR_CANCELLED: a dialog this profile cannot show was not shown.
+const ERROR_CANCELLED: u64 = 1223;
+/// INTERNET_CONNECTION_LAN | INTERNET_CONNECTION_CONFIGURED.
+const CONNECTION_LAN_CONFIGURED: u32 = 0x02 | 0x40;
+/// FLAGS_ERROR_UI_FLAGS_NO_UI.
+const ERROR_UI_NO_UI: u32 = 0x08;
+/// SECURITY_FLAG_SECURE.
+const SECURITY_FLAG_SECURE: u32 = 0x1;
+/// INTERNET_STATE_CONNECTED.
+const STATE_CONNECTED: u32 = 0x1;
+/// INTERNET_OPEN_TYPE_DIRECT.
+const OPEN_TYPE_DIRECT: u32 = 1;
+
+/// A timeout or counter option's default, as a fresh WinINet session reports.
+fn option_default(option: u32) -> Option<u32> {
+    Some(match option {
+        OPTION_CONNECT_TIMEOUT => 60_000,
+        OPTION_CONNECT_RETRIES => 5,
+        OPTION_SEND_TIMEOUT
+        | OPTION_RECEIVE_TIMEOUT
+        | OPTION_DATA_SEND_TIMEOUT
+        | OPTION_DATA_RECEIVE_TIMEOUT => 30_000,
+        OPTION_REQUEST_FLAGS => 0,
+        OPTION_CONNECTED_STATE => STATE_CONNECTED,
+        OPTION_HTTP_DECODING => 0,
+        OPTION_MAX_CONNS_PER_SERVER => 2,
+        _ => return None,
+    })
 }
 fn outcome(engine: &mut Unicorn<Trace>, value: std::result::Result<u64, HttpError>) -> Result<u64> {
     match value {
@@ -72,6 +133,17 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                     .apis
                     .internet
                     .open(&agent, args[1] as u32, args[4] as u32);
+            // The agent belongs to the session, so a later
+            // INTERNET_OPTION_USER_AGENT query answers what was opened with.
+            if let Ok(handle) = result {
+                let mut bytes = agent.into_bytes();
+                bytes.push(0);
+                engine
+                    .get_data_mut()
+                    .apis
+                    .http_config
+                    .set_option(handle, OPTION_USER_AGENT, bytes);
+            }
             outcome(engine, result)
         }
         Call::Url(wide) => {
@@ -244,9 +316,274 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 .internet
                 .close(args[0])
                 .map(|_| 1);
+            engine.get_data_mut().apis.http_config.forget(args[0]);
             outcome(engine, result)
         }
+        Call::CrackUrl(wide) => crack_url(engine, args, wide),
+        Call::ErrorDialog => {
+            // There is no interactive user in this profile. With the no-UI
+            // flag the documented answer is ERROR_SUCCESS; otherwise the
+            // dialog that would have been shown counts as cancelled.
+            let (error, flags) = (args[2] as u32, args[3] as u32);
+            if args[1] != 0 && engine.get_data().apis.internet.facts(args[1]).is_err() {
+                engine.get_data_mut().apis.last_error = ERROR_INVALID_HANDLE;
+                return Ok(u64::from(ERROR_INVALID_HANDLE));
+            }
+            engine.get_data_mut().apis.http_config.record(
+                "InternetErrorDlg",
+                format!("error {error}, flags {flags:#x}"),
+            );
+            Ok(if flags & ERROR_UI_NO_UI != 0 {
+                ERROR_SUCCESS
+            } else {
+                ERROR_CANCELLED
+            })
+        }
+        Call::ConnectedState => {
+            // A configured LAN connection, which is what the modeled adapter
+            // describes. The reserved argument must be zero.
+            if args[1] as u32 != 0 {
+                return fail(engine, 87);
+            }
+            if args[0] != 0 {
+                crate::cpu::write(engine, args[0], &CONNECTION_LAN_CONFIGURED.to_le_bytes())?;
+            }
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .record("InternetGetConnectedState", "LAN, configured".into());
+            Ok(1)
+        }
+        Call::QueryOption => query_option(engine, args),
+        Call::SetOption => set_option(engine, args),
     }
+}
+
+/// `InternetCrackUrlA/W`: pure string work, carried out for real.
+fn crack_url(engine: &mut Unicorn<Trace>, args: &[u64], wide: bool) -> Result<u64> {
+    ensure!(
+        args[2] as u32 == 0,
+        "WinINet URL escaping and decoding flags are not modeled"
+    );
+    if args[0] == 0 || args[3] == 0 {
+        return fail(engine, 87);
+    }
+    // A zero length means the URL is terminated; otherwise it is exactly that
+    // many characters and may not be terminated at all.
+    let length = args[1] as u32 as usize;
+    if length > http_config::MAX_URL {
+        return fail(engine, 12_005); // ERROR_INTERNET_INVALID_URL
+    }
+    let url = if length == 0 {
+        text(engine, args[0], wide)?
+    } else {
+        let unit = if wide { 2 } else { 1 };
+        let raw = read(engine, args[0], (length * unit) as u64)?;
+        if wide {
+            let units: Vec<u16> = raw
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            String::from_utf16(&units)?
+        } else {
+            String::from_utf8(raw)?
+        }
+    };
+    if !url.is_ascii() || url.len() > http_config::MAX_URL || url.chars().any(|c| c < ' ') {
+        return fail(engine, 12_005);
+    }
+    let Some(parts) = http_config::parse(&url) else {
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .record("InternetCrackUrl", format!("{url}: not a URL"));
+        return fail(engine, 12_006); // ERROR_INTERNET_UNRECOGNIZED_SCHEME
+    };
+    if parts.number == http_config::SCHEME_UNKNOWN {
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .record("InternetCrackUrl", format!("{url}: unknown scheme"));
+        return fail(engine, 12_006);
+    }
+    if let Some(code) = http_config::fill(engine, args[3], args[0], &url, &parts, wide)? {
+        return fail(engine, code);
+    }
+    engine
+        .get_data_mut()
+        .apis
+        .http_config
+        .record("InternetCrackUrl", url);
+    Ok(1)
+}
+
+/// The value a query option answers with, as the bytes the caller receives.
+fn option_value(engine: &Unicorn<Trace>, handle: u64, option: u32) -> Option<Vec<u8>> {
+    let width = engine.get_data().architecture.width();
+    let facts = engine.get_data().apis.internet.facts(handle).ok();
+    if let Some(stored) = engine.get_data().apis.http_config.option(handle, option) {
+        return Some(stored.to_vec());
+    }
+    match option {
+        OPTION_HANDLE_TYPE => {
+            use emumee_core::winhttp::HandleKind;
+            let kind = match facts?.kind {
+                HandleKind::Session => HANDLE_TYPE_INTERNET,
+                HandleKind::Connection => HANDLE_TYPE_CONNECT_HTTP,
+                HandleKind::Request => HANDLE_TYPE_HTTP_REQUEST,
+            };
+            Some(kind.to_le_bytes().to_vec())
+        }
+        OPTION_SECURITY_FLAGS => {
+            let secure = facts?.secure();
+            Some(if secure { SECURITY_FLAG_SECURE } else { 0 }.to_le_bytes().to_vec())
+        }
+        OPTION_URL => {
+            let url = facts?.url?;
+            let mut bytes = url.into_bytes();
+            bytes.push(0);
+            Some(bytes)
+        }
+        // INTERNET_PROXY_INFO: a direct connection, with no proxy named.
+        OPTION_PROXY => {
+            let mut bytes = vec![0u8; if width == 8 { 24 } else { 12 }];
+            bytes[..4].copy_from_slice(&OPEN_TYPE_DIRECT.to_le_bytes());
+            Some(bytes)
+        }
+        OPTION_USER_AGENT => None,
+        other => option_default(other).map(|value| value.to_le_bytes().to_vec()),
+    }
+}
+
+fn query_option(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    let option = args[1] as u32;
+    if args[3] == 0 {
+        return fail(engine, 87);
+    }
+    if args[0] != 0 && engine.get_data().apis.internet.facts(args[0]).is_err() {
+        return fail(engine, ERROR_INVALID_HANDLE);
+    }
+    let Some(value) = option_value(engine, args[0], option) else {
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .record("InternetQueryOption", format!("option {option} refused"));
+        return fail(engine, INVALID_OPTION);
+    };
+    let capacity = u32::from_le_bytes(read(engine, args[3], 4)?.try_into().unwrap()) as usize;
+    if args[2] == 0 || capacity < value.len() {
+        crate::cpu::write(engine, args[3], &(value.len() as u32).to_le_bytes())?;
+        return fail(engine, http_config::ERROR_INSUFFICIENT_BUFFER);
+    }
+    require(engine, args[2], value.len() as u64, P::WRITE)?;
+    crate::cpu::write(engine, args[2], &value)?;
+    crate::cpu::write(engine, args[3], &(value.len() as u32).to_le_bytes())?;
+    engine
+        .get_data_mut()
+        .apis
+        .http_config
+        .record("InternetQueryOption", format!("option {option}"));
+    Ok(1)
+}
+
+fn set_option(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    let (option, buffer) = (args[1] as u32, args[2]);
+    let length = args[3] as u32 as usize;
+    if args[0] != 0 && engine.get_data().apis.internet.facts(args[0]).is_err() {
+        return fail(engine, ERROR_INVALID_HANDLE);
+    }
+    let width = engine.get_data().architecture.width();
+    let detail = match option {
+        // Options that carry no buffer at all.
+        OPTION_REFRESH | OPTION_SETTINGS_CHANGED => {
+            if buffer != 0 || length != 0 {
+                return fail(engine, 87);
+            }
+            format!("option {option}")
+        }
+        OPTION_PROXY => {
+            // INTERNET_PROXY_INFO: the access type and, for a proxy, the
+            // proxy and bypass lists. Pointing a sample's own session at a
+            // proxy is worth recording in full.
+            let size = if width == 8 { 24 } else { 12 };
+            if buffer == 0 || length != size {
+                return fail(engine, 87);
+            }
+            let raw = read(engine, buffer, size as u64)?;
+            let access = u32::from_le_bytes(raw[..4].try_into().unwrap());
+            let pointer = |offset: usize| -> u64 {
+                let mut value = [0u8; 8];
+                value[..width].copy_from_slice(&raw[offset..offset + width]);
+                u64::from_le_bytes(value)
+            };
+            let (proxy, bypass) = if width == 8 {
+                (pointer(8), pointer(16))
+            } else {
+                (pointer(4), pointer(8))
+            };
+            let proxy = text(engine, proxy, false)?;
+            let bypass = text(engine, bypass, false)?;
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .set_option(args[0], option, raw);
+            format!("proxy access {access}, proxy {proxy:?}, bypass {bypass:?}")
+        }
+        OPTION_USER_AGENT => {
+            if buffer == 0 {
+                return fail(engine, 87);
+            }
+            let agent = text(engine, buffer, false)?;
+            let mut bytes = agent.clone().into_bytes();
+            bytes.push(0);
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .set_option(args[0], option, bytes);
+            format!("user agent {agent:?}")
+        }
+        OPTION_SECURITY_FLAGS
+        | OPTION_CONNECT_TIMEOUT
+        | OPTION_CONNECT_RETRIES
+        | OPTION_SEND_TIMEOUT
+        | OPTION_RECEIVE_TIMEOUT
+        | OPTION_DATA_SEND_TIMEOUT
+        | OPTION_DATA_RECEIVE_TIMEOUT
+        | OPTION_HTTP_DECODING
+        | OPTION_MAX_CONNS_PER_SERVER => {
+            if buffer == 0 || length != 4 {
+                return fail(engine, 87);
+            }
+            let value = u32::from_le_bytes(read(engine, buffer, 4)?.try_into().unwrap());
+            engine.get_data_mut().apis.http_config.set_option(
+                args[0],
+                option,
+                value.to_le_bytes().to_vec(),
+            );
+            format!("option {option} = {value}")
+        }
+        other => {
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .record("InternetSetOption", format!("option {other} refused"));
+            return fail(engine, INVALID_OPTION);
+        }
+    };
+    engine
+        .get_data_mut()
+        .apis
+        .http_config
+        .record("InternetSetOption", detail);
+    engine.get_data_mut().apis.last_error = 0;
+    Ok(1)
 }
 fn fetch(
     engine: &mut Unicorn<Trace>,

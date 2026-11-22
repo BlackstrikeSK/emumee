@@ -11,6 +11,52 @@ pub(super) enum Call {
     Free,
     Destroy,
 }
+/// Allocate `size` bytes on the process heap and return the guest address, for
+/// owned models (BSTR, CoTaskMem, UUID strings) that hand the guest memory.
+pub(super) fn alloc(engine: &mut Unicorn<Trace>, size: u64) -> Result<u64> {
+    let state = &engine.get_data().apis;
+    let plan = state
+        .heaps
+        .allocate(&state.allocations, &state.memory, PROCESS_HEAP, 0, size);
+    finish(engine, plan, false)
+}
+
+/// Resize a process-heap allocation handed out by [`alloc`].
+pub(super) fn realloc(engine: &mut Unicorn<Trace>, address: u64, size: u64) -> Result<u64> {
+    if address == 0 {
+        return alloc(engine, size);
+    }
+    let state = &engine.get_data().apis;
+    let plan = state.heaps.reallocate(
+        &state.allocations,
+        &state.memory,
+        PROCESS_HEAP,
+        0,
+        address,
+        size,
+    );
+    finish(engine, plan, false)
+}
+
+/// The usable size of a process-heap allocation.
+pub(super) fn size_of(engine: &Unicorn<Trace>, address: u64) -> Result<u64> {
+    Ok(engine.get_data().apis.heaps.size(PROCESS_HEAP, 0, address)?)
+}
+
+/// Free a process-heap allocation handed out by [`alloc`]. A null address is a
+/// no-op, as the allocator's own free contracts allow.
+pub(super) fn release(engine: &mut Unicorn<Trace>, address: u64) -> Result<()> {
+    if address == 0 {
+        return Ok(());
+    }
+    let state = &engine.get_data().apis;
+    let plan = state
+        .heaps
+        .free(&state.allocations, &state.memory, PROCESS_HEAP, 0, address);
+    finish(engine, plan, false)?;
+    Ok(())
+}
+
 pub(super) fn finish(
     engine: &mut Unicorn<Trace>,
     result: std::result::Result<Plan, HeapError>,

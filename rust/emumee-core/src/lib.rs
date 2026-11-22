@@ -11,6 +11,7 @@ pub mod console;
 pub mod cpu;
 pub mod crt_format;
 pub mod crt_stdio;
+pub mod crypto;
 pub mod debug_control;
 pub mod filesystem;
 pub mod fixtures;

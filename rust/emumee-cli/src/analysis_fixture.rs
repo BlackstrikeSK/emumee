@@ -23,6 +23,7 @@ fn parse_kind(s: &str) -> Result<ArtifactKind> {
         "container_stream" => ArtifactKind::ContainerStream,
         "registry_value" => ArtifactKind::RegistryValue,
         "carved_image" => ArtifactKind::CarvedImage,
+        "network" => ArtifactKind::Network,
         _ => anyhow::bail!("Unknown typed artifact kind"),
     })
 }

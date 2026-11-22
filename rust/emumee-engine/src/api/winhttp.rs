@@ -17,6 +17,64 @@ pub(super) enum Call {
     Close,
     Query,
     Write,
+    AddHeaders,
+    CrackUrl,
+    IeProxyConfig,
+    ProxyForUrl,
+    SetOption,
+}
+
+// WINHTTP_ADDREQ_FLAG_* modifiers.
+const ADDREQ_ADD_IF_NEW: u32 = 0x1000_0000;
+const ADDREQ_ADD: u32 = 0x2000_0000;
+const ADDREQ_COALESCE_WITH_COMMA: u32 = 0x4000_0000;
+const ADDREQ_COALESCE_WITH_SEMICOLON: u32 = 0x0100_0000;
+const ADDREQ_REPLACE: u32 = 0x8000_0000;
+/// ERROR_WINHTTP_HEADER_ALREADY_EXISTS.
+const HEADER_ALREADY_EXISTS: u32 = 12_155;
+/// ERROR_WINHTTP_HEADER_NOT_FOUND.
+const HEADER_NOT_FOUND: u32 = 12_150;
+/// ERROR_WINHTTP_INVALID_OPTION.
+const INVALID_OPTION: u32 = 12_009;
+/// ERROR_WINHTTP_AUTODETECTION_FAILED: there is no WPAD here to detect.
+const AUTODETECTION_FAILED: u32 = 12_180;
+/// ERROR_WINHTTP_UNRECOGNIZED_SCHEME and ERROR_WINHTTP_INVALID_URL.
+const UNRECOGNIZED_SCHEME: u32 = 12_006;
+const INVALID_URL: u32 = 12_005;
+/// ICU_REJECT_USERPWD: refuse a URL that carries credentials.
+const ICU_REJECT_USERPWD: u32 = 0x0000_4000;
+/// WINHTTP_AUTOPROXY_AUTO_DETECT | WINHTTP_AUTOPROXY_CONFIG_URL.
+const AUTOPROXY_FLAGS: u32 = 0x1 | 0x2;
+/// WINHTTP_ACCESS_TYPE_NO_PROXY.
+const ACCESS_TYPE_NO_PROXY: u32 = 1;
+
+/// What a settable WinHTTP option's buffer holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Dword,
+    /// A `DWORD_PTR` context value.
+    Pointer,
+    /// A `WINHTTP_PROXY_INFO`.
+    ProxyInfo,
+    /// A wide string.
+    Text,
+}
+
+/// The options this model accepts and the shape each one carries. Anything
+/// else is refused with `ERROR_WINHTTP_INVALID_OPTION` rather than silently
+/// accepted.
+fn settable_option(option: u32) -> Option<Shape> {
+    Some(match option {
+        // Resolve/connect/send/receive/response timeouts, connect retries,
+        // security flags, request priority, HTTP version, the feature,
+        // connection-limit, autologon, protocol, redirect and decompression
+        // switches: all plain DWORDs.
+        2 | 3 | 4 | 5 | 6 | 7 | 31 | 58 | 59 | 63 | 73 | 77 | 79 | 84 | 88 | 118 => Shape::Dword,
+        45 => Shape::Pointer,
+        38 => Shape::ProxyInfo,
+        41 => Shape::Text,
+        _ => return None,
+    })
 }
 fn outcome(
     engine: &mut Unicorn<Trace>,
@@ -251,9 +309,323 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
         Call::Query => query(engine, args),
         Call::Close => {
             let result = engine.get_data_mut().apis.http.close(args[0]).map(|_| 1);
+            engine.get_data_mut().apis.http_config.forget(args[0]);
             outcome(engine, result)
         }
+        Call::AddHeaders => add_headers(engine, args),
+        Call::CrackUrl => crack_url(engine, args),
+        Call::IeProxyConfig => {
+            // WINHTTP_CURRENT_USER_IE_PROXY_CONFIG: automatic detection off
+            // and no proxy, autoconfiguration URL or bypass list. That is a
+            // direct connection, which is this profile's configuration — and
+            // because every string pointer stays null, the caller has nothing
+            // to free, as the documented contract allows.
+            if args[0] == 0 {
+                return fail(engine, 87);
+            }
+            let width = engine.get_data().architecture.width();
+            let size = if width == 8 { 32 } else { 16 };
+            require(engine, args[0], size as u64, P::WRITE)?;
+            crate::cpu::write(engine, args[0], &vec![0u8; size])?;
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .record("WinHttpGetIEProxyConfigForCurrentUser", "direct".into());
+            Ok(1)
+        }
+        Call::ProxyForUrl => proxy_for_url(engine, args),
+        Call::SetOption => set_option(engine, args),
     }
+}
+
+/// `WinHttpAddRequestHeaders`: parse the header block and apply the documented
+/// modifiers to the request's own header set, which `WinHttpSendRequest` then
+/// transmits.
+fn add_headers(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    use emumee_core::winhttp::HandleKind;
+    let modifiers = args[3] as u32;
+    let facts = match engine.get_data().apis.http.facts(args[0]) {
+        Ok(facts) => facts,
+        Err(error) => return outcome(engine, Err(error)),
+    };
+    if facts.kind != HandleKind::Request {
+        return fail(engine, 12_018); // ERROR_WINHTTP_INCORRECT_HANDLE_TYPE
+    }
+    if args[1] == 0 {
+        return fail(engine, 87);
+    }
+    // At least one of add, add-if-new, replace or a coalesce has to be asked
+    // for; anything else is not a documented modifier set.
+    let known = ADDREQ_ADD
+        | ADDREQ_ADD_IF_NEW
+        | ADDREQ_REPLACE
+        | ADDREQ_COALESCE_WITH_COMMA
+        | ADDREQ_COALESCE_WITH_SEMICOLON;
+    if modifiers & !known != 0 || modifiers == 0 {
+        return fail(engine, 87);
+    }
+    let added = headers(engine, args[1], args[2] as u32)?;
+    if added.is_empty() {
+        return fail(engine, 87);
+    }
+    let mut detail = Vec::new();
+    for (name, value) in added {
+        let held = engine.get_data().apis.http_config.has_header(args[0], &name);
+        if modifiers & ADDREQ_REPLACE != 0 {
+            // A replace with an empty value removes the header; with a value
+            // it replaces one, or adds it when ADD is also asked for.
+            if value.is_empty() {
+                if !engine
+                    .get_data_mut()
+                    .apis
+                    .http_config
+                    .remove_header(args[0], &name)
+                {
+                    return fail(engine, HEADER_NOT_FOUND);
+                }
+                detail.push(format!("-{name}"));
+                continue;
+            }
+            if !held && modifiers & ADDREQ_ADD == 0 {
+                return fail(engine, HEADER_NOT_FOUND);
+            }
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .add_header(args[0], name.clone(), value.clone());
+            detail.push(format!("{name}: {value}"));
+            continue;
+        }
+        if held && modifiers & ADDREQ_ADD_IF_NEW != 0 {
+            return fail(engine, HEADER_ALREADY_EXISTS);
+        }
+        let separator = if modifiers & ADDREQ_COALESCE_WITH_SEMICOLON != 0 {
+            "; "
+        } else {
+            ", "
+        };
+        let combined = match engine.get_data().apis.http_config.added_headers(args[0]).get(&name) {
+            Some(existing)
+                if modifiers & (ADDREQ_COALESCE_WITH_COMMA | ADDREQ_COALESCE_WITH_SEMICOLON)
+                    != 0 =>
+            {
+                format!("{existing}{separator}{value}")
+            }
+            _ => value.clone(),
+        };
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .add_header(args[0], name.clone(), combined.clone());
+        detail.push(format!("{name}: {combined}"));
+    }
+    engine
+        .get_data_mut()
+        .apis
+        .http_config
+        .record("WinHttpAddRequestHeaders", detail.join(", "));
+    engine.get_data_mut().apis.last_error = 0;
+    Ok(1)
+}
+
+/// `WinHttpCrackUrl`: the wide-only URL splitter, carried out for real.
+fn crack_url(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    let flags = args[2] as u32;
+    ensure!(
+        flags & !ICU_REJECT_USERPWD == 0,
+        "WinHTTP URL escaping and decoding flags are not modeled"
+    );
+    if args[0] == 0 || args[3] == 0 {
+        return fail(engine, 87);
+    }
+    let length = args[1] as u32 as usize;
+    if length > http_config::MAX_URL {
+        return fail(engine, INVALID_URL);
+    }
+    let url = if length == 0 {
+        text(engine, args[0], "")?
+    } else {
+        let raw = read(engine, args[0], length as u64 * 2)?;
+        let units: Vec<u16> = raw
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&units)?
+    };
+    if !url.is_ascii() || url.is_empty() || url.chars().any(|c| c < ' ') {
+        return fail(engine, INVALID_URL);
+    }
+    let Some(parts) = http_config::parse(&url) else {
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .record("WinHttpCrackUrl", format!("{url}: not a URL"));
+        return fail(engine, UNRECOGNIZED_SCHEME);
+    };
+    if parts.number == http_config::SCHEME_UNKNOWN {
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .record("WinHttpCrackUrl", format!("{url}: unknown scheme"));
+        return fail(engine, UNRECOGNIZED_SCHEME);
+    }
+    if flags & ICU_REJECT_USERPWD != 0 && !(parts.user.is_empty() && parts.password.is_empty()) {
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .record("WinHttpCrackUrl", format!("{url}: credentials refused"));
+        return fail(engine, INVALID_URL);
+    }
+    if let Some(code) = http_config::fill(engine, args[3], args[0], &url, &parts, true)? {
+        return fail(engine, code);
+    }
+    engine
+        .get_data_mut()
+        .apis
+        .http_config
+        .record("WinHttpCrackUrl", url);
+    Ok(1)
+}
+
+/// `WinHttpGetProxyForUrl`: there is no WPAD server, no DHCP option and no
+/// configuration script to fetch here, so autodetection genuinely fails. The
+/// URL the sample wanted a route for is recorded.
+fn proxy_for_url(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    use emumee_core::winhttp::HandleKind;
+    let facts = match engine.get_data().apis.http.facts(args[0]) {
+        Ok(facts) => facts,
+        Err(error) => return outcome(engine, Err(error)),
+    };
+    if facts.kind != HandleKind::Session {
+        return fail(engine, 12_018);
+    }
+    if args[1] == 0 || args[2] == 0 || args[3] == 0 {
+        return fail(engine, 87);
+    }
+    let url = text(engine, args[1], "")?;
+    let width = engine.get_data().architecture.width() as u64;
+    // WINHTTP_AUTOPROXY_OPTIONS begins with its flags and auto-detect types.
+    let flags = u32::from_le_bytes(read(engine, args[2], 4)?.try_into().unwrap());
+    if flags & !AUTOPROXY_FLAGS != 0 || flags == 0 {
+        return fail(engine, 87);
+    }
+    let detected = u32::from_le_bytes(read(engine, args[2] + 4, 4)?.try_into().unwrap());
+    let script = if flags & 0x2 != 0 {
+        let pointer = {
+            let raw = read(engine, args[2] + 8, width)?;
+            let mut value = [0u8; 8];
+            value[..width as usize].copy_from_slice(&raw);
+            u64::from_le_bytes(value)
+        };
+        text(engine, pointer, "")?
+    } else {
+        String::new()
+    };
+    engine.get_data_mut().apis.http_config.record(
+        "WinHttpGetProxyForUrl",
+        format!(
+            "{url}: flags {flags:#x}, detect {detected:#x}{}",
+            if script.is_empty() {
+                String::new()
+            } else {
+                format!(", script {script}")
+            }
+        ),
+    );
+    fail(engine, AUTODETECTION_FAILED)
+}
+
+/// `WinHttpSetOption`: the documented options are accepted and recorded; the
+/// rest are refused rather than silently swallowed.
+fn set_option(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
+    let (option, buffer) = (args[1] as u32, args[2]);
+    let length = args[3] as u32 as usize;
+    if args[0] != 0 && engine.get_data().apis.http.facts(args[0]).is_err() {
+        return fail(engine, 6);
+    }
+    let width = engine.get_data().architecture.width();
+    let Some(shape) = settable_option(option) else {
+        engine
+            .get_data_mut()
+            .apis
+            .http_config
+            .record("WinHttpSetOption", format!("option {option} refused"));
+        return fail(engine, INVALID_OPTION);
+    };
+    if buffer == 0 {
+        return fail(engine, 87);
+    }
+    let detail = match shape {
+        Shape::Dword | Shape::Pointer => {
+            let size = if shape == Shape::Dword { 4 } else { width };
+            if length != size {
+                return fail(engine, 87);
+            }
+            let raw = read(engine, buffer, size as u64)?;
+            let mut value = [0u8; 8];
+            value[..size].copy_from_slice(&raw);
+            let value = u64::from_le_bytes(value);
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .set_option(args[0], option, raw);
+            format!("option {option} = {value}")
+        }
+        Shape::ProxyInfo => {
+            let size = if width == 8 { 24 } else { 12 };
+            if length != size {
+                return fail(engine, 87);
+            }
+            let raw = read(engine, buffer, size as u64)?;
+            let access = u32::from_le_bytes(raw[..4].try_into().unwrap());
+            let pointer = |offset: usize| -> u64 {
+                let mut value = [0u8; 8];
+                value[..width].copy_from_slice(&raw[offset..offset + width]);
+                u64::from_le_bytes(value)
+            };
+            let (proxy, bypass) = if width == 8 {
+                (pointer(8), pointer(16))
+            } else {
+                (pointer(4), pointer(8))
+            };
+            let proxy = text(engine, proxy, "")?;
+            let bypass = text(engine, bypass, "")?;
+            if access == ACCESS_TYPE_NO_PROXY && !proxy.is_empty() {
+                return fail(engine, 87);
+            }
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .set_option(args[0], option, raw);
+            format!("proxy access {access}, proxy {proxy:?}, bypass {bypass:?}")
+        }
+        Shape::Text => {
+            let agent = text(engine, buffer, "")?;
+            let mut bytes: Vec<u8> = agent.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            bytes.extend([0, 0]);
+            engine
+                .get_data_mut()
+                .apis
+                .http_config
+                .set_option(args[0], option, bytes);
+            format!("user agent {agent:?}")
+        }
+    };
+    engine
+        .get_data_mut()
+        .apis
+        .http_config
+        .record("WinHttpSetOption", detail);
+    engine.get_data_mut().apis.last_error = 0;
+    Ok(1)
 }
 fn query(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
     let attribute = (args[1] as u32 & 0xffff) as u16;
@@ -333,7 +705,11 @@ fn send(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
     if args[5] as u32 == u32::MAX && (args[3] != 0 || count != 0) {
         return fail(engine, 87);
     }
-    let headers = headers(engine, args[1], args[2] as u32)?;
+    // Headers added earlier with WinHttpAddRequestHeaders belong to the
+    // request; the ones passed here are applied on top of them, as the send
+    // call's own documentation describes.
+    let mut headers = engine.get_data().apis.http_config.added_headers(args[0]);
+    headers.extend(self::headers(engine, args[1], args[2] as u32)?);
     let body = read(engine, args[3], count)?;
     ensure!(
         engine.get_data().apis.broker.is_some(),

@@ -146,3 +146,155 @@ pub(super) fn download(engine: &mut Unicorn<Trace>, args: &[u64], wide: bool) ->
     }
     outcome
 }
+
+/// `URLDownloadToCacheFile(lpUnkCaller, szURL, szFileName, cchFileName,
+/// dwReserved, pBSC)`: fetch through the explicit offline broker into a
+/// deterministic guest cache path and report that path to the caller.
+///
+/// The cache name is derived from the URL, so the same URL always lands in the
+/// same guest file and a run and its replay agree.
+pub(super) fn download_to_cache(
+    engine: &mut Unicorn<Trace>,
+    args: &[u64],
+    wide: bool,
+) -> Result<u64> {
+    ensure!(
+        args[0] == 0 && args[4] == 0 && args[5] == 0,
+        "URLMon binding context, reserved flags or callback are not modeled"
+    );
+    ensure!(args[1] != 0, "URLMon URL is null");
+    let url = files::path(engine, args[1], wide)?;
+    ensure!(
+        !url.is_empty() && url.len() <= 2048 && url.is_ascii(),
+        "URLMon URL is outside initial ASCII/2048-byte profile"
+    );
+    // A deterministic cache file under the persona's INetCache directory.
+    let stem = &emumee_core::report_bundle::digest(url.as_bytes())[..16];
+    let folder = engine
+        .get_data()
+        .apis
+        .persona
+        .model
+        .known_folder(1024, emumee_core::persona::KnownFolder::LocalAppData)?;
+    let raw = format!("{folder}\\Microsoft\\Windows\\INetCache\\IE\\{stem}.tmp");
+    let path = engine.get_data().apis.files.path(&raw)?;
+    let mut event = Event {
+        api: if wide {
+            "URLDownloadToCacheFileW"
+        } else {
+            "URLDownloadToCacheFileA"
+        },
+        url: url.clone(),
+        guest_path: path.clone(),
+        status: None,
+        bytes: 0,
+        result: None,
+        error: None,
+        destination_created: false,
+    };
+    let outcome = (|| -> Result<u64> {
+        let client = engine.get_data_mut().apis.broker.as_mut().ok_or_else(|| {
+            anyhow::anyhow!("Network broker unavailable; host fallback is disabled")
+        })?;
+        let reply = client
+            .call(Operation::HttpGet { url })
+            .map_err(anyhow::Error::msg)?;
+        reply.validate(reply.id).map_err(anyhow::Error::msg)?;
+        if !reply.ok {
+            event.error = reply.error;
+            event.result = Some(0x800c0008);
+            return Ok(0x800c0008);
+        }
+        let (status, body) = match reply.value {
+            Some(Data::Http { status, body }) => {
+                ensure!(
+                    body.len() <= emumee_core::networkfixtures::MAX_BODY,
+                    "URLMon broker body bound exceeded"
+                );
+                (status, body)
+            }
+            Some(Data::HttpFull { response }) => {
+                response.validate().map_err(anyhow::Error::msg)?;
+                (response.status, response.body)
+            }
+            _ => bail!("Broker returned a non-HTTP value for URLMon"),
+        };
+        event.status = Some(status);
+        event.bytes = body.len();
+        ensure!(
+            status == 200,
+            "URLMon non-200 response handling is not modeled"
+        );
+        // The cache directory is created on demand, as the cache manager does.
+        let mut prefix = String::new();
+        let parts: Vec<&str> = path.split('\\').collect();
+        for (index, part) in parts.iter().enumerate() {
+            if index + 1 == parts.len() {
+                break;
+            }
+            if index > 0 {
+                prefix.push('\\');
+            }
+            prefix.push_str(part);
+            if index == 0 && part.ends_with(':') {
+                continue;
+            }
+            match engine.get_data_mut().apis.files.create_directory(&prefix) {
+                Ok(()) => {}
+                Err(error) if error.win32 == 183 => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let (handle, _) = engine
+            .get_data_mut()
+            .apis
+            .files
+            .open(&path, 0x40000000, 1, 2, 1024)?;
+        event.destination_created = true;
+        let write = engine.get_data_mut().apis.files.write(handle, 1024, &body);
+        let close = engine.get_data_mut().apis.files.close(handle, 1024);
+        ensure!(write? == body.len(), "URLMon virtual write was partial");
+        close?;
+        engine.get_data_mut().apis.captures.add(
+            body,
+            ArtifactKind::GuestFile,
+            "urlmon_cache_download",
+            &path,
+        );
+        event.result = Some(0);
+        Ok(0)
+    })();
+    if let Err(error) = &outcome {
+        event.error = Some(format!("{error:#}"));
+    }
+    let created = event.destination_created;
+    let report = &mut engine.get_data_mut().apis.network;
+    report.calls += 1;
+    if report.events.len() < 64 {
+        report.events.push(event);
+    } else {
+        report.omitted_events += 1;
+    }
+    let result = outcome?;
+    // On success the caller learns where the body landed.
+    if result == 0 && created && args[2] != 0 {
+        let capacity = args[3] as u32 as usize;
+        let encoded: Vec<u8> = if wide {
+            let mut bytes: Vec<u8> = path.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+            bytes.extend([0, 0]);
+            bytes
+        } else {
+            let mut bytes = path.as_bytes().to_vec();
+            bytes.push(0);
+            bytes
+        };
+        let units = if wide { encoded.len() / 2 } else { encoded.len() };
+        if units > capacity {
+            // E_OUTOFMEMORY is what the cache manager reports for a short buffer.
+            return Ok(0x8007000E);
+        }
+        require(engine, args[2], encoded.len() as u64, P::WRITE)?;
+        crate::cpu::write(engine, args[2], &encoded)?;
+    }
+    Ok(result)
+}

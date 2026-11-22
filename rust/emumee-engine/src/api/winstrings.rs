@@ -26,6 +26,7 @@ pub(super) enum Call {
     Concat(bool),
     Copy { wide: bool, bounded: bool },
     Ordinal { wide: bool, fold: bool },
+    SubString { wide: bool, fold: bool },
     CharType { locale: bool, narrow: bool },
     MapString { wide: bool },
     Ipv4Text,
@@ -53,6 +54,30 @@ pub(super) fn definition(module: &str, name: &str) -> Option<(Call, usize, T, C)
             (Call::Lower, 1, T::Pointer)
         }
         "StrTrimW" if module == "shlwapi" => (Call::Trim, 2, T::U32),
+        "StrCmpIA" | "StrCmpIW" if module == "shlwapi" => (
+            Call::Ordinal {
+                wide: name.ends_with('W'),
+                fold: true,
+            },
+            2,
+            T::U32,
+        ),
+        "StrStrA" | "StrStrW" if module == "shlwapi" => (
+            Call::SubString {
+                wide: name.ends_with('W'),
+                fold: false,
+            },
+            2,
+            T::Pointer,
+        ),
+        "StrStrIA" | "StrStrIW" if module == "shlwapi" => (
+            Call::SubString {
+                wide: name.ends_with('W'),
+                fold: true,
+            },
+            2,
+            T::Pointer,
+        ),
         "RtlOemToUnicodeN" if module == "ntdll" => (Call::Oem, 5, T::U32),
         "RtlIsTextUnicode" if module == "ntdll" => (Call::Unicode, 3, T::U32),
         "WideCharToMultiByte" if strings => (Call::Convert(true), 8, T::U32),
@@ -564,6 +589,51 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
                 std::cmp::Ordering::Equal => 0,
                 std::cmp::Ordering::Greater => 1,
             }
+        }
+        Call::SubString { wide, fold } => {
+            let (Some(hay), Some(needle)) = (
+                raw(engine, args[0], -1, wide),
+                raw(engine, args[1], -1, wide),
+            ) else {
+                return Ok(fail(engine, 87));
+            };
+            let unit = if wide { 2usize } else { 1 };
+            // An empty needle matches at the start of the haystack.
+            if needle.is_empty() {
+                return Ok(args[0]);
+            }
+            let folded = |data: &[u8]| -> Vec<u8> {
+                if !fold {
+                    return data.to_vec();
+                }
+                if wide {
+                    data.chunks_exact(2)
+                        .flat_map(|c| {
+                            let u = u16::from_le_bytes([c[0], c[1]]);
+                            let lowered = if u < 128 {
+                                (u as u8).to_ascii_lowercase() as u16
+                            } else {
+                                u
+                            };
+                            lowered.to_le_bytes()
+                        })
+                        .collect()
+                } else {
+                    data.iter().map(|b| b.to_ascii_lowercase()).collect()
+                }
+            };
+            let hay = folded(&hay);
+            let needle = folded(&needle);
+            let mut index = 0;
+            let mut hit = None;
+            while index + needle.len() <= hay.len() {
+                if hay[index..index + needle.len()] == needle[..] {
+                    hit = Some(args[0] + index as u64);
+                    break;
+                }
+                index += unit;
+            }
+            hit.unwrap_or(0)
         }
         // CT_CTYPE1 classification only: the frozen reference models no other
         // information type, and a request for one stops explicitly.

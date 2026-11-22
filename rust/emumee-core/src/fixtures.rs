@@ -91,6 +91,13 @@ mod m6_path;
 mod m6_unmap;
 mod m6_version;
 mod m6_volume;
+mod m7;
+pub use m7::{
+    M7ComFixture, M7CryptoFixture, M7NetworkFixture, M7PathFixture, M7ResourceFixture,
+    M7SecurityFixture, M7SocketFixture, RESOURCE_RVA, STRING_5, STRING_ID, m7_com_probe,
+    m7_crypto_probe, m7_network_probe, m7_path_probe, m7_resource_probe, m7_security_probe,
+    m7_socket_probe, resource_tree,
+};
 pub use m6_console::{M6ConsoleFixture, m6_console_probe};
 pub use m6_files::{M6FileFixture, m6_file_probe};
 pub use m6_locale::{M6LocaleFixture, m6_locale_probe};

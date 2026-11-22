@@ -151,6 +151,25 @@ pub(super) fn definition(
             T::U32,
         ),
         "_snwprintf" if legacy => (Call::WideLegacyBuffer, 3, T::U32),
+        // shlwapi's bounded sprintf family shares the counted formatter. Both
+        // spellings are WINAPIV (cdecl), so the common-buffer path applies.
+        "wnsprintfA" if module == "shlwapi" => (
+            Call::NarrowBuffer {
+                bounded: true,
+                list: false,
+            },
+            3,
+            T::U32,
+        ),
+        "wnsprintfW" if module == "shlwapi" => (Call::WideLegacyBuffer, 3, T::U32),
+        "wvnsprintfA" if module == "shlwapi" => (
+            Call::NarrowBuffer {
+                bounded: true,
+                list: true,
+            },
+            4,
+            T::U32,
+        ),
         // Direct variadic narrow output, the counterpart of the wide spellings.
         "printf" if legacy => (Call::NarrowConsole(false), 1, T::U32),
         "fprintf" if legacy => (Call::NarrowConsole(true), 2, T::U32),

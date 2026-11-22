@@ -504,6 +504,28 @@ pub struct Execution {
     pub kernel_mdls: Option<MdlReport>,
     pub user_heaps: Option<emumee_core::heap::Heaps>,
     pub network: api::NetworkReport,
+    #[serde(skip_serializing_if = "api::ComReport::is_empty")]
+    pub com: api::ComReport,
+    #[serde(skip_serializing_if = "api::ShellReport::is_empty")]
+    pub shell: api::ShellReport,
+    #[serde(skip_serializing_if = "api::SecurityReport::is_empty")]
+    pub security: api::SecurityReport,
+    #[serde(skip_serializing_if = "api::ServicesReport::is_empty")]
+    pub services: api::ServicesReport,
+    #[serde(skip_serializing_if = "api::LsaReport::is_empty")]
+    pub lsa: api::LsaReport,
+    #[serde(skip_serializing_if = "api::SocketsReport::is_empty")]
+    pub sockets: api::SocketsReport,
+    #[serde(skip_serializing_if = "api::AdapterReport::is_empty")]
+    pub adapters: api::AdapterReport,
+    #[serde(skip_serializing_if = "api::IcmpReport::is_empty")]
+    pub icmp: api::IcmpReport,
+    #[serde(skip_serializing_if = "api::DnsReport::is_empty")]
+    pub dns: api::DnsReport,
+    #[serde(skip_serializing_if = "api::LanmanReport::is_empty")]
+    pub lanman: api::LanmanReport,
+    #[serde(skip_serializing_if = "api::HttpConfigReport::is_empty")]
+    pub http_config: api::HttpConfigReport,
     pub backend: &'static str,
     pub architecture: Architecture,
     pub completion_reason: &'static str,
@@ -1716,6 +1738,17 @@ fn run_generated_with_fixture_configuration(
         kernel_mdls: trace.apis.kernel_mode.then(|| api::mdl::report(&engine)),
         user_heaps: (!trace.apis.kernel_mode).then(|| trace.apis.heaps.clone()),
         network:trace.apis.network.clone(),
+        com: trace.apis.com.report.clone(),
+        shell: trace.apis.shell.report.clone(),
+        security: trace.apis.security.report.clone(),
+        services: trace.apis.services.report.clone(),
+        lsa: trace.apis.lsa.report.clone(),
+        sockets: trace.apis.sockets.report.clone(),
+        adapters: trace.apis.adapters.report.clone(),
+        icmp: trace.apis.icmp.report.clone(),
+        dns: trace.apis.dns.report.clone(),
+        lanman: trace.apis.lanman.report.clone(),
+        http_config: trace.apis.http_config.report.clone(),
         backend: backend(),
         architecture: arch,
         completion_reason: completion,
@@ -3307,6 +3340,8 @@ mod m4_tests;
 mod m6_compiled_tests;
 #[cfg(test)]
 mod m6_tests;
+#[cfg(test)]
+mod m7_tests;
 #[cfg(test)]
 mod user_test_fixtures;
 #[cfg(test)]

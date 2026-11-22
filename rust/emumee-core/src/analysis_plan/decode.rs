@@ -175,6 +175,25 @@ pub(super) fn named_fields(value: &Value) -> Result<()> {
                 "session_id",
                 "volume",
                 "firmware",
+                "adapter",
+            ],
+            "unsupported_persona_field",
+        )?;
+        keys(
+            &model["process"]["adapter"],
+            "persona.value.process.adapter",
+            &[
+                "name",
+                "description",
+                "guid",
+                "mac",
+                "ipv4",
+                "prefix_length",
+                "gateway",
+                "dns_servers",
+                "dhcp_enabled",
+                "mtu",
+                "if_index",
             ],
             "unsupported_persona_field",
         )?;

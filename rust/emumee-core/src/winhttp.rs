@@ -19,6 +19,27 @@ fn error(code: u32, reason: &'static str) -> HttpError {
     HttpError::Windows { code, reason }
 }
 type Result<T> = std::result::Result<T, HttpError>;
+/// Which of the three handle kinds an open handle is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HandleKind {
+    Session,
+    Connection,
+    Request,
+}
+/// What an option query needs to know about a handle.
+pub struct HandleFacts {
+    pub kind: HandleKind,
+    /// The request's URL, or the connection's host and port.
+    pub url: Option<String>,
+}
+impl HandleFacts {
+    /// A request addressed over TLS.
+    pub fn secure(&self) -> bool {
+        self.url
+            .as_deref()
+            .is_some_and(|url| url.starts_with("https://"))
+    }
+}
 pub struct HeaderValue {
     pub value: String,
     pub next_index: Option<u32>,
@@ -481,6 +502,25 @@ impl WinHttp {
         } else {
             Ok(None)
         }
+    }
+    /// What kind of handle this is and, for a request, the URL it addresses.
+    /// Option queries report a handle's type and whether it is secure, so the
+    /// facts come from the one place that owns them.
+    pub fn facts(&self, handle: u64) -> Result<HandleFacts> {
+        Ok(match self.object(handle)? {
+            Object::Session => HandleFacts {
+                kind: HandleKind::Session,
+                url: None,
+            },
+            Object::Connection { host, port, .. } => HandleFacts {
+                kind: HandleKind::Connection,
+                url: Some(format!("{host}:{port}")),
+            },
+            Object::Request(request) => HandleFacts {
+                kind: HandleKind::Request,
+                url: Some(request.url.clone()),
+            },
+        })
     }
     pub fn upload_status(&self, handle: u64) -> Result<(String, usize, Option<usize>)> {
         match &self.request(handle)?.phase {

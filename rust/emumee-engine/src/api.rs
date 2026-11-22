@@ -43,7 +43,23 @@ pub(crate) mod kernel_spin;
 pub(crate) mod kernel_sync;
 pub(crate) mod mdl;
 pub(crate) mod native_loader;
+mod adapters;
+mod com;
+mod crypto;
+mod dns;
+mod http_config;
+mod icmp;
+mod lanman;
+mod lsa;
 mod network;
+mod path;
+mod resources;
+mod security;
+mod services;
+mod shell;
+mod sockets;
+#[cfg(test)]
+mod resources_tests;
 #[cfg(test)]
 mod network_tests;
 pub(crate) mod user_bootstrap;
@@ -56,6 +72,17 @@ pub(crate) mod user_processes;
 mod user_sync;
 pub(crate) mod user_threads;
 mod winstrings;
+pub use adapters::Report as AdapterReport;
+pub use com::Report as ComReport;
+pub use dns::Report as DnsReport;
+pub use http_config::Report as HttpConfigReport;
+pub use icmp::Report as IcmpReport;
+pub use lanman::Report as LanmanReport;
+pub use lsa::Report as LsaReport;
+pub use sockets::Report as SocketsReport;
+pub use security::Report as SecurityReport;
+pub use services::Report as ServicesReport;
+pub use shell::Report as ShellReport;
 pub use network::Report as NetworkReport;
 mod console;
 pub(crate) mod crt_format;
@@ -190,8 +217,23 @@ enum Model {
     Unsupported,
     UrlDownloadA,
     UrlDownloadW,
+    UrlCacheDownloadA,
+    UrlCacheDownloadW,
     WinHttp(winhttp::Call),
     Internet(internet::Call),
+    Resources(resources::Call),
+    Crypto(crypto::Call),
+    Path(path::Call, bool),
+    Com(com::Call),
+    Shell(shell::Call),
+    Security(security::Call),
+    Services(services::Call),
+    Lsa(lsa::Call),
+    Sockets(sockets::Call),
+    Adapters(adapters::Call),
+    Icmp(icmp::Call),
+    Dns(dns::Call),
+    Lanman(lanman::Call),
     Heap(heap::Call),
     Crt(crt::Call),
     WinAlloc(win_alloc::Call),
@@ -324,6 +366,18 @@ pub(super) struct ApiState {
     pub base: u64,
     pub end: u64,
     pub(crate) last_error: u32,
+    pub(crate) crypto: crypto::State,
+    pub(crate) com: com::State,
+    pub(crate) shell: shell::State,
+    pub(crate) security: security::State,
+    pub(crate) services: services::State,
+    pub(crate) lsa: lsa::State,
+    pub(crate) sockets: sockets::State,
+    pub(crate) adapters: adapters::State,
+    pub(crate) icmp: icmp::State,
+    pub(crate) dns: dns::State,
+    pub(crate) http_config: http_config::State,
+    pub(crate) lanman: lanman::State,
     pub(crate) service_control_handles: u64,
     pub(crate) user_bootstrap: Option<user_bootstrap::State>,
     pub(crate) user_loader: user_loader::State,
@@ -424,6 +478,18 @@ impl ApiState {
             base: BASE,
             end: BASE,
             last_error: 0,
+            crypto: crypto::State::default(),
+            com: com::State::default(),
+            shell: shell::State::default(),
+            security: security::State::default(),
+            services: services::State::default(),
+            lsa: lsa::State::default(),
+            sockets: sockets::State::default(),
+            adapters: adapters::State::default(),
+            icmp: icmp::State::default(),
+            dns: dns::State::default(),
+            http_config: http_config::State::default(),
+            lanman: lanman::State::default(),
             service_control_handles: 0,
             user_bootstrap: None,
             user_loader: user_loader::State::default(),
@@ -810,11 +876,92 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
             return binding;
         }
     }
+    if let Some((call, count, returns)) = resources::definition(module, name) {
+        binding.model = Model::Resources(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, convention, returns)) = crypto::definition(module, name) {
+        binding.model = Model::Crypto(call);
+        binding.count = count;
+        binding.convention = convention;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns, wide)) = path::definition(module, name) {
+        binding.model = Model::Path(call, wide);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = com::definition(module, name) {
+        binding.model = Model::Com(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = shell::definition(module, name) {
+        binding.model = Model::Shell(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = security::definition(module, name) {
+        binding.model = Model::Security(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = services::definition(module, name) {
+        binding.model = Model::Services(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = lsa::definition(module, name) {
+        binding.model = Model::Lsa(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = sockets::definition(module, name) {
+        binding.model = Model::Sockets(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = adapters::definition(module, name) {
+        binding.model = Model::Adapters(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = icmp::definition(module, name) {
+        binding.model = Model::Icmp(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = dns::definition(module, name) {
+        binding.model = Model::Dns(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = lanman::definition(module, name) {
+        binding.model = Model::Lanman(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
     let definition = match (module, name) {
         ("api-ms-win-core-delayload-l1-1-1" | "kernelbase", "ResolveDelayLoadedAPI") => {
             (Model::DelayImport, 6, C::Stdcall, T::Pointer)
         }
         ("urlmon", "URLDownloadToFileA") => (Model::UrlDownloadA, 5, C::Stdcall, T::U32),
+        ("urlmon", "URLDownloadToCacheFileA") => (Model::UrlCacheDownloadA, 6, C::Stdcall, T::U32),
+        ("urlmon", "URLDownloadToCacheFileW") => (Model::UrlCacheDownloadW, 6, C::Stdcall, T::U32),
         ("kernel32" | "kernelbase", "GetProcessHeap") => {
             (Model::Heap(heap::Call::Process), 0, C::Stdcall, T::Pointer)
         }
@@ -906,6 +1053,43 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         ("wininet", "HttpEndRequestA" | "HttpEndRequestW") => {
             (Model::Internet(internet::Call::End), 4, C::Stdcall, T::U32)
         }
+        // The undecorated spelling a sample may import is the ANSI one.
+        ("wininet", "HttpSendRequest") => (
+            Model::Internet(internet::Call::Send(false)),
+            5,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("wininet", "InternetCrackUrlA" | "InternetCrackUrlW") => (
+            Model::Internet(internet::Call::CrackUrl(name.ends_with('W'))),
+            4,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("wininet", "InternetErrorDlg") => (
+            Model::Internet(internet::Call::ErrorDialog),
+            5,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("wininet", "InternetGetConnectedState") => (
+            Model::Internet(internet::Call::ConnectedState),
+            2,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("wininet", "InternetQueryOptionA" | "InternetQueryOptionW" | "InternetQueryOption") => (
+            Model::Internet(internet::Call::QueryOption),
+            4,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("wininet", "InternetSetOptionA" | "InternetSetOptionW" | "InternetSetOption") => (
+            Model::Internet(internet::Call::SetOption),
+            4,
+            C::Stdcall,
+            T::U32,
+        ),
         ("winhttp", "WinHttpOpen") => (
             Model::WinHttp(winhttp::Call::Open),
             5,
@@ -951,6 +1135,33 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         ("winhttp", "WinHttpCloseHandle") => {
             (Model::WinHttp(winhttp::Call::Close), 1, C::Stdcall, T::U32)
         }
+        ("winhttp", "WinHttpAddRequestHeaders") => (
+            Model::WinHttp(winhttp::Call::AddHeaders),
+            4,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("winhttp", "WinHttpCrackUrl") => {
+            (Model::WinHttp(winhttp::Call::CrackUrl), 4, C::Stdcall, T::U32)
+        }
+        ("winhttp", "WinHttpGetIEProxyConfigForCurrentUser") => (
+            Model::WinHttp(winhttp::Call::IeProxyConfig),
+            1,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("winhttp", "WinHttpGetProxyForUrl") => (
+            Model::WinHttp(winhttp::Call::ProxyForUrl),
+            4,
+            C::Stdcall,
+            T::U32,
+        ),
+        ("winhttp", "WinHttpSetOption") => (
+            Model::WinHttp(winhttp::Call::SetOption),
+            4,
+            C::Stdcall,
+            T::U32,
+        ),
         ("ntoskrnl", "ExAllocatePool2") => (
             Model::Pool2,
             if architecture == Architecture::X86 {
@@ -1553,8 +1764,23 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::Unsupported => bail!("Unsupported Windows API: {}", binding.name),
         Model::UrlDownloadA => network::download(engine, args, false)?,
         Model::UrlDownloadW => network::download(engine, args, true)?,
+        Model::UrlCacheDownloadA => network::download_to_cache(engine, args, false)?,
+        Model::UrlCacheDownloadW => network::download_to_cache(engine, args, true)?,
         Model::WinHttp(call) => winhttp::invoke(engine, args, call)?,
         Model::Internet(call) => internet::invoke(engine, args, call)?,
+        Model::Resources(call) => resources::invoke(engine, args, call)?,
+        Model::Crypto(call) => crypto::invoke(engine, args, call)?,
+        Model::Path(call, wide) => path::invoke(engine, args, call, wide)?,
+        Model::Com(call) => com::invoke(engine, args, call)?,
+        Model::Shell(call) => shell::invoke(engine, args, call)?,
+        Model::Security(call) => security::invoke(engine, args, call)?,
+        Model::Services(call) => services::invoke(engine, args, call)?,
+        Model::Lsa(call) => lsa::invoke(engine, args, call)?,
+        Model::Sockets(call) => sockets::invoke(engine, args, call)?,
+        Model::Adapters(call) => adapters::invoke(engine, args, call)?,
+        Model::Icmp(call) => icmp::invoke(engine, args, call)?,
+        Model::Dns(call) => dns::invoke(engine, args, call)?,
+        Model::Lanman(call) => lanman::invoke(engine, args, call)?,
         Model::Heap(call) => heap::invoke(engine, args, call)?,
         Model::Registry(call) => registry::invoke(engine, args, call)?,
         Model::NativeRegistry(call) => kernel_registry::call(engine, call, args)?,

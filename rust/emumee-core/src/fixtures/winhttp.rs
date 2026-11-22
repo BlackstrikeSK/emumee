@@ -55,6 +55,19 @@ pub enum Arg {
     Memory(u64),
 }
 pub(super) fn call(code: &mut Vec<u8>, wide: bool, base: u64, index: usize, args: &[Arg]) {
+    marshal(code, wide, args);
+    if wide {
+        let next = 0x1000 + code.len() + 6;
+        code.extend([0xff, 0x15]);
+        code.extend((0x2080i32 + index as i32 * 8 - next as i32).to_le_bytes());
+    } else {
+        code.extend([0xff, 0x15]);
+        code.extend(((base + 0x2080) as u32 + index as u32 * 4).to_le_bytes());
+    }
+}
+/// Place call arguments in the Windows ABI positions without emitting the call
+/// itself, so an indirect (vtable) call can reuse the same marshalling.
+pub(super) fn marshal(code: &mut Vec<u8>, wide: bool, args: &[Arg]) {
     if wide {
         for (position, arg) in args.iter().enumerate() {
             match arg {
@@ -80,9 +93,6 @@ pub(super) fn call(code: &mut Vec<u8>, wide: bool, base: u64, index: usize, args
                 code.extend([0x48, 0x89, 0x44, 0x24, (32 + (position - 4) * 8) as u8]);
             }
         }
-        let next = 0x1000 + code.len() + 6;
-        code.extend([0xff, 0x15]);
-        code.extend((0x2080i32 + index as i32 * 8 - next as i32).to_le_bytes());
     } else {
         for arg in args.iter().rev() {
             match arg {
@@ -96,8 +106,6 @@ pub(super) fn call(code: &mut Vec<u8>, wide: bool, base: u64, index: usize, args
                 }
             }
         }
-        code.extend([0xff, 0x15]);
-        code.extend(((base + 0x2080) as u32 + index as u32 * 4).to_le_bytes());
     }
 }
 pub(super) fn store(code: &mut Vec<u8>, wide: bool, address: u64) {

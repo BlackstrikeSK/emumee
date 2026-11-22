@@ -311,6 +311,175 @@ pub struct PersonaConfig {
     /// any identity a scenario needs.
     #[serde(default)]
     pub firmware: FirmwareConfig,
+    /// The single modeled network adapter. Every IP Helper, DNS, ICMP and
+    /// workstation answer is derived from it, so one document field decides
+    /// what the guest believes about its own network.
+    #[serde(default)]
+    pub adapter: AdapterConfig,
+}
+/// Identity of the one synthetic network adapter this profile presents. The
+/// default is a deterministic NAT layout that agrees with the Winsock model's
+/// own host address, so the adapter tables, the routing table and a name
+/// lookup all describe the same single-homed machine.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdapterConfig {
+    /// Connection (friendly) name, as Network Connections shows it.
+    pub name: String,
+    /// Hardware description, as the adapter's driver reports it.
+    pub description: String,
+    /// The adapter's GUID text, which is also its `AdapterName`.
+    pub guid: String,
+    /// Physical address as six dash-separated hex octets.
+    pub mac: String,
+    pub ipv4: String,
+    /// Subnet prefix length; 1..=30 so the subnet has a usable broadcast.
+    pub prefix_length: u32,
+    pub gateway: String,
+    pub dns_servers: Vec<String>,
+    pub dhcp_enabled: bool,
+    pub mtu: u32,
+    /// Interface index, as `GetAdaptersInfo` and the MIB tables report it.
+    pub if_index: u32,
+}
+impl Default for AdapterConfig {
+    fn default() -> Self {
+        Self {
+            name: "Ethernet".into(),
+            description: "Intel(R) 82574L Gigabit Network Connection".into(),
+            guid: "{3b1e9d47-5f28-4a16-9c70-2d5b8e04a1f3}".into(),
+            mac: "00-15-5D-2E-4A-71".into(),
+            ipv4: "10.0.2.15".into(),
+            prefix_length: 24,
+            gateway: "10.0.2.2".into(),
+            dns_servers: vec!["10.0.2.3".into()],
+            dhcp_enabled: true,
+            mtu: 1500,
+            if_index: 12,
+        }
+    }
+}
+/// A dotted-quad address parsed into its four octets.
+pub fn ipv4_octets(text: &str) -> Option<[u8; 4]> {
+    let parts: Vec<&str> = text.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut out = [0u8; 4];
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() || part.len() > 3 || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        out[index] = u8::try_from(part.parse::<u32>().ok()?).ok()?;
+    }
+    Some(out)
+}
+impl AdapterConfig {
+    pub fn address(&self) -> [u8; 4] {
+        ipv4_octets(&self.ipv4).unwrap_or_default()
+    }
+    pub fn gateway_address(&self) -> [u8; 4] {
+        ipv4_octets(&self.gateway).unwrap_or_default()
+    }
+    /// The six physical-address octets the configured text spells.
+    pub fn physical(&self) -> [u8; 6] {
+        let digits: Vec<u8> = self
+            .mac
+            .chars()
+            .filter_map(|c| c.to_digit(16).map(|d| d as u8))
+            .collect();
+        let mut out = [0u8; 6];
+        for (index, pair) in digits.chunks(2).take(6).enumerate() {
+            out[index] = (pair[0] << 4) | pair.get(1).copied().unwrap_or(0);
+        }
+        out
+    }
+    /// Subnet mask octets for the configured prefix length.
+    pub fn mask(&self) -> [u8; 4] {
+        let bits = self.prefix_length.min(32);
+        let mask: u32 = if bits == 0 {
+            0
+        } else {
+            u32::MAX << (32 - bits)
+        };
+        mask.to_be_bytes()
+    }
+    pub fn network(&self) -> [u8; 4] {
+        let (address, mask) = (self.address(), self.mask());
+        std::array::from_fn(|index| address[index] & mask[index])
+    }
+    pub fn broadcast(&self) -> [u8; 4] {
+        let (network, mask) = (self.network(), self.mask());
+        std::array::from_fn(|index| network[index] | !mask[index])
+    }
+    /// The DNS server addresses, parsed.
+    pub fn dns_addresses(&self) -> Vec<[u8; 4]> {
+        self.dns_servers
+            .iter()
+            .map(|text| ipv4_octets(text).unwrap_or_default())
+            .collect()
+    }
+}
+/// Admit one adapter identity. Every answer the IP Helper, DNS, ICMP and
+/// workstation models give is derived from these fields, so a document that
+/// describes an impossible adapter is refused here rather than producing a
+/// table no real stack could report.
+fn validate_adapter(adapter: &AdapterConfig) -> Result<()> {
+    for (text, limit) in [
+        (&adapter.name, 127usize),
+        (&adapter.description, 128),
+        (&adapter.guid, 255),
+        (&adapter.mac, 17),
+    ] {
+        bounded(text, false)?;
+        if text.len() > limit || !text.is_ascii() || text.chars().any(|c| c < ' ') {
+            return Err(error(87, "persona adapter text exceeds profile"));
+        }
+    }
+    if adapter.mac.chars().filter(char::is_ascii_hexdigit).count() != 12 {
+        return Err(error(87, "persona adapter physical address is not six octets"));
+    }
+    if !(1..=30).contains(&adapter.prefix_length) {
+        return Err(error(
+            87,
+            "persona adapter prefix length must leave a usable subnet",
+        ));
+    }
+    let address = ipv4_octets(&adapter.ipv4)
+        .ok_or_else(|| error(87, "persona adapter address is not a dotted quad"))?;
+    let gateway = ipv4_octets(&adapter.gateway)
+        .ok_or_else(|| error(87, "persona adapter gateway is not a dotted quad"))?;
+    let usable = |value: [u8; 4]| {
+        value != [0, 0, 0, 0]
+            && value[0] != 127
+            && value[0] < 224
+            && value != adapter.network()
+            && value != adapter.broadcast()
+    };
+    if !usable(address) || !usable(gateway) || gateway == address {
+        return Err(error(
+            87,
+            "persona adapter address or gateway is reserved, or they collide",
+        ));
+    }
+    let mask = adapter.mask();
+    if (0..4).any(|index| (gateway[index] & mask[index]) != adapter.network()[index]) {
+        return Err(error(87, "persona adapter gateway is outside its subnet"));
+    }
+    if adapter.dns_servers.is_empty() || adapter.dns_servers.len() > 4 {
+        return Err(error(87, "persona adapter needs one to four DNS servers"));
+    }
+    for text in &adapter.dns_servers {
+        let server = ipv4_octets(text)
+            .ok_or_else(|| error(87, "persona adapter DNS server is not a dotted quad"))?;
+        if server == [0, 0, 0, 0] || server[0] >= 224 {
+            return Err(error(87, "persona adapter DNS server is reserved"));
+        }
+    }
+    if !(576..=9000).contains(&adapter.mtu) || !(1..=0xffff).contains(&adapter.if_index) {
+        return Err(error(87, "persona adapter MTU or interface index is outside profile"));
+    }
+    Ok(())
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -524,6 +693,7 @@ impl PersonaConfig {
             session_id: default_session_id(),
             volume: VolumeConfig::default(),
             firmware: FirmwareConfig::default(),
+            adapter: AdapterConfig::default(),
         }
     }
 }
@@ -567,6 +737,20 @@ pub enum Directory {
     System,
     Windows,
     Temp,
+}
+/// Shell known folders the `SHGetFolderPath` model answers for.
+#[derive(Clone, Copy, Debug)]
+pub enum KnownFolder {
+    Profile,
+    AppData,
+    LocalAppData,
+    Documents,
+    Desktop,
+    Startup,
+    Windows,
+    System,
+    ProgramFiles,
+    ProgramData,
 }
 #[derive(Clone, Debug)]
 pub struct Persona {
@@ -805,6 +989,7 @@ impl Persona {
                 return Err(error(87, "persona firmware text exceeds profile"));
             }
         }
+        validate_adapter(&config.adapter)?;
         config.user_profile = absolute(&config.user_profile)?;
         config.current_directory = absolute(&config.current_directory)?;
         config.windows_directory = absolute(&config.windows_directory)?;
@@ -1184,6 +1369,77 @@ impl Persona {
                 None
             },
         )
+    }
+    /// The persona's user name as plain text, for models that compose it into a
+    /// larger string rather than filling a counted buffer.
+    pub fn user_name_text(&self) -> &str {
+        &self.config.user_name
+    }
+    /// The persona's host name as plain text, for the same reason.
+    pub fn computer_name_text(&self) -> &str {
+        &self.config.hostname
+    }
+    /// The configured domain or workgroup name.
+    pub fn domain_text(&self) -> &str {
+        &self.config.domain
+    }
+    /// The one modeled network adapter. Every network enumeration answer is
+    /// derived from it, so a run and its replay describe the same machine.
+    pub fn adapter(&self) -> &AdapterConfig {
+        &self.config.adapter
+    }
+    /// The machine's DNS name: the host name, or `host.domain` when the
+    /// persona is domain-joined rather than in a workgroup.
+    pub fn fully_qualified_name(&self) -> String {
+        let (host, domain) = (&self.config.hostname, &self.config.domain);
+        if self.domain_joined() {
+            format!("{}.{}", host.to_ascii_lowercase(), domain.to_ascii_lowercase())
+        } else {
+            host.to_ascii_lowercase()
+        }
+    }
+    /// A persona in a workgroup is not domain-joined; anything else is.
+    pub fn domain_joined(&self) -> bool {
+        !self.config.domain.eq_ignore_ascii_case("WORKGROUP") && !self.config.domain.is_empty()
+    }
+    /// A shell known-folder path, built from the persona's configured identity
+    /// and the process environment. No host folder is ever consulted, so the
+    /// answer is the same on every run.
+    pub fn known_folder(&self, owner: u64, folder: KnownFolder) -> Result<String> {
+        let process = self.process(owner)?;
+        let env = |name: &str| -> Option<String> {
+            process
+                .environment
+                .get(name)
+                .ok()
+                .flatten()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        let profile = env("USERPROFILE").unwrap_or_else(|| self.config.user_profile.clone());
+        let profile = profile.trim_end_matches('\\').to_string();
+        let roaming =
+            env("APPDATA").unwrap_or_else(|| format!("{profile}\\AppData\\Roaming"));
+        Ok(match folder {
+            KnownFolder::Profile => profile,
+            KnownFolder::AppData => roaming,
+            KnownFolder::LocalAppData => {
+                env("LOCALAPPDATA").unwrap_or_else(|| format!("{profile}\\AppData\\Local"))
+            }
+            KnownFolder::Documents => format!("{profile}\\Documents"),
+            KnownFolder::Desktop => format!("{profile}\\Desktop"),
+            KnownFolder::Startup => {
+                format!("{roaming}\\Microsoft\\Windows\\Start Menu\\Programs\\Startup")
+            }
+            KnownFolder::Windows => self.config.windows_directory.clone(),
+            KnownFolder::System => self.config.system_directory.clone(),
+            KnownFolder::ProgramFiles => {
+                env("ProgramFiles").unwrap_or_else(|| r"C:\Program Files".into())
+            }
+            KnownFolder::ProgramData => {
+                env("ProgramData").unwrap_or_else(|| r"C:\ProgramData".into())
+            }
+        })
     }
     #[allow(clippy::too_many_arguments)]
     fn identity(

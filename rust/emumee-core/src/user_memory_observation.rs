@@ -33,6 +33,10 @@ pub enum Omission {
     ImageReadFailed,
     ScanBudget,
     ScannerSourceRefused,
+    /// The scan budget ran out before every committed private run was scanned.
+    PrivateScanBudget,
+    /// A committed private run could not be read and was skipped.
+    PrivateReadFailed,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +54,15 @@ pub struct Receipt {
     pub read_limit: u64,
     pub read_reserved_bytes: u64,
     pub read_bytes: u64,
+    /// Total bytes handed to the scanner: the image prefix plus every private
+    /// run below. Always equals the capture report's `scanned_bytes`.
     pub selected_bytes: u64,
+    /// Committed private runs scanned after the image root (N14 live mappings).
+    #[serde(default)]
+    pub private_runs: u32,
+    /// Bytes selected from those private runs; included in `selected_bytes`.
+    #[serde(default)]
+    pub private_bytes: u64,
     pub capture_sha256: String,
     pub boundary_instructions: u64,
     pub boundary_pc: u64,
@@ -84,6 +96,8 @@ pub fn valid_execution(execution: &Value) -> bool {
         || receipt.read_bytes > receipt.read_reserved_bytes
         || receipt.read_reserved_bytes > receipt.read_limit
         || receipt.selected_bytes > receipt.scan_limit
+        || receipt.private_bytes > receipt.selected_bytes
+        || (receipt.private_runs == 0) != (receipt.private_bytes == 0)
         || capture.get("scanned_bytes").and_then(Value::as_u64) != Some(receipt.selected_bytes)
         || execution.get("instruction_count").and_then(Value::as_u64)
             != Some(receipt.boundary_instructions)
@@ -98,9 +112,11 @@ pub fn valid_execution(execution: &Value) -> bool {
         .is_some_and(|m| m.is_empty());
     match receipt.coverage {
         Coverage::Disabled => !receipt.enabled && receipt.selected_bytes == 0 && matches_empty,
-        Coverage::Omitted => receipt.enabled && receipt.selected_bytes == 0,
+        // Coverage describes the image root only; private runs may still have
+        // contributed bytes when the root itself was omitted.
+        Coverage::Omitted => receipt.enabled && receipt.selected_bytes == receipt.private_bytes,
         Coverage::CompleteSelectedRoot | Coverage::SelectedRootPrefix => {
-            receipt.enabled && receipt.selected_bytes > 0
+            receipt.enabled && receipt.selected_bytes > receipt.private_bytes
         }
     }
 }

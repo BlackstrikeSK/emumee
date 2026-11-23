@@ -24,6 +24,7 @@ fn run(arch: Architecture, kind: F) -> Execution {
         staged: vec![],
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let label = format!("{arch:?}-m5-win-alloc-{kind:?}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &[], None);
@@ -59,6 +60,7 @@ fn submitted_capture_request_drives_user_memory_strings_profile() {
                 }),
                 carve_executable_regions: true,
             }),
+            output: None,
         };
         let result = user::run(&request, &bytes, None).unwrap();
         assert_eq!(result.error, None, "{arch:?}: {result:#?}");

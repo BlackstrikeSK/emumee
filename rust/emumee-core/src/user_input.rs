@@ -105,6 +105,66 @@ impl MemoryStringRequest {
             .map_err(|_| "Memory-string capture patterns outside the bounded matcher subset")
     }
 }
+/// The compiled parent output ceilings. A submitted request may tighten these
+/// but never loosen them, so expressing a limit can never widen containment.
+pub const MAX_OUTPUT_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_OUTPUT_ENTRIES: u32 = 4200;
+pub const MAX_OUTPUT_DIRECTORIES: u32 = 8;
+pub const MAX_OUTPUT_DEPTH: u32 = 4;
+
+/// Optional parent output-cap selection (N08). Absent means the compiled
+/// ceilings, so a request that does not mention them is unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputRequest {
+    #[serde(default = "default_output_bytes")]
+    pub max_bytes: u64,
+    #[serde(default = "default_output_entries")]
+    pub max_entries: u32,
+    #[serde(default = "default_output_directories")]
+    pub max_directories: u32,
+    #[serde(default = "default_output_depth")]
+    pub max_depth: u32,
+}
+fn default_output_bytes() -> u64 {
+    MAX_OUTPUT_BYTES
+}
+fn default_output_entries() -> u32 {
+    MAX_OUTPUT_ENTRIES
+}
+fn default_output_directories() -> u32 {
+    MAX_OUTPUT_DIRECTORIES
+}
+fn default_output_depth() -> u32 {
+    MAX_OUTPUT_DEPTH
+}
+impl Default for OutputRequest {
+    fn default() -> Self {
+        Self {
+            max_bytes: MAX_OUTPUT_BYTES,
+            max_entries: MAX_OUTPUT_ENTRIES,
+            max_directories: MAX_OUTPUT_DIRECTORIES,
+            max_depth: MAX_OUTPUT_DEPTH,
+        }
+    }
+}
+impl OutputRequest {
+    fn valid(&self) -> Result<(), &'static str> {
+        if self.max_bytes == 0
+            || self.max_bytes > MAX_OUTPUT_BYTES
+            || self.max_entries == 0
+            || self.max_entries > MAX_OUTPUT_ENTRIES
+            || self.max_directories == 0
+            || self.max_directories > MAX_OUTPUT_DIRECTORIES
+            || self.max_depth == 0
+            || self.max_depth > MAX_OUTPUT_DEPTH
+        {
+            return Err("Submitted PE output caps may tighten but not exceed the compiled ceilings");
+        }
+        Ok(())
+    }
+}
+
 /// Opt-in capture configuration carried by the submitted request (N14/N15).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -143,6 +203,8 @@ pub struct Request {
     pub invocation: Invocation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture: Option<CaptureRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<OutputRequest>,
 }
 
 fn hash(value: &str) -> bool {
@@ -251,12 +313,16 @@ impl Request {
         if self.schema == 1
             && (!self.staged.is_empty()
                 || self.invocation != Invocation::default()
-                || self.capture.is_some())
+                || self.capture.is_some()
+                || self.output.is_some())
         {
             return Err("Schema 1 cannot carry extended submitted inputs");
         }
         if let Some(capture) = &self.capture {
             capture.valid()?;
+        }
+        if let Some(output) = &self.output {
+            output.valid()?;
         }
         if !module_name_valid(&self.module_name)
             || !guest_path_valid(&self.guest_path())
@@ -542,6 +608,80 @@ mod tests {
             staged: vec![],
             invocation: Invocation::default(),
             capture: None,
+            output: None,
+        }
+    }
+    #[test]
+    fn submitted_output_caps_may_tighten_but_never_exceed_the_compiled_ceilings() {
+        // Absent output configuration keeps exactly the compiled ceilings.
+        let compiled = OutputRequest::default();
+        assert_eq!(
+            (
+                compiled.max_bytes,
+                compiled.max_entries,
+                compiled.max_directories,
+                compiled.max_depth
+            ),
+            (
+                MAX_OUTPUT_BYTES,
+                MAX_OUTPUT_ENTRIES,
+                MAX_OUTPUT_DIRECTORIES,
+                MAX_OUTPUT_DEPTH
+            )
+        );
+        let mut tightened = request();
+        tightened.schema = 2;
+        tightened.output = Some(OutputRequest {
+            max_bytes: 1024,
+            max_entries: 4,
+            max_directories: 1,
+            max_depth: 1,
+        });
+        tightened.validate().unwrap();
+        // Schema 1 cannot carry it at all.
+        let mut old = request();
+        old.output = Some(OutputRequest::default());
+        assert!(old.validate().is_err());
+        // Every field is refused both at zero and above its ceiling, so a
+        // request can never widen the parent's containment.
+        for caps in [
+            OutputRequest {
+                max_bytes: MAX_OUTPUT_BYTES + 1,
+                ..Default::default()
+            },
+            OutputRequest {
+                max_entries: MAX_OUTPUT_ENTRIES + 1,
+                ..Default::default()
+            },
+            OutputRequest {
+                max_directories: MAX_OUTPUT_DIRECTORIES + 1,
+                ..Default::default()
+            },
+            OutputRequest {
+                max_depth: MAX_OUTPUT_DEPTH + 1,
+                ..Default::default()
+            },
+            OutputRequest {
+                max_bytes: 0,
+                ..Default::default()
+            },
+            OutputRequest {
+                max_entries: 0,
+                ..Default::default()
+            },
+            OutputRequest {
+                max_directories: 0,
+                ..Default::default()
+            },
+            OutputRequest {
+                max_depth: 0,
+                ..Default::default()
+            },
+        ] {
+            let mut wide = request();
+            wide.schema = 2;
+            wide.output = Some(caps);
+            assert!(wide.validate().is_err(), "{caps:?} was admitted");
         }
     }
     #[test]

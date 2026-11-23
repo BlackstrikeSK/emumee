@@ -5,7 +5,7 @@
  "feature_matrix": "rust/api-parity/native-feature-matrix.md",
  "api_partition": "docs/native-pe/api-batches.json",
  "validation_policy": "docs/native-pe/validation-policy.json",
- "validation_index": "output/rust-pe-m8-complete-20261123/source-validation-final/index.json",
+ "validation_index": "output/rust-pe-m8-complete-20261123-02/source-validation-final/index.json",
  "dependency_integrity_report": "output/rust-pe-m4-complete-20261119-02/audits-02/dependencies-final.json",
  "baseline_failure_classification": "docs/native-pe/baseline-failures.md",
  "bounded_m0_package_smoke": "docs/native-pe/m0-package-smoke.md",
@@ -225,7 +225,7 @@
      "review": "docs/native-pe/m8-capture-indicators-carving.md"
     }
    ],
-   "next_action": "M8 submitted-sample capture is complete and qualified; see docs/native-pe/m8-capture-indicators-carving.md. The N14 memory-string indicator scan (bounded linear-time custom matcher, admitted through plan and submitted request, executed over the settled image and bound into the report) and the N15 executable-region/dropped-PE carve at the executable-protection transition are closed. Still open: live private-mapping and checkpoint scans, the VirtualFree/overwrite/delete/exit-byte and remote-write provenance classes, a staged-input dropped-PE guest control, the N17 shared-state report audit, remaining N08 public output-limit equivalence, and the M9-M11 operational/package/global gates with an independent audit of the full denominator",
+   "next_action": "M8 submitted-sample capture is complete and qualified; see docs/native-pe/m8-capture-indicators-carving.md. N14 (memory-string indicators over the settled image and live private reservations, bounded linear-time custom matcher, admitted through plan and submitted request, bound into the report), N15 (payload classification and writer/provenance attribution at the protection transition, the release, the VFS drop and the remote write), N16/N17 (seal-time audit of the serialized report field set) and N08 (requestable parent output caps, clamped to the compiled ceilings) are closed. Still open: periodic checkpoint scans, a remote-write guest control (needs child-process control machinery), per-family report field semantics, per-contract semantic closure for all rows, and the M9-M11 operational/package/global gates with an independent audit of the full denominator",
    "exit_tests": [
     "cross-family x86/x64 programs",
     "same-build release matrix",

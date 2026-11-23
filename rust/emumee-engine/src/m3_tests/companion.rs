@@ -76,6 +76,7 @@ fn staged_request(bytes: &[u8], companion: &[u8], name: &str) -> Request {
         }],
         invocation: Invocation::default(),
         capture: None,
+        output: None,
     }
 }
 

@@ -664,6 +664,15 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, call: Call, args: &[u64]) -> R
 pub(crate) fn close(engine: &mut Unicorn<Trace>, handle: u64) -> Option<u64> {
     handles::close(engine, handle)
 }
+/// The process a handle names, when that process is **not** this one — a
+/// genuine remote target. The current-process pseudo-handle and any handle that
+/// resolves back to this process both answer `None`, so a sample writing into
+/// its own address space is never reported as an injection.
+pub(crate) fn remote_process(engine: &Unicorn<Trace>, handle: u64) -> Option<u64> {
+    handles::process(engine, handle, 0)
+        .ok()
+        .filter(|id| *id != pid(engine))
+}
 pub(crate) fn process_access(engine: &Unicorn<Trace>, handle: u64, access: u32) -> bool {
     handles::process(engine, handle, access).is_ok()
 }

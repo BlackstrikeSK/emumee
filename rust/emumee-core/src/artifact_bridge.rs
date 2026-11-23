@@ -17,6 +17,8 @@ pub enum Origin {
     Memory,
     ContainerStream,
     RegistryValue,
+    /// A file the guest itself wrote into its virtual filesystem — a drop.
+    GuestFile,
 }
 impl Origin {
     fn label(self) -> &'static str {
@@ -24,6 +26,7 @@ impl Origin {
             Self::Memory => "memory",
             Self::ContainerStream => "container_stream",
             Self::RegistryValue => "registry_value",
+            Self::GuestFile => "guest_file",
         }
     }
 }
@@ -548,6 +551,53 @@ pub fn capture_executable_transition(
     }
     Ok(())
 }
+/// Carve the structural PE evidence out of a file the guest dropped, in
+/// addition to the dropped file itself. A drop that is not a PE adds nothing
+/// here; the file is still retained by its own `GuestFile` observation.
+pub fn capture_dropped_pe(
+    catalog: &mut ArtifactCatalog,
+    data: &[u8],
+    guest_path: &str,
+) -> Result<(), BridgeError> {
+    if !pe_carve::contains_structural_pe(data, catalog.profile()) {
+        return Ok(());
+    }
+    let context = serde_json::json!({
+        "dropped_guest_path": guest_path,
+        "capture_boundary": "settled",
+    })
+    .as_object()
+    .expect("object literal")
+    .clone();
+    let source = "guest_file_dropped";
+    if let Ok(scan) = pe_carve::scan(data, source, false, Some(&context)) {
+        capture_scan(catalog, &scan, Origin::GuestFile)?;
+    }
+    Ok(())
+}
+/// Retain bytes a guest wrote into another process's address space, attributed
+/// to that write. A structural PE is carved as an image — an injected module —
+/// and anything else is retained as a memory snapshot, because a remote write
+/// does not by itself make the bytes executable and this must not claim it did.
+pub fn capture_remote_write(
+    catalog: &mut ArtifactCatalog,
+    data: Vec<u8>,
+    source: &str,
+    context: Map<String, Value>,
+) -> Result<(), BridgeError> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    if pe_carve::contains_structural_pe(&data, catalog.profile()) {
+        if let Ok(scan) = pe_carve::scan(&data, source, false, Some(&context)) {
+            if capture_scan(catalog, &scan, Origin::Memory).is_ok() {
+                return Ok(());
+            }
+        }
+    }
+    catalog.add_with_context(data, ArtifactKind::MemorySnapshot, source, "", Some(context));
+    Ok(())
+}
 pub fn capture_owned_budgeted(
     catalog: &mut ArtifactCatalog,
     data: Vec<u8>,
@@ -842,6 +892,70 @@ mod tests {
         assert!(pe_carve::contains_structural_pe(&image, catalog.profile()));
         capture_executable_transition(&mut catalog, image.clone(), "virtual_protect_executable", exec_context(0x400000, image.len() as u64))
             .unwrap();
+        let kinds: Vec<ArtifactKind> = catalog
+            .items
+            .iter()
+            .flat_map(|item| item.observations.iter().map(|o| o.kind))
+            .collect();
+        assert!(kinds.contains(&ArtifactKind::CarvedImage), "{kinds:?}");
+        assert!(!kinds.contains(&ArtifactKind::ExecutableRegion));
+    }
+
+    fn remote_context(destination: u64, size: u64) -> Map<String, Value> {
+        serde_json::json!({
+            "transition": "remote_write",
+            "guest_base": destination,
+            "region_bytes": size,
+            "target_process_id": 4242,
+            "capture_boundary": "api_call",
+        })
+        .as_object()
+        .unwrap()
+        .clone()
+    }
+
+    #[test]
+    fn remote_write_retains_injected_bytes_without_claiming_they_are_executable() {
+        // A plain injected buffer is a memory snapshot: a remote write does not
+        // make the bytes executable, so no ExecutableRegion is claimed.
+        let mut catalog = ArtifactCatalog::default();
+        let injected = b"INJECTED-CONFIG-BLOB".to_vec();
+        capture_remote_write(
+            &mut catalog,
+            injected.clone(),
+            "remote_write",
+            remote_context(0x200000, injected.len() as u64),
+        )
+        .unwrap();
+        assert_eq!(catalog.items.len(), 1);
+        let observation = &catalog.items[0].observations[0];
+        assert_eq!(observation.kind, ArtifactKind::MemorySnapshot);
+        assert_eq!(
+            observation.context.as_ref().unwrap()["transition"],
+            "remote_write"
+        );
+        assert_eq!(
+            observation.context.as_ref().unwrap()["target_process_id"],
+            4242
+        );
+        assert!(crate::artifacts::valid_observation_json_with_profile(
+            &serde_json::to_value(observation).unwrap(),
+            catalog.profile()
+        ));
+    }
+
+    #[test]
+    fn remote_write_of_a_pe_is_carved_as_an_injected_image() {
+        use crate::pe::Architecture;
+        let mut catalog = ArtifactCatalog::default();
+        let image = crate::fixtures::counted_driver(Architecture::X64, 1);
+        capture_remote_write(
+            &mut catalog,
+            image.clone(),
+            "remote_write",
+            remote_context(0x300000, image.len() as u64),
+        )
+        .unwrap();
         let kinds: Vec<ArtifactKind> = catalog
             .items
             .iter()

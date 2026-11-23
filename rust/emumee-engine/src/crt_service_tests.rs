@@ -32,6 +32,7 @@ fn execute(arch: Architecture, kind: F, contained: bool) -> Execution {
         staged: vec![],
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let label = format!("{arch:?}-m5-crt-service-{kind:?}");
     if contained {

@@ -42,6 +42,7 @@ fn run(arch: Architecture, kind: F, budget: u64) -> Execution {
             .collect(),
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let label = format!("{arch:?}-m5-crt-data-{kind:?}-{budget}");
     emit::fixture(&label, &request, &bytes, &staged, None);

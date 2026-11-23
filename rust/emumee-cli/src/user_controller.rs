@@ -62,7 +62,8 @@ pub fn bootstrap_boundary(
 pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
     let bytes =
         emumee_platform::windows::read_regular_locked(source, emumee_core::pe::MAX_INPUT, None)?;
-    let (staged, payloads, invocation, capture) = staging::capture(options.inputs.as_deref())?;
+    let (staged, payloads, invocation, capture, output) =
+        staging::capture(options.inputs.as_deref())?;
     let persona = options
         .persona
         .as_ref()
@@ -100,6 +101,7 @@ pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
         staged,
         invocation,
         capture,
+        output,
     };
     request
         .verify_staged(&bytes, &payloads)
@@ -122,11 +124,16 @@ pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
             root.as_os_str().to_owned(),
             OsString::from(&expected),
         ],
-        OutputLimits {
-            max_bytes: 512 * 1024 * 1024,
-            max_entries: 4200,
-            max_directories: 8,
-            max_depth: 4,
+        {
+            // N08: the request may tighten the parent output caps; absent, the
+            // compiled ceilings apply. `validate` already refused anything wider.
+            let caps = request.output.unwrap_or_default();
+            OutputLimits {
+                max_bytes: caps.max_bytes,
+                max_entries: u64::from(caps.max_entries),
+                max_directories: u64::from(caps.max_directories),
+                max_depth: caps.max_depth as usize,
+            }
         },
         u32::try_from(request.timeout_us.div_ceil(1000) + 30_000)?,
     )?;

@@ -124,6 +124,25 @@ pub(super) fn free(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
     let plan = state
         .allocations
         .free(&state.memory, args[0], args[1], flags);
+    // N15: a release is the last moment a staged executable payload exists.
+    // MEM_RELEASE passes a zero size and retires the whole reservation.
+    if plan.is_ok() {
+        let extent = if args[1] == 0 {
+            engine.get_data().apis.allocations.reservation(args[0])
+        } else {
+            Some((args[0], args[1]))
+        };
+        if let Some((base, size)) = extent {
+            if engine
+                .get_data()
+                .apis
+                .allocations
+                .executable_within(base, size)
+            {
+                carve_executable(engine, base, size, "released_before_free");
+            }
+        }
+    }
     finish(engine, plan)
 }
 pub(super) fn protect(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> {
@@ -160,21 +179,21 @@ pub(super) fn protect(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> 
     }
     finish(engine, plan)
 }
-/// Carve an owned region that is transitioning into executable protection as a
-/// shellcode (`ExecutableRegion`) or dropped-PE (`CarvedImage`) artifact. No-op
-/// unless the submitted plan requested carving and the run is user-mode; bounded
-/// by the single-artifact size cap; an all-zero region carries no payload.
-fn capture_executable_transition(engine: &mut Unicorn<Trace>, base: u64, size: u64, protection: u32) {
+/// Carve an owned executable region as a shellcode (`ExecutableRegion`) or
+/// dropped-PE (`CarvedImage`) artifact, attributed to the `transition` that
+/// exposed it. No-op unless the submitted request asked for carving and the run
+/// is user-mode; bounded by the single-artifact size cap; an all-zero region
+/// carries no payload.
+pub(super) fn carve_executable(
+    engine: &mut Unicorn<Trace>,
+    base: u64,
+    size: u64,
+    transition: &'static str,
+) {
     if !engine.get_data().carve_executable_regions || engine.get_data().apis.kernel_mode {
         return;
     }
-    let Ok(permissions) = vm::permissions(protection) else {
-        return;
-    };
-    if !permissions.contains(P::EXECUTE)
-        || size == 0
-        || size > emumee_core::pe_carve::MAX_ARTIFACT_BYTES as u64
-    {
+    if size == 0 || size > emumee_core::pe_carve::MAX_ARTIFACT_BYTES as u64 {
         return;
     }
     let Ok(bytes) = engine.mem_read_as_vec(base, size as usize) else {
@@ -185,17 +204,23 @@ fn capture_executable_transition(engine: &mut Unicorn<Trace>, base: u64, size: u
     }
     let context = serde_json::json!({
         "executable": true,
-        "transition": "virtual_protect_executable",
+        "transition": transition,
         "guest_base": base,
         "region_bytes": size,
-        "new_protection": protection,
         "capture_boundary": "api_call",
     });
     let context = context.as_object().expect("object literal").clone();
     let _ = emumee_core::artifact_bridge::capture_executable_transition(
         &mut engine.get_data_mut().apis.captures,
         bytes,
-        "virtual_protect_executable",
+        transition,
         context,
     );
+}
+/// A transition into executable protection is the defining moment a staged
+/// payload is activated; carve it before the guest can run or replace it.
+fn capture_executable_transition(engine: &mut Unicorn<Trace>, base: u64, size: u64, protection: u32) {
+    if vm::permissions(protection).is_ok_and(|p| p.contains(P::EXECUTE)) {
+        carve_executable(engine, base, size, "virtual_protect_executable");
+    }
 }

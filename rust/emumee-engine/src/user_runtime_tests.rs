@@ -24,6 +24,7 @@ fn user_runtime_real_guest_calls_validate_both_abis_and_owned_memory() {
                 staged: vec![],
                 invocation: Default::default(),
                 capture: None,
+                output: None,
             };
             let result = user::run(&request, &bytes, None).unwrap();
             if kind == F::OwnedProtect {

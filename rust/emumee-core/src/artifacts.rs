@@ -490,9 +490,9 @@ pub fn valid_observation_json_with_profile(value: &Value, profile: CaptureProfil
         }),
         "carved_image" => context.is_some_and(|c| {
             c.get("carved_kind").and_then(Value::as_str) == Some("structural_pe")
-                && c.get("capture_origin")
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| ["memory", "container_stream", "registry_value"].contains(&s))
+                && c.get("capture_origin").and_then(Value::as_str).is_some_and(|s| {
+                    ["memory", "container_stream", "registry_value", "guest_file"].contains(&s)
+                })
                 && mapped_context_valid(c, profile)
         }),
         "executable_region" => context.is_some_and(|c| {

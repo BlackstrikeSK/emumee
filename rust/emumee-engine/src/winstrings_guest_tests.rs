@@ -216,6 +216,7 @@ fn winstrings_native_pe_callers_observe_both_abis_buffer_counts_and_failure_atom
                 staged: vec![],
                 invocation: Default::default(),
                 capture: None,
+                output: None,
             };
             let result = user::run(&request, &bytes, None).unwrap();
             assert_eq!(result.error, None, "{arch:?}/{unicode}: {result:#?}");

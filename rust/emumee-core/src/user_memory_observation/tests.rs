@@ -32,6 +32,8 @@ fn execution(patterns: &[&str], blob: &[u8], base: u64, scan_limit: u64) -> Valu
         read_reserved_bytes: blob.len() as u64,
         read_bytes: blob.len() as u64,
         selected_bytes: scanned,
+        private_runs: 0,
+        private_bytes: 0,
         capture_sha256,
         boundary_instructions: 42,
         boundary_pc: base + 0x100,

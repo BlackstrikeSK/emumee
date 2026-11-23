@@ -156,6 +156,7 @@ mod tests {
             staged: vec![],
             invocation: Default::default(),
             capture: None,
+            output: None,
         }
     }
     fn fixture(arch: Architecture, kind: &str) -> (Vec<u8>, &'static str) {

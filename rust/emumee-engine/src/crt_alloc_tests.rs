@@ -25,6 +25,7 @@ fn run_bytes(bytes: &[u8]) -> Execution {
         staged: vec![],
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     user::run(&request, bytes, None).unwrap()
 }

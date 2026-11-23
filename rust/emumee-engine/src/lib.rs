@@ -1649,6 +1649,15 @@ fn run_generated_with_fixture_configuration(
             } else {
                 "virtual_file_at_stop"
             };
+            // N15: a dropped PE also yields structural image evidence, so a
+            // dropped payload is carved and not merely retained as bytes.
+            if engine.get_data().carve_executable_regions {
+                let _ = emumee_core::artifact_bridge::capture_dropped_pe(
+                    &mut captures,
+                    &data,
+                    &path,
+                );
+            }
             captures.add(data, ArtifactKind::GuestFile, source, &path);
         }
     }

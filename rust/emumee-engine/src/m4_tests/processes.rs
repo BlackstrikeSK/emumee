@@ -23,6 +23,7 @@ fn run(arch: Architecture, label: &str, bytes: Vec<u8>, child: Vec<u8>, budget: 
         }],
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let label = format!("{arch:?}-m4-process-{label}");
     emit::fixture(&label, &request, &bytes, &staged, None);

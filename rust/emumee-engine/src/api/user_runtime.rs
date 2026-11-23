@@ -619,6 +619,14 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             if size != 0 {
                 let bytes = read(engine, source, size)?;
                 put(engine, destination, &bytes)?;
+                // N15: bytes a guest injects into another process are retained
+                // and attributed to that write. Writing into our own process is
+                // ordinary memory traffic and is left to the carve transitions.
+                if write {
+                    if let Some(target) = user_processes::remote_process(engine, args[0]) {
+                        carve_remote_write(engine, target, destination, bytes);
+                    }
+                }
             }
             if args[4] != 0 {
                 put(engine, args[4], &size.to_le_bytes()[..width])?;
@@ -1257,6 +1265,41 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             u64::from(feature)
         }
     })
+}
+
+/// Retain and attribute bytes the guest wrote into another process's address
+/// space. Opt-in with the submitted request's carve configuration, user-mode
+/// only, bounded by the single-artifact cap; an all-zero payload is not an
+/// artifact. This records what was injected, never that it executed.
+fn carve_remote_write(
+    engine: &mut Unicorn<Trace>,
+    target_process_id: u64,
+    destination: u64,
+    bytes: Vec<u8>,
+) {
+    if !engine.get_data().carve_executable_regions || engine.get_data().apis.kernel_mode {
+        return;
+    }
+    if bytes.is_empty()
+        || bytes.len() > emumee_core::pe_carve::MAX_ARTIFACT_BYTES
+        || bytes.iter().all(|byte| *byte == 0)
+    {
+        return;
+    }
+    let context = serde_json::json!({
+        "transition": "remote_write",
+        "guest_base": destination,
+        "region_bytes": bytes.len() as u64,
+        "target_process_id": target_process_id,
+        "capture_boundary": "api_call",
+    });
+    let context = context.as_object().expect("object literal").clone();
+    let _ = emumee_core::artifact_bridge::capture_remote_write(
+        &mut engine.get_data_mut().apis.captures,
+        bytes,
+        "remote_write",
+        context,
+    );
 }
 
 #[cfg(test)]

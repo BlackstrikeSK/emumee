@@ -27,8 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # drops an executable payload) and returns 1, and the configured submitted-sample
 # capture recovers them.
 _FAMILIES = {
-    'strings': ['Builtin', 'Custom'],
-    'carve': ['Shellcode'],
+    'strings': ['Builtin', 'Custom', 'Private'],
+    'carve': ['Shellcode', 'Released', 'DroppedPe'],
 }
 
 # The submitted-sample capture reports these controls own. The shared M4
@@ -36,6 +36,95 @@ _FAMILIES = {
 # contained run must report the same memory-string capture, its bound receipt,
 # and the same carved artifacts as the source-tested execution it replays.
 _OBSERVED = ('user_memory_strings', 'user_memory_capture', 'artifacts')
+
+# N17: every serialized execution report field an M8 control produces is
+# reviewed here. A newly added observation therefore cannot reach a receipt
+# unlisted, and the contained replay must reproduce the same field set as the
+# source-tested run -- a report field the packaged worker drops fails the seal.
+# Wall-clock derived timings are deliberately excluded from a contained
+# receipt: the source fixture strips them, so they are reviewed fields but are
+# not compared between the source-tested run and its replay.
+_NONDETERMINISTIC_REPORT_FIELDS = frozenset({'engine_seconds', 'instructions_per_second'})
+
+_REVIEWED_REPORT_FIELDS = frozenset({
+    'api_calls',
+    'engine_seconds',
+    'instructions_per_second',
+    'api_events',
+    'api_events_omitted',
+    'api_region',
+    'architecture',
+    'artifacts',
+    'backend',
+    'capture_summary',
+    'completion_reason',
+    'configuration',
+    'console',
+    'console_session',
+    'cpu',
+    'crt_runtime',
+    'crt_stdio',
+    'delay_imports',
+    'delay_imports_omitted',
+    'dynamic_loader',
+    'environment_blocks',
+    'error',
+    'file_enumeration',
+    'file_storage',
+    'final_pc',
+    'guest_entry_return',
+    'image_load',
+    'image_writes',
+    'instruction_count',
+    'instruction_tail',
+    'kernel_cache_aware_rundown',
+    'kernel_callback_continuation',
+    'kernel_callbacks',
+    'kernel_capture',
+    'kernel_context_reads',
+    'kernel_cpu',
+    'kernel_entry',
+    'kernel_environment',
+    'kernel_export_queries',
+    'kernel_export_queries_omitted',
+    'kernel_files',
+    'kernel_formatting',
+    'kernel_ipi',
+    'kernel_loader',
+    'kernel_mdls',
+    'kernel_modules',
+    'kernel_objects',
+    'kernel_pool',
+    'kernel_pool_scope',
+    'kernel_prompt',
+    'kernel_pushlocks',
+    'kernel_registry',
+    'kernel_rtl',
+    'kernel_state',
+    'kernel_thread_objects',
+    'kernel_threads',
+    'loaded_modules',
+    'max_instructions',
+    'maximum_continuation_depth',
+    'native_loader',
+    'network',
+    'provider_denials',
+    'provider_denials_omitted',
+    'scope',
+    'synthetic_providers',
+    'user_bootstrap',
+    'user_heaps',
+    'user_lifecycle',
+    'user_loader',
+    'user_memory_capture',
+    'user_memory_strings',
+    'user_processes',
+    'user_threads',
+    'virtual_tsc',
+    'virtual_tsc_adjust',
+    'virtual_tsc_offset',
+    'virtual_uptime_ms',
+})
 
 
 def required_cases():
@@ -62,6 +151,13 @@ def observations(root, fixture, *, output_directory='m8'):
     expected = json.loads((fixture / 'source-execution.json').read_bytes())
     for field in _OBSERVED:
         assert execution.get(field) == expected.get(field), (fixture.name, field)
+    # N17 report audit: no field is invented, dropped or left unreviewed.
+    unreviewed = sorted(set(execution) - _REVIEWED_REPORT_FIELDS)
+    assert not unreviewed, (fixture.name, 'unreviewed execution report fields', unreviewed)
+    compared = set(execution) - _NONDETERMINISTIC_REPORT_FIELDS
+    assert compared == set(expected) - _NONDETERMINISTIC_REPORT_FIELDS, (
+        fixture.name, 'replay report fields differ',
+        sorted(compared ^ (set(expected) - _NONDETERMINISTIC_REPORT_FIELDS)))
     # Every M8 control decides nothing beyond returning 1 from its entry.
     assert execution['completion_reason'] == 'entry_return', fixture.name
     assert execution['guest_entry_return'] == 1, fixture.name

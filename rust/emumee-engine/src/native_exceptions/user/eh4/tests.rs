@@ -248,6 +248,7 @@ fn run(label: &str, control: Control) -> crate::Execution {
         staged: vec![],
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let label = format!("X86-m4-eh4-{label}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &[], None);

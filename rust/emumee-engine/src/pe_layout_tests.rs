@@ -21,6 +21,7 @@ fn request(bytes: &[u8]) -> Request {
         staged: vec![],
         invocation: Default::default(),
         capture: None,
+        output: None,
     }
 }
 

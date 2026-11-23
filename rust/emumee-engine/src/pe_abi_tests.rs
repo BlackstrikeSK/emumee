@@ -34,6 +34,7 @@ fn submitted_abi_imports_and_callbacks_are_independently_qualified() {
                 staged: vec![],
                 invocation: Default::default(),
                 capture: None,
+                output: None,
             };
             let execution = user::run(&request, &bytes, None)
                 .unwrap_or_else(|error| panic!("{architecture:?}/{kind:?}: {error:#}"));

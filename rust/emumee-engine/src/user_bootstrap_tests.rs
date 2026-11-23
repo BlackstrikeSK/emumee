@@ -38,6 +38,7 @@ fn submitted_bootstrap_direct_segments_parameters_and_mutations_match_owned_apis
                             all_exports: false,
                         },
                         capture: None,
+                        output: None,
                     };
                     if let Ok(root) = std::env::var("EMUMEE_USER_TEST_FIXTURES") {
                         let path = std::path::PathBuf::from(root).join(format!(
@@ -109,6 +110,7 @@ fn bootstrap_counted_command_line_preserves_the_exact_maximum_without_u16_wrap()
             staged: vec![],
             invocation: Invocation::default(),
             capture: None,
+            output: None,
         };
         request.arguments =
             vec!["x".repeat(32767 - request.guest_path().encode_utf16().count() - 1)];

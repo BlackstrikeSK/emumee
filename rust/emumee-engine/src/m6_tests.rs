@@ -59,6 +59,7 @@ pub(crate) fn run(label: &str, bytes: Vec<u8>, staged: &[Staged], budget: u64) -
             .collect(),
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let contents = staged
         .iter()

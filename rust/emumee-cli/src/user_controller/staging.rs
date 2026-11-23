@@ -138,6 +138,8 @@ pub(super) struct Specification {
     pub invocation: Invocation,
     #[serde(default)]
     pub capture: Option<emumee_core::user_input::CaptureRequest>,
+    #[serde(default)]
+    pub output: Option<emumee_core::user_input::OutputRequest>,
 }
 
 #[derive(Deserialize)]
@@ -156,9 +158,10 @@ pub(super) fn capture(
     Vec<Vec<u8>>,
     Invocation,
     Option<emumee_core::user_input::CaptureRequest>,
+    Option<emumee_core::user_input::OutputRequest>,
 )> {
     let Some(path) = path else {
-        return Ok((vec![], vec![], Invocation::default(), None));
+        return Ok((vec![], vec![], Invocation::default(), None, None));
     };
     let specification: Specification =
         serde_json::from_slice(&read_regular_locked(path, MAX_REQUEST, None)?)?;
@@ -201,6 +204,7 @@ pub(super) fn capture(
         payloads,
         specification.invocation,
         specification.capture,
+        specification.output,
     ))
 }
 

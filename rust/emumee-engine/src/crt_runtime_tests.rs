@@ -24,6 +24,7 @@ fn run(arch: Architecture, kind: F) -> Execution {
         staged: vec![],
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let label = format!("{arch:?}-m5-crt-runtime-{kind:?}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &[], None);

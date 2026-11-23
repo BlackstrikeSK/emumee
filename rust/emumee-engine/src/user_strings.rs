@@ -56,6 +56,8 @@ pub(super) fn install(
             read_reserved_bytes: 0,
             read_bytes: 0,
             selected_bytes: 0,
+            private_runs: 0,
+            private_bytes: 0,
             capture_sha256: String::new(),
             boundary_instructions: 0,
             boundary_pc: 0,
@@ -72,6 +74,9 @@ pub(super) fn settled(engine: &mut Unicorn<Trace>, pc: u64) {
     state.receipt.boundary_pc = pc;
     if state.receipt.enabled {
         observe(engine, &mut state);
+        // Live private reservations are scanned whether or not the image root
+        // itself was readable within budget.
+        private_runs(engine, &mut state);
     }
     engine.get_data_mut().user_strings = Some(state);
 }
@@ -114,6 +119,49 @@ fn observe(engine: &mut Unicorn<Trace>, state: &mut State) {
     } else {
         Coverage::CompleteSelectedRoot
     };
+}
+/// Scan the sample's own committed private reservations after the image root,
+/// in address order, until the configured scan budget is spent. Only owned,
+/// readable guest memory is touched; nothing outside a live reservation is read.
+fn private_runs(engine: &mut Unicorn<Trace>, state: &mut State) {
+    let runs = engine.get_data().apis.allocations.committed_runs();
+    for (base, size) in runs {
+        let r = &mut state.receipt;
+        let remaining = r.scan_limit.saturating_sub(r.selected_bytes);
+        if remaining == 0 {
+            r.omissions.push(Omission::PrivateScanBudget);
+            break;
+        }
+        if size == 0 {
+            continue;
+        }
+        if !engine
+            .get_data()
+            .apis
+            .memory
+            .allows(base, size, Permissions::READ)
+        {
+            continue;
+        }
+        let selected = size.min(remaining);
+        let Ok(bytes) = engine.mem_read_as_vec(base, selected as usize) else {
+            state.receipt.omissions.push(Omission::PrivateReadFailed);
+            continue;
+        };
+        let source = format!("guest_private_at_stop:0x{base:x}");
+        if state.capture.scan_memory(&bytes, &source, base).is_err() {
+            state.receipt.omissions.push(Omission::ScannerSourceRefused);
+            continue;
+        }
+        let r = &mut state.receipt;
+        r.selected_bytes += selected;
+        r.private_bytes += selected;
+        r.private_runs += 1;
+        if selected < size {
+            r.omissions.push(Omission::PrivateScanBudget);
+            break;
+        }
+    }
 }
 pub(super) fn take(engine: &mut Unicorn<Trace>) -> (Option<Report>, Option<Receipt>) {
     let Some(mut state) = engine.get_data_mut().user_strings.take() else {

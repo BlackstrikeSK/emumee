@@ -46,6 +46,7 @@ fn run(arch: Architecture, name: &str) -> Execution {
         }],
         invocation: Default::default(),
         capture: None,
+        output: None,
     };
     let label = format!("{arch:?}-m6-compiled-{name}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &staged, None);

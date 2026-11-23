@@ -18,14 +18,17 @@ def _populate(fixtures, names):
 class M8ControlSetTests(unittest.TestCase):
     def test_controls_cover_every_family_and_architecture(self):
         names = required_cases()
-        self.assertEqual(6, len(names))
+        self.assertEqual(12, len(names))
         for arch in ('X86', 'X64'):
             # The built-in indicator scan, the custom bounded-matcher pattern
             # and the executable-region carve are separate controls, so a
             # failure names the surface that produced it.
             for required in (f'{arch}-m8-strings-Builtin',
                              f'{arch}-m8-strings-Custom',
-                             f'{arch}-m8-carve-Shellcode'):
+                             f'{arch}-m8-strings-Private',
+                             f'{arch}-m8-carve-Shellcode',
+                             f'{arch}-m8-carve-Released',
+                             f'{arch}-m8-carve-DroppedPe'):
                 self.assertIn(required, names)
 
     def test_missing_or_unexpected_m8_control_is_refused(self):
@@ -38,7 +41,7 @@ class M8ControlSetTests(unittest.TestCase):
             _populate(fixtures, required_cases())
             # Controls from an earlier milestone are not part of this set.
             _populate(fixtures, ['X64-m7-network-Dns'])
-            self.assertEqual(6, len(cases(root)))
+            self.assertEqual(12, len(cases(root)))
             _populate(fixtures, ['X64-m8-strings-invented'])
             with self.assertRaises(AssertionError):
                 cases(root)

@@ -357,6 +357,57 @@ impl VirtualMemory {
     /// reports it. Runs stop at reservation boundaries and wherever commitment
     /// or protection changes. Backing this model did not reserve is reported as
     /// one committed region, MEM_IMAGE when its mapping is an image.
+    /// Committed private page runs as `(base, bytes)` in address order. Capture
+    /// scans a sample's own live reservations through this; it is never a claim
+    /// that a run holds meaningful data or executed.
+    pub fn committed_runs(&self) -> Vec<(u64, u64)> {
+        let mut runs = Vec::new();
+        for (owner, allocation) in &self.allocations {
+            let mut index = 0usize;
+            while index < allocation.pages.len() {
+                if allocation.pages[index].is_none() {
+                    index += 1;
+                    continue;
+                }
+                let start = index;
+                while index < allocation.pages.len() && allocation.pages[index].is_some() {
+                    index += 1;
+                }
+                runs.push((
+                    owner + start as u64 * PAGE,
+                    (index - start) as u64 * PAGE,
+                ));
+            }
+        }
+        runs
+    }
+    /// The reservation containing `address` as `(base, bytes)`, if any.
+    pub fn reservation(&self, address: u64) -> Option<(u64, u64)> {
+        self.allocations
+            .range(..=(address & !(PAGE - 1)))
+            .next_back()
+            .filter(|(owner, a)| address < **owner + a.size)
+            .map(|(owner, a)| (*owner, a.size))
+    }
+    /// True when any committed page overlapping `[address, size)` carries
+    /// executable protection.
+    pub fn executable_within(&self, address: u64, size: u64) -> bool {
+        let Ok(end) = rounded_end(address, size) else {
+            return false;
+        };
+        let start = address & !(PAGE - 1);
+        self.allocations.iter().any(|(owner, allocation)| {
+            allocation.pages.iter().enumerate().any(|(index, page)| {
+                let page_base = owner + index as u64 * PAGE;
+                page_base >= start
+                    && page_base < end
+                    && page.is_some_and(|protection| {
+                        permissions(protection)
+                            .is_ok_and(|perm| perm.contains(Permissions::EXECUTE))
+                    })
+            })
+        })
+    }
     pub fn query(&self, memory: &AddressSpace, address: u64) -> Result<Query> {
         let limit = self.limit();
         if address >= limit {

@@ -28,6 +28,7 @@ fn request(bytes: &[u8], kind: F, budget: u64) -> Request {
         staged: vec![],
         invocation: Default::default(),
         capture: None,
+        output: None,
     }
 }
 fn run(arch: Architecture, kind: F, budget: u64) -> Execution {

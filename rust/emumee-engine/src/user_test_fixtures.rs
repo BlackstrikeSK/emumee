@@ -70,13 +70,15 @@ pub(crate) fn fixture(
             serde_json::json!({"kind": file.kind, "guest_path": file.guest_path, "source": source})
         })
         .collect::<Vec<_>>();
-    save(
-        "inputs.json",
-        &serde_json::to_vec(
-            &serde_json::json!({"schema":1, "files":files, "invocation":request.invocation}),
-        )
-        .unwrap(),
-    );
+    let mut inputs =
+        serde_json::json!({"schema":1, "files":files, "invocation":request.invocation});
+    if let Some(capture) = &request.capture {
+        inputs
+            .as_object_mut()
+            .unwrap()
+            .insert("capture".into(), serde_json::to_value(capture).unwrap());
+    }
+    save("inputs.json", &serde_json::to_vec(&inputs).unwrap());
     save(
         "arguments.json",
         &serde_json::to_vec(&request.arguments).unwrap(),

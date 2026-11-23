@@ -247,6 +247,7 @@ fn run(label: &str, control: Control) -> crate::Execution {
         clock_utc_filetime: 134377488000000000,
         staged: vec![],
         invocation: Default::default(),
+        capture: None,
     };
     let label = format!("X86-m4-eh4-{label}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &[], None);

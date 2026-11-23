@@ -38,6 +38,7 @@ fn m3_nested_crt_callbacks_preserve_frames_and_unwind_faults_abi_errors_and_shar
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Invocation::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!("{architecture:?}-m3-callback-{kind:?}"),
@@ -108,6 +109,7 @@ fn m3_real_new_threads_have_owned_teb_tls_notifications_and_shared_horizons() {
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Invocation::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!("{architecture:?}-m3-thread-{kind:?}"),
@@ -181,6 +183,7 @@ fn m3_normal_exit_detaches_real_tls_forced_exit_skips_callbacks_and_cleanup_shar
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Invocation::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!("{architecture:?}-m3-process-{forced}-{loops}"),
@@ -245,6 +248,7 @@ fn m3_guest_ldr_export_walk_resolves_and_calls_the_same_entry_as_static_imports(
             clock_utc_filetime: 134377488000000000,
             staged: vec![],
             invocation: Invocation::default(),
+            capture: None,
         };
         emit::fixture(
             &format!("{architecture:?}-m3-provider"),
@@ -305,6 +309,7 @@ fn m3_lazy_forwarder_failures_resume_with_errors_and_release_temporary_images() 
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Invocation::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!("{architecture:?}-m3-forwarder-{failure:?}"),
@@ -366,6 +371,7 @@ fn m3_submitted_vfs_graph_initializes_missing_dependencies_and_retires_the_same_
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Invocation::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!(
@@ -439,6 +445,7 @@ fn submitted_static_tls_callbacks_and_entry_read_real_vectors_templates_zero_fil
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Invocation::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!(

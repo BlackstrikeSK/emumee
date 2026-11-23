@@ -71,17 +71,24 @@ fn pinned_actual_legacy_reports_match_default_scanner_and_utf16_heap_view() {
     }
 }
 #[test]
-fn options_never_silently_ignore_custom_grammar_or_bad_types() {
+fn options_refuse_unsupported_grammar_but_admit_the_bounded_subset() {
+    // Constructs outside the bounded matcher subset are refused at admission,
+    // never accepted and run slowly.
     for value in [
-        json!({"regex":["(?<=prefix\\s+)TOKEN"]}),
-        json!({"regex":["(?P<r>a(?&r)?b)"]}),
-        json!({"enabled":false,"regex":["TOKEN"]}),
+        json!({"regex":["(?<=prefix\\s+)TOKEN"]}), // lookbehind
+        json!({"regex":["(?P<r>a(?&r)?b)"]}),       // named group / recursion
+        json!({"regex":["^abc"]}),                   // anchor
+        json!({"regex":["abc$"]}),                   // anchor
+        json!({"regex":["a*?"]}),                    // lazy quantifier
+        json!({"regex":["a{0,99999}"]}),             // over MAX_REPEAT
     ] {
         assert_eq!(
             Options::decode(Some(&value)).unwrap_err(),
-            Error::UnsupportedLegacyRegex
+            Error::UnsupportedPattern,
+            "{value}"
         );
     }
+    // Shape/type errors still refuse with InvalidOptions.
     for value in [
         json!({"regex":[""]}),
         json!({"regex":vec!["x";17]}),
@@ -91,12 +98,51 @@ fn options_never_silently_ignore_custom_grammar_or_bad_types() {
     ] {
         assert_eq!(
             Options::decode(Some(&value)).unwrap_err(),
-            Error::InvalidOptions
+            Error::InvalidOptions,
+            "{value}"
         );
+    }
+    // Supported patterns are now admitted.
+    for value in [
+        json!({"regex":["TOKEN"]}),
+        json!({"enabled":false,"regex":["[a-f0-9]{32}"]}),
+        json!({"regex":["AKIA[A-Z0-9]{6}", "cat|dog"]}),
+    ] {
+        assert!(Options::decode(Some(&value)).is_ok(), "{value}");
     }
     assert!(Options::decode(None).is_ok());
     assert!(Options::decode(Some(&Value::Null)).is_ok());
     assert!(Options::decode(Some(&json!({"regex":[],"enabled":false}))).is_ok());
+}
+
+#[test]
+fn custom_patterns_scan_memory_and_match_the_report_envelope() {
+    let options = Options::decode(Some(&json!({"regex":["[a-f0-9]{8}", "cat|dog"]}))).unwrap();
+    let mut capture = Capture::new(options);
+    capture
+        .scan_memory(b"xx deadbeef a cat here", "memory:custom", 0x1000)
+        .unwrap();
+    let report = serde_json::to_value(capture.report()).unwrap();
+    assert_eq!(report["regex"], json!(["[a-f0-9]{8}", "cat|dog"]));
+    let values: Vec<(&str, &str)> = report["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["format"].as_str().unwrap(),
+                m["value"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert!(values.contains(&("custom_1", "deadbeef")));
+    assert!(values.contains(&("custom_2", "cat")));
+    assert!(crate::reports::valid_memory_capture(&report));
+    // A disabled capture ignores custom patterns entirely.
+    let mut disabled =
+        Capture::new(Options::decode(Some(&json!({"enabled":false,"regex":["cat"]}))).unwrap());
+    disabled.scan_memory(b"cat cat cat", "memory:x", 0).unwrap();
+    assert!(disabled.report().matches().is_empty());
 }
 #[test]
 fn lone_surrogate_is_an_explicit_atomic_pending_capture_not_lossy_guest_text() {

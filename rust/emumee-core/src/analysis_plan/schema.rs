@@ -214,6 +214,23 @@ pub enum MemoryStrings {
     Disabled,
     Indicators { patterns: Vec<String> },
 }
+impl MemoryStrings {
+    /// Build the runtime memory-string capture options this configuration selects,
+    /// compiling and bounds-checking any custom patterns with the bounded
+    /// linear-time matcher. An unsupported or over-bounded pattern is rejected
+    /// here (`memory_strings::Error`), never accepted and run slowly.
+    pub fn options(
+        &self,
+    ) -> std::result::Result<crate::memory_strings::Options, crate::memory_strings::Error> {
+        match self {
+            MemoryStrings::Disabled => Ok(crate::memory_strings::Options::disabled()),
+            MemoryStrings::Indicators { patterns } => {
+                let value = serde_json::json!({ "enabled": true, "regex": patterns });
+                crate::memory_strings::Options::decode(Some(&value))
+            }
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Checkpoint {

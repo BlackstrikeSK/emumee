@@ -24,6 +24,7 @@ fn parse_kind(s: &str) -> Result<ArtifactKind> {
         "registry_value" => ArtifactKind::RegistryValue,
         "carved_image" => ArtifactKind::CarvedImage,
         "network" => ArtifactKind::Network,
+        "executable_region" => ArtifactKind::ExecutableRegion,
         _ => anyhow::bail!("Unknown typed artifact kind"),
     })
 }

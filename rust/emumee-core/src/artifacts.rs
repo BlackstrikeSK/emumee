@@ -20,6 +20,11 @@ pub enum ArtifactKind {
     /// Bytes a guest offered to or received from the network. Capturing them is
     /// never a claim that they were transmitted.
     Network,
+    /// An executable (or executable-transitioning) memory region that is not a
+    /// structural PE — a shellcode-carving target. Capturing it is never a claim
+    /// that the bytes executed successfully, only that the guest made the region
+    /// executable or released it while it carried executable permission.
+    ExecutableRegion,
 }
 #[derive(Debug, Serialize)]
 pub struct Observation {
@@ -266,6 +271,7 @@ impl ArtifactCatalog {
                 ArtifactKind::ContainerStream
                     | ArtifactKind::RegistryValue
                     | ArtifactKind::CarvedImage
+                    | ArtifactKind::ExecutableRegion
             ))
             && !valid_observation_json_with_profile(
                 &serde_json::to_value(&observation).expect("bounded observation serializes"),
@@ -428,6 +434,7 @@ pub fn valid_observation_json_with_profile(value: &Value, profile: CaptureProfil
             "registry_value",
             "carved_image",
             "network",
+            "executable_region",
         ]
         .contains(&kind)
     }) || object
@@ -487,6 +494,12 @@ pub fn valid_observation_json_with_profile(value: &Value, profile: CaptureProfil
                     .and_then(Value::as_str)
                     .is_some_and(|s| ["memory", "container_stream", "registry_value"].contains(&s))
                 && mapped_context_valid(c, profile)
+        }),
+        "executable_region" => context.is_some_and(|c| {
+            c.get("executable").and_then(Value::as_bool) == Some(true)
+                && c.get("transition")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty() && s.len() <= 64)
         }),
         "memory_snapshot" => context.is_none_or(|c| {
             if profile == CaptureProfile::Driver128V1

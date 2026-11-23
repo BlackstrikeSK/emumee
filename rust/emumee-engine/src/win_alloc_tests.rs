@@ -23,12 +23,55 @@ fn run(arch: Architecture, kind: F) -> Execution {
         clock_utc_filetime: 134377488000000000,
         staged: vec![],
         invocation: Default::default(),
+        capture: None,
     };
     let label = format!("{arch:?}-m5-win-alloc-{kind:?}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &[], None);
     let result = user::run(&request, &bytes, None).unwrap();
     crate::user_test_fixtures::execution(&label, &result);
     result
+}
+
+#[test]
+fn submitted_capture_request_drives_user_memory_strings_profile() {
+    for arch in [Architecture::X86, Architecture::X64] {
+        let bytes = win_alloc_probe(arch, F::Probe);
+        PeImage::parse(&bytes, "sample.exe").unwrap();
+        let request = Request {
+            schema: 2,
+            profile: PROFILE.into(),
+            run_id: "20261119T160000Z-12345678".into(),
+            input_sha256: digest(&bytes),
+            input_size: bytes.len() as u64,
+            module_name: "sample.exe".into(),
+            arguments: vec![],
+            max_instructions: 40000,
+            timeout_us: 30_000_000,
+            persona_sha256: None,
+            clock_utc_filetime: 134377488000000000,
+            staged: vec![],
+            invocation: Default::default(),
+            capture: Some(emumee_core::user_input::CaptureRequest {
+                memory_strings: Some(emumee_core::user_input::MemoryStringRequest {
+                    enabled: true,
+                    patterns: vec!["[ -~]{5,}".into()],
+                    scan_bytes: 128 * 1024 * 1024,
+                }),
+                carve_executable_regions: true,
+            }),
+        };
+        let result = user::run(&request, &bytes, None).unwrap();
+        assert_eq!(result.error, None, "{arch:?}: {result:#?}");
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(
+            emumee_core::user_memory_observation::valid_execution(&json),
+            "{arch:?}: {json:#}"
+        );
+        assert!(emumee_core::user_memory_observation::present(&json));
+        let receipt = result.user_memory_capture.as_ref().unwrap();
+        assert!(receipt.selected_bytes > 0, "{arch:?}");
+        assert_eq!(receipt.patterns, vec!["[ -~]{5,}".to_string()]);
+    }
 }
 
 #[test]

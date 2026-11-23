@@ -260,6 +260,10 @@ pub fn build<'p>(input: Input<'p, '_>) -> Result<Bundle<'p>> {
         "indicator execution authority",
     )?;
     check(
+        crate::user_memory_observation::valid_execution(input.execution),
+        "submitted memory-string execution authority",
+    )?;
+    check(
         crate::memory_observation::valid_declaration(input.manifest, input.execution),
         "indicator profile/case declaration",
     )?;
@@ -433,7 +437,12 @@ pub fn build<'p>(input: Input<'p, '_>) -> Result<Bundle<'p>> {
         "network_broker_report":"network-broker.json","network_broker_report_sha256":digest(&network),"network_broker_report_size":network.len(),
         "network_broker_complete":false,"network_coverage":input.network_coverage,
         "scope":"Closed generated analysis/report path; general sample execution and confirmed unpacking remain gated"});
-    for field in ["memory_strings", "memory_string_sources"] {
+    for field in [
+        "memory_strings",
+        "memory_string_sources",
+        "user_memory_strings",
+        "user_memory_capture",
+    ] {
         if let Some(value) = input.execution.get(field) {
             summary[field] = value.clone();
         }
@@ -441,6 +450,11 @@ pub fn build<'p>(input: Input<'p, '_>) -> Result<Bundle<'p>> {
     check(
         crate::memory_observation::summary_matches(&summary, input.execution),
         "indicator summary binding",
+    )?;
+    check(
+        !crate::user_memory_observation::present(input.execution)
+            || crate::user_memory_observation::summary_matches(&summary, input.execution),
+        "submitted memory-string summary binding",
     )?;
     if reason == "exit_process"
         && input.execution.get("exit_process_observed") == Some(&Value::Bool(true))

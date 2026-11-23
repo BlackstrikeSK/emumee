@@ -31,6 +31,7 @@ fn run(arch: Architecture, kind: F) -> Execution {
             sha256: digest(CONTENT),
         }],
         invocation: Default::default(),
+        capture: None,
     };
     let label = format!("{arch:?}-m5-crt-file-{kind:?}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &staged, None);

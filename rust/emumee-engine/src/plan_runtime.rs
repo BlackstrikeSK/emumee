@@ -17,6 +17,16 @@ pub fn execute(
         prepared.spec().capture.retained_bytes as usize,
     )
     .ok_or_else(|| anyhow!("Closed legacy capture budget"))?;
+    let user_strings = prepared_user_strings(prepared)?;
+    let carve_executable_regions = {
+        use emumee_core::analysis_plan::CaptureSource::{MemorySnapshots, StructuralPe};
+        prepared
+            .spec()
+            .capture
+            .sources
+            .iter()
+            .any(|s| matches!(s, MemorySnapshots | StructuralPe))
+    };
     run_generated_with_fixture_configuration(
         prepared.input(),
         &[],
@@ -27,10 +37,36 @@ pub fn execute(
             plan_catalog: Some(catalog),
             plan_limits: Some(prepared.spec().limits.clone()),
             plan_fault: prepared.request().fault,
+            user_strings,
+            carve_executable_regions,
             ..Default::default()
         }
         .with_plan_broker(broker),
     )
+}
+/// Build the submitted-sample memory-string capture role from the resolved plan's
+/// `capture.memory_strings` configuration (none when capture is disabled).
+fn prepared_user_strings(
+    prepared: &PreparedAnalysis,
+) -> Result<Option<super::user_strings::Prepared>> {
+    use emumee_core::analysis_plan::MemoryStrings;
+    let capture = &prepared.spec().capture;
+    match &capture.memory_strings {
+        MemoryStrings::Disabled => Ok(None),
+        MemoryStrings::Indicators { patterns } => {
+            let options = capture
+                .memory_strings
+                .options()
+                .map_err(|err| anyhow!("Memory-string capture options: {err}"))?;
+            Ok(Some(super::user_strings::Prepared {
+                options,
+                enabled: true,
+                patterns: patterns.clone(),
+                scan_limit: capture.memory_scan_bytes,
+                read_limit: capture.memory_scan_bytes,
+            }))
+        }
+    }
 }
 pub(super) fn check_limits(engine: &mut Unicorn<Trace>) -> Result<()> {
     if engine.get_data().plan_fault == emumee_core::plan_runtime::Fault::Reconfigure

@@ -24,6 +24,7 @@ fn run_bytes(bytes: &[u8]) -> Execution {
         clock_utc_filetime: 134377488000000000,
         staged: vec![],
         invocation: Default::default(),
+        capture: None,
     };
     user::run(&request, bytes, None).unwrap()
 }

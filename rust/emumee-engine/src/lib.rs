@@ -19,6 +19,7 @@ mod boot;
 mod callback_tests;
 mod capture;
 mod indicators;
+mod user_strings;
 mod instruction_window;
 #[cfg(test)]
 mod instruction_window_tests;
@@ -316,6 +317,8 @@ struct Trace {
     machine: configured::Machine,
     capture: Option<capture::State>,
     indicators: Option<indicators::State>,
+    user_strings: Option<user_strings::State>,
+    carve_executable_regions: bool,
     plan_limits: Option<emumee_core::analysis_plan::Limits>,
     plan_fault: emumee_core::plan_runtime::Fault,
     plan_fault_evidence: Option<serde_json::Value>,
@@ -392,6 +395,8 @@ impl Trace {
             machine,
             capture: None,
             indicators: None,
+            user_strings: None,
+            carve_executable_regions: false,
             plan_limits: None,
             plan_fault: Default::default(),
             plan_fault_evidence: None,
@@ -462,6 +467,10 @@ pub struct Execution {
     pub memory_strings: Option<emumee_core::memory_strings::Report>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_string_sources: Option<emumee_core::memory_observation::Receipt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_memory_strings: Option<emumee_core::memory_strings::Report>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_memory_capture: Option<emumee_core::user_memory_observation::Receipt>,
     pub configuration: Option<ConfigurationReceipt>,
     pub console: Option<emumee_core::crt_stdio::ConsoleReport>,
     pub crt_stdio: Option<emumee_core::crt_stdio::StateReport>,
@@ -877,6 +886,8 @@ struct GeneratedConfiguration {
     configured: Option<configured::Prepared>,
     capture: Option<capture::Prepared>,
     indicators: Option<indicators::Prepared>,
+    user_strings: Option<user_strings::Prepared>,
+    carve_executable_regions: bool,
     plan_catalog: Option<emumee_core::artifacts::ArtifactCatalog>,
     plan_limits: Option<emumee_core::analysis_plan::Limits>,
     plan_fault: emumee_core::plan_runtime::Fault,
@@ -908,6 +919,8 @@ fn run_generated_with_fixture_configuration(
         configured,
         capture: prepared_capture,
         indicators: prepared_indicators,
+        user_strings: prepared_user_strings,
+        carve_executable_regions,
         plan_catalog,
         plan_limits,
         plan_fault,
@@ -1076,12 +1089,18 @@ fn run_generated_with_fixture_configuration(
     engine.get_data_mut().apis.mdls.pfn.requested = owned_pfn_requested;
     engine.get_data_mut().quiescent_parked_requested = quiescent_parked_requested;
     engine.get_data_mut().plan_limits = plan_limits;
+    engine.get_data_mut().carve_executable_regions = carve_executable_regions;
     engine.get_data_mut().instruction_window =
         observation_window.map(instruction_window::State::new);
     engine.get_data_mut().plan_fault = plan_fault;
     ensure!(
         prepared_indicators.is_none() || (prepared_capture.is_none() && plan_catalog.is_none()),
         "Distinct indicator/capture/plan policies cannot mix"
+    );
+    ensure!(
+        prepared_user_strings.is_none()
+            || (prepared_indicators.is_none() && prepared_capture.is_none()),
+        "Submitted memory-string capture cannot mix with a fixture capture role"
     );
     if let Some(catalog) = plan_catalog {
         configured::require_unpublished(engine.get_data())?;
@@ -1096,6 +1115,9 @@ fn run_generated_with_fixture_configuration(
     }
     if let Some(prepared) = prepared_indicators {
         indicators::install(&mut engine, prepared, &pe, bytes, base)?;
+    }
+    if let Some(prepared) = prepared_user_strings {
+        user_strings::install(&mut engine, prepared, &pe, bytes, base)?;
     }
     if let Some(logical) = fixture_logical_processors {
         let mut profile = emumee_core::cpu::CpuProfile::default();
@@ -1618,6 +1640,7 @@ fn run_generated_with_fixture_configuration(
     }
     capture::settled(&mut engine, pc)?;
     indicators::settled(&mut engine, pc);
+    user_strings::settled(&mut engine, pc);
     let mut captures = std::mem::take(&mut engine.get_data_mut().apis.captures);
     for (path, data) in files.into_files() {
         if engine.get_data().machine.capture_file(&path, &data) {
@@ -1642,6 +1665,7 @@ fn run_generated_with_fixture_configuration(
     let rtl_error = api::kernel_rtl::completion_error(&engine);
     let spin_error = api::kernel_spin::completion_error(&engine);
     let (memory_strings, memory_string_sources) = indicators::take(&mut engine);
+    let (user_memory_strings, user_memory_capture) = user_strings::take(&mut engine);
     let trace = engine.get_data();
     let count = trace.instructions;
     let uptime = trace.clock.uptime_ms;
@@ -1699,6 +1723,8 @@ fn run_generated_with_fixture_configuration(
         capture_runtime,
         memory_strings,
         memory_string_sources,
+        user_memory_strings,
+        user_memory_capture,
         configuration:trace.machine.receipt(),
         environment_blocks: (!trace.apis.kernel_mode).then(||trace.apis.environment_blocks_report()),
         user_bootstrap: api::user_bootstrap::report(&engine),
@@ -3342,6 +3368,8 @@ mod m6_compiled_tests;
 mod m6_tests;
 #[cfg(test)]
 mod m7_tests;
+#[cfg(test)]
+mod m8_tests;
 #[cfg(test)]
 mod user_test_fixtures;
 #[cfg(test)]

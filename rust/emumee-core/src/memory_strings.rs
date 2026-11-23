@@ -1,8 +1,9 @@
 //! Bounded default indicators from caller-supplied observed bytes or strings.
 //! No live-memory enumeration, engine hooks, files, regex backend or checkpoints.
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 use std::{collections::BTreeSet, net::Ipv6Addr};
+mod pattern;
 mod unicode;
 
 pub const MAX_SCAN_BYTES: u64 = 128 * 1024 * 1024;
@@ -21,8 +22,8 @@ pub const BUILTIN_UNICODE_VERSION: &str = unicode::VERSION;
 pub enum Error {
     #[error("Invalid memory string capture options")]
     InvalidOptions,
-    #[error("Custom memory-string regex compatibility is not ported")]
-    UnsupportedLegacyRegex,
+    #[error("Custom memory-string pattern is outside the bounded matcher subset")]
+    UnsupportedPattern,
     #[error("Memory-string source exceeds the explicit 32 KiB input bound")]
     SourceLimit,
     #[error("Memory-string guest address range overflows u64")]
@@ -30,20 +31,33 @@ pub enum Error {
     #[error("Lossless lone-surrogate indicator JSON is not ported")]
     UnpairedSurrogatePending,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Options {
     enabled: bool,
+    /// Original pattern source strings, echoed into the report `regex` array.
+    sources: Vec<String>,
+    /// Compiled bounded matchers, index-aligned with `sources`.
+    compiled: Vec<pattern::Pattern>,
 }
 impl Default for Options {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            sources: Vec::new(),
+            compiled: Vec::new(),
+        }
     }
 }
 impl Options {
     pub fn disabled() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
     }
-    /// Validate legacy shape, then explicitly refuse every custom pattern.
+    /// Validate the legacy option shape, then compile every custom pattern with
+    /// the bounded linear-time matcher. A pattern outside the supported subset is
+    /// refused at admission (`UnsupportedPattern`) — never accepted and run slowly.
     /// The saved-report validator remains independently regex-compatible.
     pub fn decode(value: Option<&Value>) -> Result<Self, Error> {
         let Some(value) = value else {
@@ -61,6 +75,8 @@ impl Options {
             Some(Value::Bool(enabled)) => *enabled,
             _ => return Err(Error::InvalidOptions),
         };
+        let mut sources = Vec::new();
+        let mut compiled = Vec::new();
         if let Some(patterns) = object.get("regex") {
             let patterns = patterns.as_array().ok_or(Error::InvalidOptions)?;
             if patterns.len() > MAX_PATTERNS
@@ -71,19 +87,31 @@ impl Options {
             {
                 return Err(Error::InvalidOptions);
             }
-            if !patterns.is_empty() {
-                return Err(Error::UnsupportedLegacyRegex);
+            for p in patterns {
+                let source = p.as_str().expect("validated string");
+                compiled.push(pattern::compile(source).map_err(|_| Error::UnsupportedPattern)?);
+                sources.push(source.to_owned());
             }
         }
-        Ok(Self { enabled })
+        Ok(Self {
+            enabled,
+            sources,
+            compiled,
+        })
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Format {
     Ipv4,
     Ipv6,
     Url,
+    /// A custom bounded-matcher pattern; `n` is its 1-based `regex[]` index.
+    Custom(usize),
+}
+impl Serialize for Format {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.label().as_ref())
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Encoding {
@@ -95,11 +123,12 @@ pub enum Encoding {
     Managed,
 }
 impl Format {
-    fn label(self) -> &'static str {
+    fn label(self) -> std::borrow::Cow<'static, str> {
         match self {
-            Self::Ipv4 => "ipv4",
-            Self::Ipv6 => "ipv6",
-            Self::Url => "url",
+            Self::Ipv4 => "ipv4".into(),
+            Self::Ipv6 => "ipv6".into(),
+            Self::Url => "url".into(),
+            Self::Custom(n) => format!("custom_{n}").into(),
         }
     }
 }
@@ -124,7 +153,7 @@ pub struct Match {
 impl Match {
     fn legacy_json_bytes(&self) -> usize {
         // Six quoted keys, colon/comma spaces and braces:74 bytes.
-        74 + ascii_quoted_len(self.format.label())
+        74 + ascii_quoted_len(self.format.label().as_ref())
             + ascii_quoted_len(&self.value)
             + ascii_quoted_len(&self.source)
             + ascii_quoted_len(self.encoding.label())
@@ -194,6 +223,7 @@ pub struct Capture {
     seen: BTreeSet<Key>,
     match_bytes: usize,
     limits: Limits,
+    patterns: Vec<pattern::Pattern>,
 }
 impl Default for Capture {
     fn default() -> Self {
@@ -202,10 +232,15 @@ impl Default for Capture {
 }
 impl Capture {
     pub fn new(options: Options) -> Self {
+        let Options {
+            enabled,
+            sources,
+            compiled,
+        } = options;
         Self {
             report: Report {
-                enabled: options.enabled,
-                regex: Vec::new(),
+                enabled,
+                regex: sources,
                 matches: Vec::new(),
                 scanned_bytes: 0,
                 truncated: false,
@@ -214,6 +249,7 @@ impl Capture {
             seen: BTreeSet::new(),
             match_bytes: 0,
             limits: Limits::default(),
+            patterns: compiled,
         }
     }
     pub fn report(&self) -> &Report {
@@ -365,6 +401,29 @@ impl Capture {
             } else {
                 at += 1;
             }
+        }
+        self.custom(text, location, edges);
+    }
+    /// Run each admitted custom pattern over the window, after the built-in
+    /// indicators. Matches reuse the same edge/dedup/limit path as the built-ins
+    /// and are labelled `custom_<1-based index>` to match the report envelope.
+    fn custom(&mut self, text: &[char], location: &Location<'_>, edges: Edges) {
+        if self.patterns.is_empty() {
+            return;
+        }
+        // Collect spans first so the immutable borrow of `self.patterns` is
+        // released before `found` takes `&mut self`.
+        let mut hits: Vec<(usize, usize, usize)> = Vec::new();
+        for (index, compiled) in self.patterns.iter().enumerate() {
+            for (start, end) in compiled.find_all(text) {
+                hits.push((index + 1, start, end));
+            }
+        }
+        for (label, start, end) in hits {
+            if !self.active() {
+                break;
+            }
+            self.found(Format::Custom(label), text, start..end, None, location, edges);
         }
     }
     /// The buffer must already be a complete observed source selected by a caller.

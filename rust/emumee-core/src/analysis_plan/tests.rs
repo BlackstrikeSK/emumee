@@ -497,6 +497,40 @@ fn unsupported_features_and_resource_mismatches_are_explicit() {
     );
 }
 #[test]
+fn custom_indicator_capture_is_admitted_compiled_and_threaded_into_the_plan() {
+    let raw = owned(Arch::X64, "exe");
+    let base = spec_json(Arch::X64, "exe", &raw);
+    // A valid bounded-subset pattern set is admitted and carried into the plan.
+    let mut value = base.clone();
+    *value.pointer_mut("/capture/memory_strings").unwrap() =
+        json!({"kind":"indicators","patterns":["[a-f0-9]{32}","AKIA[A-Z0-9]{6}"]});
+    let spec = decode(&value);
+    let plan = resolve(&spec, &checked(&spec, &raw), &Capabilities::planning_only_v1()).unwrap();
+    assert_eq!(
+        plan.value()["capture"]["memory_strings"],
+        json!({"kind":"indicators","patterns":["[a-f0-9]{32}","AKIA[A-Z0-9]{6}"]})
+    );
+    // The resolved configuration compiles to runtime capture options.
+    assert!(spec.capture.memory_strings.options().is_ok());
+
+    // Empty, unsupported-grammar, and over-bounded patterns are all refused at
+    // admission rather than accepted and run slowly.
+    for patterns in [
+        json!([]),                        // no patterns
+        json!(["^anchored"]),             // anchor outside the subset
+        json!(["a{0,99999}"]),            // over MAX_REPEAT
+        json!(["(?:group)"]),             // group extension
+    ] {
+        rejection(
+            base.clone(),
+            &raw,
+            "/capture/memory_strings",
+            json!({"kind":"indicators","patterns":patterns}),
+            "unsupported_option",
+        );
+    }
+}
+#[test]
 fn actual_pe_kind_and_architecture_govern_the_target_not_user_tags() {
     let raw = owned(Arch::X86, "exe");
     let baseline = spec_json(Arch::X86, "exe", &raw);

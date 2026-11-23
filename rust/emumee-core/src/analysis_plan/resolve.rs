@@ -6,6 +6,16 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use unicode_casefold::UnicodeCaseFold;
 const MIB: u64 = 1024 * 1024;
+/// Static admission reason for a rejected memory-string option, for `problem`.
+fn memory_string_option_reason(err: crate::memory_strings::Error) -> &'static str {
+    use crate::memory_strings::Error;
+    match err {
+        Error::UnsupportedPattern => {
+            "Custom indicator pattern is outside the bounded matcher subset"
+        }
+        _ => "Invalid memory-string indicator capture options",
+    }
+}
 /// Sealed planning capability. It is not deserializable or an execution permit.
 pub struct Capabilities {
     version: u32,
@@ -782,12 +792,26 @@ pub fn resolve(
         "capture.sources",
         "Duplicate capture source",
     )?;
-    demand(
-        matches!(spec.capture.memory_strings, MemoryStrings::Disabled),
-        "unsupported_option",
-        "capture.memory_strings",
-        "Bounded memory-string/regex capture is not ported",
-    )?;
+    match &spec.capture.memory_strings {
+        MemoryStrings::Disabled => {}
+        MemoryStrings::Indicators { patterns } => {
+            demand(
+                !patterns.is_empty(),
+                "unsupported_option",
+                "capture.memory_strings",
+                "Indicator capture needs at least one custom pattern",
+            )?;
+            // Compile-validate every pattern with the bounded matcher so an
+            // unsupported or over-bounded pattern is refused at admission.
+            spec.capture.memory_strings.options().map_err(|err| {
+                problem(
+                    "unsupported_option",
+                    "capture.memory_strings",
+                    memory_string_option_reason(err),
+                )
+            })?;
+        }
+    }
     demand(
         matches!(spec.capture.checkpoint, Checkpoint::FinalBoundary),
         "unsupported_option",

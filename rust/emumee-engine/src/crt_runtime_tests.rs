@@ -23,6 +23,7 @@ fn run(arch: Architecture, kind: F) -> Execution {
         clock_utc_filetime: 134377488000000000,
         staged: vec![],
         invocation: Default::default(),
+        capture: None,
     };
     let label = format!("{arch:?}-m5-crt-runtime-{kind:?}");
     crate::user_test_fixtures::fixture(&label, &request, &bytes, &[], None);

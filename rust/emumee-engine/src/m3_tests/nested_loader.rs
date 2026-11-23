@@ -29,6 +29,7 @@ fn unknown_static_dll_import_is_not_materialized_as_a_synthetic_provider() {
             clock_utc_filetime: 134377488000000000,
             staged: vec![],
             invocation: Invocation::default(),
+            capture: None,
         };
         emit::fixture(
             &format!("{architecture:?}-m3-unresolved-static"),
@@ -98,6 +99,7 @@ fn nested_loader_provider_acquisition_and_missing_library_resume_the_actual_oute
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Invocation::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!("{architecture:?}-m3-nested-loader-{missing}"),

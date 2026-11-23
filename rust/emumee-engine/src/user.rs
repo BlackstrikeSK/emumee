@@ -31,6 +31,7 @@ pub fn run_staged(
         .filter(|file| file.kind == emumee_core::user_input::InputKind::Companion)
         .map(|file| file.guest_path.clone())
         .collect();
+    let (user_strings, carve_executable_regions) = capture_roles(request)?;
     run_generated_with_fixture_configuration(
         bytes,
         &companions,
@@ -41,9 +42,38 @@ pub fn run_staged(
             all_exports: request.invocation.all_exports,
             submitted_companion_paths: companion_paths,
             configured: Some(prepared),
+            user_strings,
+            carve_executable_regions,
             ..Default::default()
         },
     )
+}
+
+/// Build the opt-in submitted-sample capture roles (N14 memory strings, N15
+/// executable-region carving) from the request's capture configuration.
+fn capture_roles(
+    request: &Request,
+) -> Result<(Option<user_strings::Prepared>, bool)> {
+    let Some(capture) = &request.capture else {
+        return Ok((None, false));
+    };
+    let carve = capture.carve_executable_regions;
+    let user_strings = match &capture.memory_strings {
+        Some(memory_strings) if memory_strings.enabled => {
+            let options = memory_strings
+                .options()
+                .map_err(|err| anyhow::anyhow!("Memory-string capture options: {err}"))?;
+            Some(user_strings::Prepared {
+                options,
+                enabled: true,
+                patterns: memory_strings.patterns.clone(),
+                scan_limit: memory_strings.scan_bytes(),
+                read_limit: memory_strings.scan_bytes(),
+            })
+        }
+        _ => None,
+    };
+    Ok((user_strings, carve))
 }
 
 pub fn preflight(
@@ -125,6 +155,7 @@ mod tests {
             clock_utc_filetime: 134377488000000000,
             staged: vec![],
             invocation: Default::default(),
+            capture: None,
         }
     }
     fn fixture(arch: Architecture, kind: &str) -> (Vec<u8>, &'static str) {

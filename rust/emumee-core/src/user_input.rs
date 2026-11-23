@@ -61,6 +61,68 @@ pub fn guest_path_valid(path: &str) -> bool {
         })
 }
 
+/// Submitted-sample memory-string capture configuration (opt-in; N14).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryStringRequest {
+    #[serde(default = "default_memory_strings_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    #[serde(default = "default_memory_scan_bytes")]
+    pub scan_bytes: u64,
+}
+fn default_memory_strings_enabled() -> bool {
+    true
+}
+fn default_memory_scan_bytes() -> u64 {
+    128 * 1024 * 1024
+}
+impl Default for MemoryStringRequest {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            patterns: Vec::new(),
+            scan_bytes: default_memory_scan_bytes(),
+        }
+    }
+}
+impl MemoryStringRequest {
+    /// Compile the configured capture into runtime options (bounded matcher).
+    pub fn options(&self) -> Result<crate::memory_strings::Options, crate::memory_strings::Error> {
+        let value = serde_json::json!({ "enabled": self.enabled, "regex": self.patterns });
+        crate::memory_strings::Options::decode(Some(&value))
+    }
+    pub fn scan_bytes(&self) -> u64 {
+        self.scan_bytes
+    }
+    fn valid(&self) -> Result<(), &'static str> {
+        if self.scan_bytes == 0 || self.scan_bytes > default_memory_scan_bytes() {
+            return Err("Memory-string scan budget outside profile");
+        }
+        self.options()
+            .map(drop)
+            .map_err(|_| "Memory-string capture patterns outside the bounded matcher subset")
+    }
+}
+/// Opt-in capture configuration carried by the submitted request (N14/N15).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_strings: Option<MemoryStringRequest>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub carve_executable_regions: bool,
+}
+impl CaptureRequest {
+    fn valid(&self) -> Result<(), &'static str> {
+        if let Some(memory_strings) = &self.memory_strings {
+            memory_strings.valid()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -79,6 +141,8 @@ pub struct Request {
     pub staged: Vec<StagedFile>,
     #[serde(default)]
     pub invocation: Invocation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CaptureRequest>,
 }
 
 fn hash(value: &str) -> bool {
@@ -184,9 +248,15 @@ impl Request {
         {
             return Err("Invalid submitted PE identity/profile");
         }
-        if self.schema == 1 && (!self.staged.is_empty() || self.invocation != Invocation::default())
+        if self.schema == 1
+            && (!self.staged.is_empty()
+                || self.invocation != Invocation::default()
+                || self.capture.is_some())
         {
             return Err("Schema 1 cannot carry extended submitted inputs");
+        }
+        if let Some(capture) = &self.capture {
+            capture.valid()?;
         }
         if !module_name_valid(&self.module_name)
             || !guest_path_valid(&self.guest_path())
@@ -471,6 +541,7 @@ mod tests {
             clock_utc_filetime: 134377488000000000,
             staged: vec![],
             invocation: Invocation::default(),
+            capture: None,
         }
     }
     #[test]

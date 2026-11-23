@@ -516,6 +516,38 @@ pub fn capture_scan_owned(
 }
 
 /// Runtime Driver scans consume one aggregate catalog ledger across all sources.
+/// Capture an executable (or executable-transitioning) guest memory region as a
+/// shellcode / dropped-PE artifact with writer/provenance attribution.
+///
+/// A structural PE at offset 0 (a dropped image being activated) is routed
+/// through the normal owned-memory carve so it is retained as a `CarvedImage`.
+/// Any other executable region is a shellcode-carving target and is retained as
+/// a distinct `ExecutableRegion` artifact. The caller supplies the attribution
+/// context (at minimum `executable: true` and a non-empty `transition` label).
+pub fn capture_executable_transition(
+    catalog: &mut ArtifactCatalog,
+    data: Vec<u8>,
+    source: &str,
+    context: Map<String, Value>,
+) -> Result<(), BridgeError> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    if pe_carve::contains_structural_pe(&data, catalog.profile()) {
+        // Dropped PE being activated: carve it as a structural image (file or
+        // mapped layout). If the header looks like a PE but cannot be carved,
+        // still retain the executable bytes as a region rather than losing them.
+        if let Ok(scan) = pe_carve::scan(&data, source, false, Some(&context)) {
+            if capture_scan(catalog, &scan, Origin::Memory).is_ok() {
+                return Ok(());
+            }
+        }
+        catalog.add_with_context(data, ArtifactKind::ExecutableRegion, source, "", Some(context));
+    } else {
+        catalog.add_with_context(data, ArtifactKind::ExecutableRegion, source, "", Some(context));
+    }
+    Ok(())
+}
 pub fn capture_owned_budgeted(
     catalog: &mut ArtifactCatalog,
     data: Vec<u8>,
@@ -762,6 +794,67 @@ mod tests {
         let mut scan = pe_carve::scan(&pe(), "fixture", false, None).unwrap();
         scan.observations[0].payload = 99;
         assert!(capture_scan(&mut catalog, &scan, Origin::Memory).is_err());
+        assert!(catalog.items.is_empty());
+    }
+
+    fn exec_context(base: u64, size: u64) -> Map<String, Value> {
+        serde_json::json!({
+            "executable": true,
+            "transition": "virtual_protect_executable",
+            "guest_base": base,
+            "region_bytes": size,
+            "new_protection": 0x40,
+            "capture_boundary": "api_call",
+        })
+        .as_object()
+        .unwrap()
+        .clone()
+    }
+
+    #[test]
+    fn non_pe_executable_region_is_carved_as_distinct_shellcode_artifact() {
+        let mut catalog = ArtifactCatalog::default();
+        // A NOP sled + int3: executable, but not a structural PE.
+        let mut shellcode = vec![0x90_u8; 256];
+        shellcode.push(0xcc);
+        capture_executable_transition(&mut catalog, shellcode.clone(), "virtual_protect_executable", exec_context(0x401000, shellcode.len() as u64))
+            .unwrap();
+        assert_eq!(catalog.items.len(), 1);
+        let observation = &catalog.items[0].observations[0];
+        assert_eq!(observation.kind, ArtifactKind::ExecutableRegion);
+        assert_eq!(
+            observation.context.as_ref().unwrap()["transition"],
+            "virtual_protect_executable"
+        );
+        // The emitted observation satisfies the public artifact schema.
+        assert!(crate::artifacts::valid_observation_json_with_profile(
+            &serde_json::to_value(observation).unwrap(),
+            catalog.profile()
+        ));
+    }
+
+    #[test]
+    fn executable_pe_region_is_carved_as_a_structural_image_not_shellcode() {
+        use crate::pe::Architecture;
+        let mut catalog = ArtifactCatalog::default();
+        // A real, well-formed PE carves to a structural image, never shellcode.
+        let image = crate::fixtures::counted_driver(Architecture::X64, 1);
+        assert!(pe_carve::contains_structural_pe(&image, catalog.profile()));
+        capture_executable_transition(&mut catalog, image.clone(), "virtual_protect_executable", exec_context(0x400000, image.len() as u64))
+            .unwrap();
+        let kinds: Vec<ArtifactKind> = catalog
+            .items
+            .iter()
+            .flat_map(|item| item.observations.iter().map(|o| o.kind))
+            .collect();
+        assert!(kinds.contains(&ArtifactKind::CarvedImage), "{kinds:?}");
+        assert!(!kinds.contains(&ArtifactKind::ExecutableRegion));
+    }
+
+    #[test]
+    fn empty_region_carves_nothing() {
+        let mut catalog = ArtifactCatalog::default();
+        capture_executable_transition(&mut catalog, Vec::new(), "src", exec_context(0, 0)).unwrap();
         assert!(catalog.items.is_empty());
     }
 }

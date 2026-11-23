@@ -20,6 +20,7 @@ fn request(bytes: &[u8], name: &str) -> Request {
         clock_utc_filetime: 134377488000000000,
         staged: vec![],
         invocation: Invocation::default(),
+        capture: None,
     }
 }
 

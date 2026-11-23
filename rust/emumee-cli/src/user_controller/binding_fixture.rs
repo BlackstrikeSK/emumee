@@ -67,6 +67,7 @@ pub fn run(case: &str, root: &Path, architecture: Architecture) -> Result<Value>
             force_quotes: vec![0],
             all_exports: false,
         },
+        capture: None,
     };
     let original = bounded_json(&request, MAX_REQUEST)?;
     let original_hash = digest(&original);

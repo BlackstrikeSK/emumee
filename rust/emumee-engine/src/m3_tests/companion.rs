@@ -75,6 +75,7 @@ fn staged_request(bytes: &[u8], companion: &[u8], name: &str) -> Request {
             sha256: digest(companion),
         }],
         invocation: Invocation::default(),
+        capture: None,
     }
 }
 

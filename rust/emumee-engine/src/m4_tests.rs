@@ -65,6 +65,7 @@ fn run_image_control(arch: Architecture, label: &str, bytes: Vec<u8>, budget: u6
         clock_utc_filetime: 134377488000000000,
         staged: vec![],
         invocation: Default::default(),
+        capture: None,
     };
     emit::fixture(&format!("{arch:?}-m4-{label}"), &request, &bytes, &[], None);
     let result = user::run(&request, &bytes, None).unwrap();
@@ -419,6 +420,7 @@ fn m4_actual_user_waits_quantum_tls_error_deadlock_and_virtual_time() {
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Default::default(),
+                capture: None,
             };
             emit::fixture(
                 &format!("{arch:?}-m4-actual-{kind:?}"),

@@ -141,6 +141,12 @@ fn u32_at(raw: &[u8], at: usize) -> Option<u32> {
 
 // Structural extraction deliberately does not call PeImage::parse: its loader
 // rejects alignments/imports that legacy pefile(fast_load=True) merely preserves.
+/// True when `raw` begins with a structurally parseable PE32/PE32+ image at
+/// offset 0 — the common dropped/activated-in-memory case. Structural only; it
+/// never claims the image is a valid, loadable or executed binary.
+pub fn contains_structural_pe(raw: &[u8], profile: CaptureProfile) -> bool {
+    layout_with_profile(raw, profile).is_some()
+}
 fn layout_with_profile(raw: &[u8], profile: CaptureProfile) -> Option<Layout> {
     if raw.len() < 512 || raw.get(..2)? != b"MZ" {
         return None;

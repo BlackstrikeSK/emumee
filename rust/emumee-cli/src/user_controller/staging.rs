@@ -136,6 +136,8 @@ pub(super) struct Specification {
     pub files: Vec<Source>,
     #[serde(default)]
     pub invocation: Invocation,
+    #[serde(default)]
+    pub capture: Option<emumee_core::user_input::CaptureRequest>,
 }
 
 #[derive(Deserialize)]
@@ -146,9 +148,17 @@ pub(super) struct Source {
     pub guest_path: String,
 }
 
-pub(super) fn capture(path: Option<&Path>) -> Result<(Vec<StagedFile>, Vec<Vec<u8>>, Invocation)> {
+#[allow(clippy::type_complexity)]
+pub(super) fn capture(
+    path: Option<&Path>,
+) -> Result<(
+    Vec<StagedFile>,
+    Vec<Vec<u8>>,
+    Invocation,
+    Option<emumee_core::user_input::CaptureRequest>,
+)> {
     let Some(path) = path else {
-        return Ok((vec![], vec![], Invocation::default()));
+        return Ok((vec![], vec![], Invocation::default(), None));
     };
     let specification: Specification =
         serde_json::from_slice(&read_regular_locked(path, MAX_REQUEST, None)?)?;
@@ -186,7 +196,12 @@ pub(super) fn capture(path: Option<&Path>) -> Result<(Vec<StagedFile>, Vec<Vec<u
         });
         payloads.push(bytes);
     }
-    Ok((catalog, payloads, specification.invocation))
+    Ok((
+        catalog,
+        payloads,
+        specification.invocation,
+        specification.capture,
+    ))
 }
 
 pub(super) fn read_staged(root: &Path, request: &Request) -> Result<Vec<Vec<u8>>> {

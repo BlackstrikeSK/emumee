@@ -33,6 +33,7 @@ fn submitted_abi_imports_and_callbacks_are_independently_qualified() {
                 clock_utc_filetime: 134377488000000000,
                 staged: vec![],
                 invocation: Default::default(),
+                capture: None,
             };
             let execution = user::run(&request, &bytes, None)
                 .unwrap_or_else(|error| panic!("{architecture:?}/{kind:?}: {error:#}"));

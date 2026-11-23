@@ -31,9 +31,9 @@ the original audit revision above is historical, not the current checkout HEAD.
 | ID | Legacy contract / source | Rust implementation / public reachability | Owner and next control |
 | --- | --- | --- | --- |
 | N13 | CPU identity/time/instruction observation and mapped-file write hooks | Image-write observation now covers the submitted user route; guest-written instructions and their cache invalidation, the image protection boundary and the persona version/locale/volume/firmware observations pass M6 guest controls | M6 qualified: docs/native-pe/m6-vfs-registry-persona.md; exact legacy hook closure for remaining CPU/time hooks stays open |
-| N14 | Memory IP/URL/custom-regex capture, `--no-memory-strings` | Capture model reachable only from the closed indicator target; submitted request still carries no capture configuration | M8: scan ordering, limits, regex admission and omissions; M6 did not claim it |
-| N15 | File/drop/memory/PE-carving artifacts, group/context attribution | Worker saves artifact bytes; controller verifies artifacts; forced section unmaps are attributed run-wide to the process whose space held the image; legacy carving/group/context semantics unreviewed | M8: overwrite/delete/exit bytes and remote-write attribution; M6 closed only the unmap attribution |
-| N16 | `engine-report.json`, API coverage/signature-only refusal, entry points and terminal reason | Versioned result/manifest and execution events exist; exact legacy schema/event/error mapping unreviewed | M8: normalized cross-generation observations; never silently drop fields |
+| N14 | Memory IP/URL/custom-regex capture, `--no-memory-strings` | Submitted request carries an opt-in bounded capture configuration end to end (CLI `--inputs`, request, plan, engine); built-in IPv4/IPv6/URL plus linear-time custom patterns scan the settled image under explicit read/scan budgets, with admission-time pattern refusal and recorded omissions | M8 qualified for the submitted image: docs/native-pe/m8-capture-indicators-carving.md; live private-mapping and checkpoint scans remain open |
+| N15 | File/drop/memory/PE-carving artifacts, group/context attribution | Worker saves artifact bytes; controller verifies artifacts; forced section unmaps are attributed run-wide; an executable-protection transition now classifies and retains a dropped PE (`CarvedImage`) or a non-PE payload (`ExecutableRegion`) with writer/provenance context | M8 closed the executable-protection transition: docs/native-pe/m8-capture-indicators-carving.md; VirtualFree/overwrite/delete/exit-byte and remote-write provenance remain open |
+| N16 | `engine-report.json`, API coverage/signature-only refusal, entry points and terminal reason | Versioned result/manifest and execution events exist; the submitted-sample capture fields are validated on every bundle build and re-checked in the summary, so a capture cannot be dropped or edited; exact legacy schema/event/error mapping otherwise unreviewed | M8 closed the capture fields; remaining legacy schema/event mapping stays open |
 | N17 | Console and CRT streams, registry/network/process/environment/adapter/feature events | Individual models exist; report extraction must be audited independently | M5-M8: shared-state and serialized report controls |
 | N18 | Native-facing CLR/MSI declarations and conditional/ordinal overrides | Source review identifies literal-zero CorExitProcess and MsiDatabaseMergeA/name+ordinal placeholders on both arches; six contracts retained | M7: qualify placeholders without claiming general CLR/MSI or process-exit semantics |
 | N19 | Public CLI -> contained worker -> parent verification/cleanup | Fresh M3 bootstrap package repeats all 294 M2 outcomes plus 34 root-bootstrap controls, including 16 required owned-memory refusals; chained exact-byte seals and repeat checks pass | M2 complete; bounded first M3 checkbox: docs/native-pe/m3-user-bootstrap.md; comprehensive M9/M10 operational/package qualification remains separate |
@@ -84,3 +84,22 @@ repeats 398 M2/M3 outcomes and adds 172 M4 controls, with independently checked
 chained seals. See `../../docs/native-pe/m4-user-runtime.md` for exact ownership,
 bounds, frozen-source deviations and retained evidence. All 2,590 semantic API
 contracts and global M10 remain open; M5 is the next implementation batch.
+
+## M8 submitted-sample capture qualification (2026-11-23)
+
+The M8 portions of N14/N15/N16 supersede the earlier "no capture configuration"
+notes. A submitted request now carries an explicit, opt-in, bounded capture
+configuration through the public CLI, the contained worker and the engine; the
+memory-string scan runs over the settled image with a linear-time custom matcher
+whose unsupported patterns are refused at admission, and an
+executable-protection transition classifies and retains a dropped PE or a
+non-PE payload with writer/provenance attribution. Both results are bound into
+the report and re-checked in the summary. The additive profile
+`emumee.user-memory-indicators.v1` leaves the closed indicator slice untouched,
+so every earlier milestone receipt is unchanged.
+
+Six contained controls (`strings-Builtin`, `strings-Custom`, `carve-Shellcode`,
+each for x86 and x64) are replayed through the packaged worker by
+`tools/native_pe_m8.py`. See `../../docs/native-pe/m8-capture-indicators-carving.md`
+for exact scope, the matcher subset and the limits; live private-mapping scans,
+the remaining N15 provenance classes, N17 and the global M9-M11 gates stay open.

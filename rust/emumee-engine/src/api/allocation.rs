@@ -153,6 +153,49 @@ pub(super) fn protect(engine: &mut Unicorn<Trace>, args: &[u64]) -> Result<u64> 
             .context("Private protection plan lacks old protection")?;
         // Output is written only after every check has passed.
         crate::cpu::write(engine, args[3], &old.to_le_bytes())?;
+        // N15: a transition into executable protection is the defining moment a
+        // shellcode or dropped-PE payload is activated. Carve it (bounded,
+        // user-mode submitted runs only) with writer/provenance attribution.
+        capture_executable_transition(engine, args[0], args[1], args[2] as u32);
     }
     finish(engine, plan)
+}
+/// Carve an owned region that is transitioning into executable protection as a
+/// shellcode (`ExecutableRegion`) or dropped-PE (`CarvedImage`) artifact. No-op
+/// unless the submitted plan requested carving and the run is user-mode; bounded
+/// by the single-artifact size cap; an all-zero region carries no payload.
+fn capture_executable_transition(engine: &mut Unicorn<Trace>, base: u64, size: u64, protection: u32) {
+    if !engine.get_data().carve_executable_regions || engine.get_data().apis.kernel_mode {
+        return;
+    }
+    let Ok(permissions) = vm::permissions(protection) else {
+        return;
+    };
+    if !permissions.contains(P::EXECUTE)
+        || size == 0
+        || size > emumee_core::pe_carve::MAX_ARTIFACT_BYTES as u64
+    {
+        return;
+    }
+    let Ok(bytes) = engine.mem_read_as_vec(base, size as usize) else {
+        return;
+    };
+    if bytes.iter().all(|byte| *byte == 0) {
+        return;
+    }
+    let context = serde_json::json!({
+        "executable": true,
+        "transition": "virtual_protect_executable",
+        "guest_base": base,
+        "region_bytes": size,
+        "new_protection": protection,
+        "capture_boundary": "api_call",
+    });
+    let context = context.as_object().expect("object literal").clone();
+    let _ = emumee_core::artifact_bridge::capture_executable_transition(
+        &mut engine.get_data_mut().apis.captures,
+        bytes,
+        "virtual_protect_executable",
+        context,
+    );
 }

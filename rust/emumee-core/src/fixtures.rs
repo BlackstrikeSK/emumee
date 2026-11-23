@@ -98,6 +98,8 @@ pub use m7::{
     m7_crypto_probe, m7_network_probe, m7_path_probe, m7_resource_probe, m7_security_probe,
     m7_socket_probe, resource_tree,
 };
+mod m8;
+pub use m8::{executable_payload, executable_region_probe, memory_string_probe};
 pub use m6_console::{M6ConsoleFixture, m6_console_probe};
 pub use m6_files::{M6FileFixture, m6_file_probe};
 pub use m6_locale::{M6LocaleFixture, m6_locale_probe};

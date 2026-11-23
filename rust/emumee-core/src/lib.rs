@@ -46,6 +46,7 @@ pub mod mdl;
 pub mod memory;
 pub mod memory_observation;
 pub mod memory_strings;
+pub mod user_memory_observation;
 pub mod modules;
 pub mod msi;
 pub mod msi_fixture;

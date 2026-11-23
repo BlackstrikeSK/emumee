@@ -31,6 +31,7 @@ fn execute(arch: Architecture, kind: F, contained: bool) -> Execution {
         clock_utc_filetime: 134377488000000000,
         staged: vec![],
         invocation: Default::default(),
+        capture: None,
     };
     let label = format!("{arch:?}-m5-crt-text-{kind:?}");
     if contained {

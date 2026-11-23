@@ -62,7 +62,7 @@ pub fn bootstrap_boundary(
 pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
     let bytes =
         emumee_platform::windows::read_regular_locked(source, emumee_core::pe::MAX_INPUT, None)?;
-    let (staged, payloads, invocation) = staging::capture(options.inputs.as_deref())?;
+    let (staged, payloads, invocation, capture) = staging::capture(options.inputs.as_deref())?;
     let persona = options
         .persona
         .as_ref()
@@ -99,6 +99,7 @@ pub fn run(source: &Path, root: &Path, options: Options) -> Result<Value> {
         .context("Guest clock seed overflow")?,
         staged,
         invocation,
+        capture,
     };
     request
         .verify_staged(&bytes, &payloads)

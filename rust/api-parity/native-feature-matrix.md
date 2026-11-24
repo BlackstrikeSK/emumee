@@ -36,7 +36,7 @@ the original audit revision above is historical, not the current checkout HEAD.
 | N16 | `engine-report.json`, API coverage/signature-only refusal, entry points and terminal reason | Versioned result/manifest and execution events exist; the submitted-sample capture fields are validated on every bundle build and re-checked in the summary, so a capture cannot be dropped or edited; exact legacy schema/event/error mapping otherwise unreviewed | M8 closed the capture fields; remaining legacy schema/event mapping stays open |
 | N17 | Console and CRT streams, registry/network/process/environment/adapter/feature events | Individual models exist; the milestone replay now holds a reviewed set of every serialized execution report field and requires the contained replay to reproduce that set exactly, so a dropped or unreviewed observation fails the seal | M8 closed the report-field audit: docs/native-pe/m8-capture-indicators-carving.md; per-family field semantics stay open |
 | N18 | Native-facing CLR/MSI declarations and conditional/ordinal overrides | Source review identifies literal-zero CorExitProcess and MsiDatabaseMergeA/name+ordinal placeholders on both arches; six contracts retained | M7: qualify placeholders without claiming general CLR/MSI or process-exit semantics |
-| N19 | Public CLI -> contained worker -> parent verification/cleanup | Fresh M3 bootstrap package repeats all 294 M2 outcomes plus 34 root-bootstrap controls, including 16 required owned-memory refusals; chained exact-byte seals and repeat checks pass | M9 closed the operational gate with three cross-family x86/x64 chains: docs/native-pe/m9-cross-family-operational.md; the comprehensive M10 package/release matrix remains separate |
+| N19 | Public CLI -> contained worker -> parent verification/cleanup | Fresh M3 bootstrap package repeats all 294 M2 outcomes plus 34 root-bootstrap controls, including 16 required owned-memory refusals; chained exact-byte seals and repeat checks pass | M10 bound every milestone seal from the bounded smoke through M9 to one release build: docs/native-pe/m10-same-build-release-matrix.md; only the M11 global gates remain |
 | N20 | Effective install order and overridden/conditional registrations | Source-reviewed: 24 installers, 514 hooks per arch, exact/wildcard chains, constructor/original references, shadowed declarations, conditional post-load LdrUnloadDll tuple | M0 source review complete: docs/native-pe/effective-registration-review.md; guest behavior still requires qualification |
 
 ## Frozen lexical install sequence
@@ -124,3 +124,17 @@ asserted. See `../../docs/native-pe/m9-cross-family-operational.md` for exact
 scope and limits; no partition row gains semantic closure from being exercised
 here, only three chains were run, a program spans at most two import modules,
 and the M10 release matrix and M11 global gates stay open.
+
+## N19 same-build release matrix
+
+`tools/native_pe_m10.py` reproduces every milestone's independent replay-and-seal
+against one shared qualification root — one release build, one package, one full
+source-validation index, one emitted corpus of 836 contained controls — and
+seals `qualified-m10.json`, which binds the ten milestone fingerprints (the
+bounded smoke, M2, the bootstrap, M3, M4, M5, M6, M7, M8, M9) to the single
+`source_tree_sha256`, the hashed bundle and the source index they were all
+produced from. The chain is reproduced in order so a break fails the stage that
+owns it, and a long run is resumable. It introduces no guest control and no Rust
+change. See `../../docs/native-pe/m10-same-build-release-matrix.md`; the matrix
+is the union of the milestone seals and adds no new denominator, no row gains
+semantic closure, and the M11 global gates stay open.

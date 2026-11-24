@@ -5,7 +5,7 @@
  "feature_matrix": "rust/api-parity/native-feature-matrix.md",
  "api_partition": "docs/native-pe/api-batches.json",
  "validation_policy": "docs/native-pe/validation-policy.json",
- "validation_index": "output/rust-pe-m9-complete-20261124/source-validation-final/index.json",
+ "validation_index": "output/rust-pe-m10-complete-20261124/source-validation-final/index.json",
  "dependency_integrity_report": "output/rust-pe-m4-complete-20261119-02/audits-02/dependencies-final.json",
  "baseline_failure_classification": "docs/native-pe/baseline-failures.md",
  "bounded_m0_package_smoke": "docs/native-pe/m0-package-smoke.md",
@@ -227,9 +227,13 @@
     {
      "id": "operational-cross-family",
      "review": "docs/native-pe/m9-cross-family-operational.md"
+    },
+    {
+     "id": "same-build-release-matrix",
+     "review": "docs/native-pe/m10-same-build-release-matrix.md"
     }
    ],
-   "next_action": "M8 submitted-sample capture and M9 cross-family operational qualification are complete; see docs/native-pe/m8-capture-indicators-carving.md and docs/native-pe/m9-cross-family-operational.md. N14, N15, N16/N17 and N08 are closed; N19 is closed for the three cross-family chains (allocation x filesystem x registry, registry x cryptography, allocation x network), each a single generated x86/x64 program that decides its own outcome and configures no capture. Still open: the M8 carry-overs (periodic checkpoint scans, a remote-write guest control needing child-process machinery), per-contract semantic closure for all rows, cross-family chains beyond the three run (COM, security, resources, console, threads and processes are not chained; the probe skeleton admits at most two import groups), and the M10 same-build release matrix and M11 global gates with an independent audit of the full denominator",
+   "next_action": "M8 capture, M9 cross-family operational and M10 same-build release matrix are complete; see docs/native-pe/m8-capture-indicators-carving.md, docs/native-pe/m9-cross-family-operational.md and docs/native-pe/m10-same-build-release-matrix.md. M10 reproduces every milestone seal from the bounded smoke through M9 against one release build and binds the ten fingerprints to the single bundle and source index (tools/native_pe_m10.py). Still open is only M11: the global gates with all required gates green and zero open or stale required contracts under an independent audit of the full denominator, plus the M8 capture carry-overs and the cross-family chains M9 left unrun. No partition row has semantic closure.",
    "exit_tests": [
     "cross-family x86/x64 programs",
     "same-build release matrix",

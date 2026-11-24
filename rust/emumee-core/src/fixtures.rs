@@ -103,6 +103,8 @@ pub use m8::{
     DROP_DESTINATION, DROP_SOURCE, PRIVATE_INDICATOR, dropped_pe_probe, executable_payload,
     executable_region_probe, memory_string_probe, private_mapping_probe, released_payload_probe,
 };
+mod m9;
+pub use m9::{M9Fixture, PROVISIONING_FILE, PROVISIONING_SEED, m9_probe};
 pub use m6_console::{M6ConsoleFixture, m6_console_probe};
 pub use m6_files::{M6FileFixture, m6_file_probe};
 pub use m6_locale::{M6LocaleFixture, m6_locale_probe};

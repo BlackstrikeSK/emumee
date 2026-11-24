@@ -3380,6 +3380,8 @@ mod m7_tests;
 #[cfg(test)]
 mod m8_tests;
 #[cfg(test)]
+mod m9_tests;
+#[cfg(test)]
 mod user_test_fixtures;
 #[cfg(test)]
 mod win_alloc_tests;

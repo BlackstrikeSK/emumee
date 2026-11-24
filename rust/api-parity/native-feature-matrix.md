@@ -36,7 +36,7 @@ the original audit revision above is historical, not the current checkout HEAD.
 | N16 | `engine-report.json`, API coverage/signature-only refusal, entry points and terminal reason | Versioned result/manifest and execution events exist; the submitted-sample capture fields are validated on every bundle build and re-checked in the summary, so a capture cannot be dropped or edited; exact legacy schema/event/error mapping otherwise unreviewed | M8 closed the capture fields; remaining legacy schema/event mapping stays open |
 | N17 | Console and CRT streams, registry/network/process/environment/adapter/feature events | Individual models exist; the milestone replay now holds a reviewed set of every serialized execution report field and requires the contained replay to reproduce that set exactly, so a dropped or unreviewed observation fails the seal | M8 closed the report-field audit: docs/native-pe/m8-capture-indicators-carving.md; per-family field semantics stay open |
 | N18 | Native-facing CLR/MSI declarations and conditional/ordinal overrides | Source review identifies literal-zero CorExitProcess and MsiDatabaseMergeA/name+ordinal placeholders on both arches; six contracts retained | M7: qualify placeholders without claiming general CLR/MSI or process-exit semantics |
-| N19 | Public CLI -> contained worker -> parent verification/cleanup | Fresh M3 bootstrap package repeats all 294 M2 outcomes plus 34 root-bootstrap controls, including 16 required owned-memory refusals; chained exact-byte seals and repeat checks pass | M2 complete; bounded first M3 checkbox: docs/native-pe/m3-user-bootstrap.md; comprehensive M9/M10 operational/package qualification remains separate |
+| N19 | Public CLI -> contained worker -> parent verification/cleanup | Fresh M3 bootstrap package repeats all 294 M2 outcomes plus 34 root-bootstrap controls, including 16 required owned-memory refusals; chained exact-byte seals and repeat checks pass | M9 closed the operational gate with three cross-family x86/x64 chains: docs/native-pe/m9-cross-family-operational.md; the comprehensive M10 package/release matrix remains separate |
 | N20 | Effective install order and overridden/conditional registrations | Source-reviewed: 24 installers, 514 hooks per arch, exact/wildcard chains, constructor/original references, shadowed declarations, conditional post-load LdrUnloadDll tuple | M0 source review complete: docs/native-pe/effective-registration-review.md; guest behavior still requires qualification |
 
 ## Frozen lexical install sequence
@@ -107,4 +107,20 @@ payload is retained at each moment it becomes observable: a protection
 transition, a release, a VFS drop and a remote write. See
 `../../docs/native-pe/m8-capture-indicators-carving.md` for exact scope, the
 matcher subset and the limits; periodic checkpoints, a remote-write guest
-control, per-family field semantics and the global M9-M11 gates stay open.
+control, per-family field semantics and the global M10-M11 gates stay open.
+
+## N19 cross-family operational chains
+
+Six contained controls (`operational-Provisioning`, `operational-Integrity`,
+`operational-Networking`, each for x86 and x64) are replayed through the
+packaged worker by `tools/native_pe_m9.py`. Each is one generated program that
+chains several modeled families in a single execution and decides its own
+outcome inline: a reservation written through `WriteProcessMemory` beside a
+staged-file read and a registry round trip; a digest computed over the exact
+bytes a registry query returned; and an address parsed by `inet_pton` out of a
+guest reservation rather than the image. None configures submitted-sample
+capture, so none produces an artifact or capture report, and that absence is
+asserted. See `../../docs/native-pe/m9-cross-family-operational.md` for exact
+scope and limits; no partition row gains semantic closure from being exercised
+here, only three chains were run, a program spans at most two import modules,
+and the M10 release matrix and M11 global gates stay open.

@@ -231,9 +231,13 @@
     {
      "id": "same-build-release-matrix",
      "review": "docs/native-pe/m10-same-build-release-matrix.md"
+    },
+    {
+     "id": "closure-audit",
+     "review": "docs/native-pe/m11-closure-audit.md"
     }
    ],
-   "next_action": "M8 capture, M9 cross-family operational and M10 same-build release matrix are complete; see docs/native-pe/m8-capture-indicators-carving.md, docs/native-pe/m9-cross-family-operational.md and docs/native-pe/m10-same-build-release-matrix.md. M10 reproduces every milestone seal from the bounded smoke through M9 against one release build and binds the ten fingerprints to the single bundle and source index (tools/native_pe_m10.py). Still open is only M11: the global gates with all required gates green and zero open or stale required contracts under an independent audit of the full denominator, plus the M8 capture carry-overs and the cross-family chains M9 left unrun. No partition row has semantic closure.",
+   "next_action": "All four M8-M11 milestone deliverables are complete: M8 capture, M9 cross-family operational, M10 same-build release matrix and M11 independent closure audit (docs/native-pe/m8-capture-indicators-carving.md, m9-cross-family-operational.md, m10-same-build-release-matrix.md, m11-closure-audit.md). M11 (tools/native_pe_m11.py) independently reproduces the full-denominator parity ledger from the frozen inventory and the same-build dispatcher, confirms it is consistent and tamper-evident, and seals an honest receipt: 2590/2590 contracts OPEN (1899 model-bound but semantically unverified, 691 unmodeled/refused), 0 falsely closed, required gates reported in true state (0 verified, 1 stale, 7 unreviewed), complete=false. The batch stays IN_PROGRESS because the denominator is open: per-contract semantic parity for all 2590 rows -- a green `complete` -- is the standing future work the audit keeps visible, along with the M8 capture carry-overs and the cross-family chains M9 left unrun. No milestone has closed a partition row.",
    "exit_tests": [
     "cross-family x86/x64 programs",
     "same-build release matrix",

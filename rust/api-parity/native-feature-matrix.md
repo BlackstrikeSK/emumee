@@ -138,3 +138,21 @@ owns it, and a long run is resumable. It introduces no guest control and no Rust
 change. See `../../docs/native-pe/m10-same-build-release-matrix.md`; the matrix
 is the union of the milestone seals and adds no new denominator, no row gains
 semantic closure, and the M11 global gates stay open.
+
+## Global closure audit
+
+`tools/native_pe_m11.py` is the independent audit of the full denominator. It
+regenerates the frozen legacy inventory from source (byte-identical to the
+committed baseline), reads the contract dispatch from the same release build the
+M10 matrix sealed, produces the parity ledger, and then recomputes the
+completion status independently from the ledger's own entries and requires the
+two to agree. It asserts the honesty invariant directly -- the denominator is
+exactly the frozen 2590 contracts, nothing is credited as closed, and `complete`
+is false with every contract open -- and seals a receipt bound to the M10 matrix
+fingerprint. It certifies the accounting is reproducible, consistent and
+tamper-evident; it closes nothing. As of this audit all 2590 contracts are open
+(1899 model-bound but semantically unverified, 691 unmodeled or refused), zero
+are falsely closed, and the required gates stand at 0 verified, 1 stale and 7
+unreviewed. See `../../docs/native-pe/m11-closure-audit.md`; per-contract
+semantic parity for every row -- a green `complete` -- remains the standing
+future work the audit keeps visible.

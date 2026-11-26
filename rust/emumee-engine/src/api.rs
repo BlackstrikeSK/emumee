@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use unicorn_engine::{RegisterX86, Unicorn, unicorn_const::Prot};
 mod allocation;
+mod legacy_literals;
+mod legacy_voids;
 mod delay_imports;
 pub use delay_imports::Observation as DelayImportObservation;
 #[cfg(test)]
@@ -70,6 +72,7 @@ pub(crate) mod user_providers;
 pub(crate) mod user_runtime;
 pub(crate) mod user_processes;
 mod user_sync;
+mod user_interlocked;
 pub(crate) mod user_threads;
 mod winstrings;
 pub use adapters::Report as AdapterReport;
@@ -126,6 +129,7 @@ enum Model {
     ExitProcess,
     UserThread(user_threads::Call),
     UserSync(user_sync::Call),
+    UserInterlocked(user_interlocked::Call),
     OpenSection,
     DynamicLoader(dynamic_loader::Call),
     Objects(kernel_objects::Call),
@@ -241,6 +245,8 @@ enum Model {
     CrtMisc(crt_misc::Call),
     FormatMessage,
     ExplicitUnsupported(&'static str),
+    LegacyLiteral(u32),
+    LegacyVoid,
     CrtMath(crt_math::Call),
 }
 #[derive(Clone)]
@@ -550,6 +556,12 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
     };
     if let Some((call, count, returns)) = user_processes::definition(module, name) {
         binding.model = Model::UserProcess(call);
+        binding.count = count;
+        binding.returns = returns;
+        return binding;
+    }
+    if let Some((call, count, returns)) = user_interlocked::definition(module, name) {
+        binding.model = Model::UserInterlocked(call);
         binding.count = count;
         binding.returns = returns;
         return binding;
@@ -1273,7 +1285,28 @@ fn definition(architecture: Architecture, module: &str, name: &str) -> Binding {
         ("ntoskrnl" | "ntdll", "RtlCompareMemory") => (Model::Compare, 3, C::Stdcall, T::Pointer),
         ("ntoskrnl" | "ntdll" | "msvcrt", "strcmp") => (Model::Strcmp, 2, C::Cdecl, T::U32),
         ("ntoskrnl" | "ntdll" | "msvcrt", "strlen") => (Model::Strlen, 1, C::Cdecl, T::Pointer),
-        _ => return binding,
+        _ if legacy_voids::lookup(architecture, module, name).is_some() => {
+            let void = legacy_voids::lookup(architecture, module, name).unwrap();
+            if void.export != name {
+                let canonical = definition(architecture, module, &void.export);
+                (canonical.model, canonical.count, canonical.convention, canonical.returns)
+            } else {
+                (Model::LegacyVoid, void.argc, C::Stdcall, T::Void)
+            }
+        },
+        _ => {
+            let Some(literal) = legacy_literals::lookup(architecture, module, name) else {
+                return binding;
+            };
+            if literal.export != name {
+                // Existing stateful models and explicit refusals take precedence
+                // over an older literal when a folded alias selects its base.
+                let canonical = definition(architecture, module, &literal.export);
+                (canonical.model, canonical.count, canonical.convention, canonical.returns)
+            } else {
+                (Model::LegacyLiteral(literal.value), literal.argc, C::Stdcall, T::U32)
+            }
+        },
     };
     (
         binding.model,
@@ -1433,16 +1466,26 @@ fn explicit_unsupported(
 /// parity or admission of every argument combination. No CPU or host API runs.
 pub(crate) fn describe(architecture: Architecture, module: &str, name: &str) -> serde_json::Value {
     let binding = definition(architecture, module, name);
+    let data = matches!(binding.model, Model::CrtStartup(crt_startup::Call::CommandLineData));
     let class = match binding.model {
+        Model::CrtStartup(crt_startup::Call::CommandLineData) => "data_model",
         Model::Unsupported => "unmodeled",
         Model::ExplicitUnsupported(_) => "explicit_unsupported",
         Model::CrtStdio(crt_stdio::Call::Unsupported(_)) => "explicit_unsupported",
         _ => "model",
     };
-    serde_json::json!({"module":module,"export":name,"architecture":architecture,
+    let mut result = serde_json::json!({"module":module,"export":name,"architecture":architecture,
         "dispatch":class,"argc":binding.count,"convention":binding.convention,
+        "binding_kind":if data {"data"} else {"function"},"callable":!data,
+        "legacy_placeholder":matches!(binding.model, Model::LegacyLiteral(_) | Model::LegacyVoid),
+        "legacy_void_placeholder":matches!(binding.model, Model::LegacyVoid),
         "return_type":match binding.returns {T::Void=>"void",T::U32=>"u32",T::Pointer=>"pointer",T::U64=>"u64",T::F64=>"f64"},
-        "semantic_parity_verified":false})
+        "semantic_parity_verified":false});
+    if data {
+        result["data_layout"] = serde_json::json!({"cell_bytes":architecture.width(),
+            "alignment":architecture.width(),"mutable":true,"executable":false,"lifetime":"process"});
+    }
+    result
 }
 fn install_binding(engine: &mut Unicorn<Trace>, binding: Binding) -> Result<u64> {
     let base = engine.get_data().apis.base;
@@ -1738,6 +1781,7 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
     Ok(match binding.model {
         Model::UserThread(call) => user_threads::invoke(engine, call, args)?,
         Model::UserSync(call) => user_sync::invoke(engine, call, args)?,
+        Model::UserInterlocked(call) => user_interlocked::invoke(engine, call, args)?,
         Model::ExitProcess => {
             ensure!(
                 !engine.get_data().apis.kernel_mode && engine.get_data().threads.is_none(),
@@ -1795,6 +1839,8 @@ fn call(engine: &mut Unicorn<Trace>, binding: &Binding, args: &[u64]) -> Result<
         Model::CrtMisc(call) => crt_misc::invoke(engine, args, call)?,
         Model::FormatMessage => win_messages::invoke(engine, args)?,
         Model::ExplicitUnsupported(reason) => bail!("{reason}"),
+        Model::LegacyLiteral(value) => legacy_literals::invoke(engine, value)?,
+        Model::LegacyVoid => legacy_literals::invoke(engine, 0)?,
         Model::UserRuntime(call) => user_runtime::invoke(engine, args, call)?,
         Model::UserProcess(call) => user_processes::invoke(engine, call, args)?,
         Model::WinStrings(call) => winstrings::invoke(engine, args, call)?,
@@ -2088,6 +2134,8 @@ pub(super) fn dispatch(engine: &mut Unicorn<Trace>, pc: u64) -> Result<()> {
                 Some("terminates_current_process")
             } else if matches!(binding.model, Model::TerminateSystemThread) && result.is_ok() {
                 Some("terminates_current_thread")
+            } else if matches!(binding.model, Model::LegacyLiteral(_) | Model::LegacyVoid) {
+                Some("frozen_legacy_placeholder")
             } else {
                 None
             },

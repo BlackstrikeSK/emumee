@@ -46,6 +46,17 @@ pub(crate) fn initialize(engine: &mut Unicorn<Trace>) -> Result<()> {
                 .entry(format!("{module}.dll"))
                 .or_default()
                 .insert(name.into());
+            if legacy_literals::has_width_aliases(architecture, module, name)
+                || legacy_voids::exact(architecture, module, name).is_some()
+                || user_interlocked::definition(module, name).is_some()
+            {
+                for suffix in ["A", "W"] {
+                    let alias = format!("{name}{suffix}");
+                    if !matches!(definition(architecture, module, &alias).model, Model::Unsupported) {
+                        modules.entry(format!("{module}.dll")).or_default().insert(alias);
+                    }
+                }
+            }
         }
         // Kernelbase shares the modeled Win32 ABI, including APIs that only
         // appear under kernel32 in the frozen registration inventory.

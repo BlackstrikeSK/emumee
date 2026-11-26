@@ -3,18 +3,48 @@
 ## Resumable completion accounting
 
 The current forward plan is `.codex/plans/rust-pe-completion.md` (local).
+The current heap validation and size qualification is described in
+`../../docs/native-pe/heap-checks-qualification.md`; the current qualified runtime
+is `output/rust-pe-heap-checks-20261126/` with 278 closed and 2312 open contracts.
+The preceding string-reference correction is in
+`../../docs/native-pe/windows-string-reference.md`.
 Clone-safe scope and handoff live in `native-feature-matrix.md`,
 `../../docs/native-pe/worklist.json`, `../../docs/native-pe/evidence.json` and
 `native-session.md`. The exact API partition is `../../docs/native-pe/api-batches.json`.
-M0 baseline, M1 source accounting, M2 input foundations, M3 loader lifecycle
-the bounded M4 user runtime and the M5 CRT/allocation/string foundations are
-complete. M4 scope, source controls and same-source contained qualification are
-in `../../docs/native-pe/m4-user-runtime.md`; M5 scope, reviewed refusals, its
-compiler-produced exit criterion and what stays open are in
-`../../docs/native-pe/m5-crt-foundations.md`. M6 VFS, registry, persona and
-observation families are next. Global semantic
-and runtime qualification gates remain open. Bounded smoke and tooling completion
-are not API behavioral or stable-release qualification.
+Bounded M0-M7 regression qualification and the historical M8-M10 matrix exist,
+but do not establish API semantic completion. Current capture work includes real
+remote writes, shared read budgets and accepted companion images. The repaired
+M11 audit independently computes completion and checks proof artifacts and the
+same-build matrix; it accepts genuine partial semantic progress instead of
+requiring every contract to remain open.
+
+The earlier void/local-constant runtime has proofs for 214 architecture contracts: 210 explicit
+frozen legacy placeholders and four kernel32 lstrlenA/W models. Proofs and the
+current bundle are under `output/rust-pe-void-20261124-02/`, with immutable
+`qualified-semantic-<family>-<runtime-fingerprint>.json` receipts. All four
+families were checked and published atomically in `../../docs/native-pe/evidence.json`.
+The denominator remains 2590, with 2376 open in `audit/ledger-after-evidence.json`.
+Final source and M8 receipts must pass checking before the batch is complete.
+
+Scope and procedures: `../../docs/native-pe/legacy-void-contracts.md`,
+`../../docs/native-pe/legacy-local-constant-contracts.md`,
+`../../docs/native-pe/m11-closure-audit.md` and `native-session.md`. The earlier
+160-contract bundle and receipts remain preserved under
+`output/rust-pe-legacy-literals-20261124/`.
+
+The preceding Windows-string qualification covered 270 contracts: 210 frozen
+placeholders, 56 models and four accepted intentional changes, leaving 2320 open.
+Its receipts and raw artifacts are under `output/rust-pe-winstrings-proof-20261125/`.
+See `../../docs/native-pe/windows-string-reference.md`.
+
+The current guest heap qualification adds eight accepted intentional-change
+contracts for `HeapValidate` and `RtlSizeHeap`, bringing the total to 278 closed
+and 2312 open of 2590. Its release also fixes a real defect: the previous build
+validated a live allocation whose pages were `PAGE_NOACCESS`. Because the runtime
+changed, all eight semantic families were re-sealed against that one release and
+republished atomically. Receipts and raw artifacts are under
+`output/rust-pe-heap-checks-20261126/`. See
+`../../docs/native-pe/heap-checks-qualification.md`.
 
 Ledger schema 2 reads its existing output (or `--previous PATH`) before
 regeneration. Module/export/kind/architecture identities preserve semantic and

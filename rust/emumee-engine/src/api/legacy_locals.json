@@ -1,0 +1,948 @@
+{
+  "schema": 1,
+  "scope": "Explicit frozen local-constant placeholders; no Windows behavior claimed.",
+  "entries": [
+    {
+      "module": "comctl32",
+      "export": "InitCommonControlsEx",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "comctl32",
+          "export": "InitCommonControlsEx",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/comctl32.py",
+          "line": 21,
+          "end_line": 30,
+          "body_sha256": "34c7bb68f49f0132d9b7dd027a31c140534cbe0de283b23a1741b3e031c135ce",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "comctl32",
+      "export": "InitCommonControlsEx",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "comctl32",
+          "export": "InitCommonControlsEx",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/comctl32.py",
+          "line": 21,
+          "end_line": 30,
+          "body_sha256": "34c7bb68f49f0132d9b7dd027a31c140534cbe0de283b23a1741b3e031c135ce",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "kernel32",
+      "export": "DisableThreadLibraryCalls",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "kernel32",
+          "export": "DisableThreadLibraryCalls",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/kernel32.py",
+          "line": 329,
+          "end_line": 338,
+          "body_sha256": "742b15f7a204e38f6f8fd06ffa78a65e3623fec51da02b8333129a52918eb053",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "kernel32",
+      "export": "DisableThreadLibraryCalls",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "kernel32",
+          "export": "DisableThreadLibraryCalls",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/kernel32.py",
+          "line": 329,
+          "end_line": 338,
+          "body_sha256": "742b15f7a204e38f6f8fd06ffa78a65e3623fec51da02b8333129a52918eb053",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "kernel32",
+      "export": "InitializeConditionVariable",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "kernel32",
+          "export": "InitializeConditionVariable",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/kernel32.py",
+          "line": 6328,
+          "end_line": 6337,
+          "body_sha256": "f91fec295be3c6e4854683d623df343ca25e9bdd66c94736b0e3783d549b7080",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "kernel32",
+      "export": "InitializeConditionVariable",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "kernel32",
+          "export": "InitializeConditionVariable",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/kernel32.py",
+          "line": 6328,
+          "end_line": 6337,
+          "body_sha256": "f91fec295be3c6e4854683d623df343ca25e9bdd66c94736b0e3783d549b7080",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "kernel32",
+      "export": "SetThreadErrorMode",
+      "architecture": "x86",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "kernel32",
+          "export": "SetThreadErrorMode",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/kernel32.py",
+          "line": 1665,
+          "end_line": 1675,
+          "body_sha256": "8fcb0b1be03a605ba3a1390f9048e7edaf8ae39ed642bdfafd8d0b60543b90e3",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "kernel32",
+      "export": "SetThreadErrorMode",
+      "architecture": "x64",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "kernel32",
+          "export": "SetThreadErrorMode",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/kernel32.py",
+          "line": 1665,
+          "end_line": 1675,
+          "body_sha256": "8fcb0b1be03a605ba3a1390f9048e7edaf8ae39ed642bdfafd8d0b60543b90e3",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "msvfw32",
+      "export": "ICSendMessage",
+      "architecture": "x86",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "msvfw32",
+          "export": "ICSendMessage",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvfw32.py",
+          "line": 36,
+          "end_line": 46,
+          "body_sha256": "b656b8334494757a5d58deb735ffe6318d2c1b9c838235e9ec9eb11cab6dbb8a",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "msvfw32",
+      "export": "ICSendMessage",
+      "architecture": "x64",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "msvfw32",
+          "export": "ICSendMessage",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvfw32.py",
+          "line": 36,
+          "end_line": 46,
+          "body_sha256": "b656b8334494757a5d58deb735ffe6318d2c1b9c838235e9ec9eb11cab6dbb8a",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "CallNextHookEx",
+      "architecture": "x86",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "CallNextHookEx",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 626,
+          "end_line": 636,
+          "body_sha256": "32317701e5f03177af7a0435c8dcc7371595cdd25ae6582f75632e885a3f4b3a",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "CallNextHookEx",
+      "architecture": "x64",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "CallNextHookEx",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 626,
+          "end_line": 636,
+          "body_sha256": "32317701e5f03177af7a0435c8dcc7371595cdd25ae6582f75632e885a3f4b3a",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "EnableWindow",
+      "architecture": "x86",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "EnableWindow",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1271,
+          "end_line": 1280,
+          "body_sha256": "5d991b73b4bc64db2c39de645efb455e91b4bcca901f8117090a3c8a532f0131",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "EnableWindow",
+      "architecture": "x64",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "EnableWindow",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1271,
+          "end_line": 1280,
+          "body_sha256": "5d991b73b4bc64db2c39de645efb455e91b4bcca901f8117090a3c8a532f0131",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "EnumDisplayMonitors",
+      "architecture": "x86",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "EnumDisplayMonitors",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1580,
+          "end_line": 1593,
+          "body_sha256": "8c1b9300781280f515becaaa4feb08a619382f483e2cc9329d3de7e8b8c78d76",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "EnumDisplayMonitors",
+      "architecture": "x64",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "EnumDisplayMonitors",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1580,
+          "end_line": 1593,
+          "body_sha256": "8c1b9300781280f515becaaa4feb08a619382f483e2cc9329d3de7e8b8c78d76",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "EnumWindows",
+      "architecture": "x86",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "EnumWindows",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 884,
+          "end_line": 894,
+          "body_sha256": "65a11deef84705fceea008100f097d25a491a080c5f7d6e610d8188bb63246bd",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "EnumWindows",
+      "architecture": "x64",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "EnumWindows",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 884,
+          "end_line": 894,
+          "body_sha256": "65a11deef84705fceea008100f097d25a491a080c5f7d6e610d8188bb63246bd",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetCursorPos",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetCursorPos",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 462,
+          "end_line": 472,
+          "body_sha256": "c5729dffe1e0c781df8bd225786277955135272daa8fad0559ff0eacb02d599f",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetCursorPos",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 0,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetCursorPos",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 462,
+          "end_line": 472,
+          "body_sha256": "c5729dffe1e0c781df8bd225786277955135272daa8fad0559ff0eacb02d599f",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetSysColor",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetSysColor",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 897,
+          "end_line": 906,
+          "body_sha256": "3d6a7ac1774e0b776b47c53f4371a334da1ba4814c0e9d6cc4961234d1cd893c",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetSysColor",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetSysColor",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 897,
+          "end_line": 906,
+          "body_sha256": "3d6a7ac1774e0b776b47c53f4371a334da1ba4814c0e9d6cc4961234d1cd893c",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetSysColorBrush",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetSysColorBrush",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 918,
+          "end_line": 927,
+          "body_sha256": "3d6a7ac1774e0b776b47c53f4371a334da1ba4814c0e9d6cc4961234d1cd893c",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetSysColorBrush",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetSysColorBrush",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 918,
+          "end_line": 927,
+          "body_sha256": "3d6a7ac1774e0b776b47c53f4371a334da1ba4814c0e9d6cc4961234d1cd893c",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetSystemMetrics",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetSystemMetrics",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 502,
+          "end_line": 512,
+          "body_sha256": "3d6a7ac1774e0b776b47c53f4371a334da1ba4814c0e9d6cc4961234d1cd893c",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetSystemMetrics",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetSystemMetrics",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 502,
+          "end_line": 512,
+          "body_sha256": "3d6a7ac1774e0b776b47c53f4371a334da1ba4814c0e9d6cc4961234d1cd893c",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetWindowLong",
+      "architecture": "x86",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 2,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetWindowLong",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 930,
+          "end_line": 943,
+          "body_sha256": "bd495d0564eb2e30b327c1499edaa3a875f732f133a53c28d9d6dee880246479",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "GetWindowLong",
+      "architecture": "x64",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 2,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "GetWindowLong",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 930,
+          "end_line": 943,
+          "body_sha256": "bd495d0564eb2e30b327c1499edaa3a875f732f133a53c28d9d6dee880246479",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "IsWindow",
+      "architecture": "x86",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "IsWindow",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1260,
+          "end_line": 1268,
+          "body_sha256": "fecb2d3274cf567775c10e2dc13ba9f127f11103880c5e84fbdabb01654976f8",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "IsWindow",
+      "architecture": "x64",
+      "argc": 1,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "IsWindow",
+          "kind": "function",
+          "argc": 1,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1260,
+          "end_line": 1268,
+          "body_sha256": "fecb2d3274cf567775c10e2dc13ba9f127f11103880c5e84fbdabb01654976f8",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "SetLayeredWindowAttributes",
+      "architecture": "x86",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "SetLayeredWindowAttributes",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 352,
+          "end_line": 362,
+          "body_sha256": "3e846f84226f39e74ac2b7100f98d24b70d370c822874c5170fc4d11adacd1a6",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "SetLayeredWindowAttributes",
+      "architecture": "x64",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "SetLayeredWindowAttributes",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 352,
+          "end_line": 362,
+          "body_sha256": "3e846f84226f39e74ac2b7100f98d24b70d370c822874c5170fc4d11adacd1a6",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "ShowWindow",
+      "architecture": "x86",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "ShowWindow",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 125,
+          "end_line": 133,
+          "body_sha256": "611d48143c9fefbb96ab2ba424395ec3e2892ccb2c821a1e00eb37b546db3d61",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "ShowWindow",
+      "architecture": "x64",
+      "argc": 2,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "ShowWindow",
+          "kind": "function",
+          "argc": 2,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 125,
+          "end_line": 133,
+          "body_sha256": "611d48143c9fefbb96ab2ba424395ec3e2892ccb2c821a1e00eb37b546db3d61",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "SystemParametersInfoA",
+      "architecture": "x86",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "SystemParametersInfoA",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1553,
+          "end_line": 1566,
+          "body_sha256": "fd03325ee2b26833a905b90c6f5302093e579c5775419024152d097a5494e9a7",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "user32",
+      "export": "SystemParametersInfoA",
+      "architecture": "x64",
+      "argc": 4,
+      "convention": "stdcall",
+      "value": 1,
+      "reference_sources": [
+        {
+          "module": "user32",
+          "export": "SystemParametersInfoA",
+          "kind": "function",
+          "argc": 4,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py",
+          "line": 1553,
+          "end_line": 1566,
+          "body_sha256": "fd03325ee2b26833a905b90c6f5302093e579c5775419024152d097a5494e9a7",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    }
+  ],
+  "sources": {
+    ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/comctl32.py": "eed2c62a9ab06cffad55ba42d8394c89ffc13668ca68de2fa44131c96f27d498",
+    ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/kernel32.py": "7d02b709f116acea0f5038cf2fef08e9243bd513eaaa4fcf8126cec54f81eb0a",
+    ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvfw32.py": "ba29f2f96fbe928a5bcaa87a773446253e9277558e533456aa858a45993be564",
+    ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/user32.py": "059dc17d83d468e3308dfa4062eefaf12891612f834b9e0d3ce88c5117d1ee5d"
+  }
+}

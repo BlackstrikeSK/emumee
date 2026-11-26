@@ -1,6 +1,177 @@
 # Native PE session checkpoint
 
-## Current M5 completion checkpoint (2026-11-19)
+## Guest heap validation and size qualification (2026-11-26)
+
+Current qualification root: `output/rust-pe-heap-checks-20261126/`. The ledger
+closes 278 of 2590 contracts: 210 frozen placeholders, 56 models and 12 accepted
+intentional changes. 2312 remain open, with 2121 represented bindings, 469
+missing bindings and no inventory drift. `complete` stays false, and only the
+effective registration review gate is verified.
+
+The release that carries this revision fixes a real defect: the previous build
+reported success for a live allocation whose pages were `PAGE_NOACCESS`. Both
+`HeapValidate` and `RtlSizeHeap` now check one byte of guest read access. The
+four failing x86/x64 controls are preserved under `exploratory-before-fix/` and
+the same cases pass under `exploratory-after-fix/`. The eight new heap contracts
+publish as accepted intentional changes under the maintained 2026-11-24 policy:
+Rust rejects a pointer owned by another known heap and reports the requested
+block size rather than the frozen padded extent. Scope and the exact comparison:
+`../../docs/native-pe/heap-checks-qualification.md`.
+
+Because the runtime changed, all eight semantic families were re-sealed and
+re-checked against this one release (runtime fingerprint `c8ffe9cc...`) and
+published atomically: 146 literal, 12 lstrlen, 26 void, 44 local-constant, 133
+interlocked, 16 CRT-data, 24 heap-check and 962 Windows-string contained
+controls, 1363 in all. Initial full source validation passed 1277 Rust tests,
+262 accounting tests, five inventory tests, strict Clippy and the partition,
+syntax and whitespace checks. The effective registration review was recollected
+and its gate refreshed to scope fingerprint `7c99f28c...`.
+
+An exploratory contained run also checked `IsDBCSLeadByte` for all 256 byte
+values through both frozen DLL names on both architectures: 1024 calls, each
+returning zero with last error preserved, matching the frozen always-zero
+handler. That is retained as exploration under `exploratory-is-dbcs-lead-byte/`;
+it closes no contract and is not published evidence.
+
+Required final receipts in this root are `source-validation-final/index.json`,
+`qualified-m10.json` and `qualified-m11.json`. The final audit must recheck all
+eight semantic proofs and the same-build milestone seals against the final
+source index. Interrupted or partial runs are preserved, not counted.
+
+## Previous Windows-string semantic qualification (2026-11-25)
+
+The 42 Windows-string contracts are qualified across x86 and x64. The current
+ledger closes 270 of 2590 contracts: 210 frozen placeholders, 56 models and
+four accepted intentional changes. 2320 remain open.
+
+Current qualification root: `output/rust-pe-winstrings-proof-20261125/`.
+The proof checker verifies 1004 frozen reference observations and all 962
+contained controls from the unchanged release, including exact diagnostic
+expectations and each declared DLL and API-set identity. The remaining 42
+write-only observations are direct Rust controls. Seven semantic families
+publish atomically. Current evidence and reproduction are described in
+`../../docs/native-pe/windows-string-reference.md`.
+
+## Active interlocked/CRT/audit continuation (2026-11-25)
+
+Current requalification root: `output/rust-pe-interlocked-20261125/`. The previous
+root's final source run passed, then its strict proof check detected a maintained
+evidence fingerprint bug during gate invalidation. The fix copies gates before
+invalidating them and has a real CLI regression (accounting total now 253).
+`preserved-raw-provenance.json` binds identical copies of the unchanged release,
+fixtures and raw executions; re-seal/check all six families against the current
+sources before publication. Required final receipts in this new root are
+`source-validation-final/index.json`, `qualified-m8.json` and
+`strict-semantic-chain-check.json`. Preserve the failed strict attempt.
+
+Current source adds the five interlocked models and 378 pinned observations.
+All five focused Rust tests pass, covering direct vectors, authority/name guards
+and 133 submitted programs. Six new proof-chain tamper tests and ten new
+reference/semantic/accepted-policy tests pass, as do the existing 13 M11 tests.
+The user explicitly chose to retain tested Rust improvements and qualify each
+individual departure; the accepted CRT shared-cell decision is now maintained
+in `docs/native-pe/behavior-decisions.json` and `.md`.
+
+Qualification root: `output/rust-pe-interlocked-20261124/`. Published: 228 contracts
+(214 refreshed, ten interlocked, four accepted CRT data/accessor contracts).
+The ledger reports 210 placeholders, 14 models, four intentional changes and
+2362 open of 2590, with 2121 represented and 469 missing bindings, no drift.
+Fresh full source validation passed 1276 Rust tests, 252 accounting tests,
+five inventory tests and strict Clippy. All 377 contained semantic controls and
+34 M8 controls passed; all six immutable proofs passed and were published
+atomically. Data queries now include the typed CRT storage contracts.
+Required final receipts are `source-validation-final/index.json`, `qualified-m8.json`
+and `strict-semantic-chain-check.json`; run `check_final_proofs.py` against the
+final index. Preserved interrupted runs do not count as passing evidence.
+Earlier claims become historical when runtime/checker sources change.
+Scope: `../../docs/native-pe/interlocked-crt-qualification.md`.
+
+## Previous qualified void/local-constant runtime (2026-11-24)
+
+Current maintained evidence closes 214 of 2590 contracts: 210 explicit frozen
+legacy placeholders and four lstrlen models. `audit/ledger-after-evidence.json`
+reports 2376 open, 2109 represented bindings, 481 missing bindings and no
+inventory drift. The two typed CRT data contracts remain semantically unverified.
+
+Evidence root: `output/rust-pe-void-20261124-02/`. Initial full source validation
+passed 1271 Rust tests, 235 accounting tests and strict Clippy, and its index
+passed checking. One current release bundle passed 228 contained semantic
+controls: 146 return-only, 12 string, 26 void and 44 local-constant programs.
+All four immutable proofs were sealed and independently checked; the 34 raw M8
+capture replays also passed. `evidence-publication.log` records the single atomic
+publication of all 214 claims. Required final receipts are
+`source-validation-final/index.json` and `qualified-m8.json`; recheck all four
+semantic proofs against the final source index before this batch is complete.
+
+The old `output/rust-pe-void-20261124/` root preserves an initial failed source
+run: its two void tests refused overwriting fixtures from an earlier focused run
+after scalar-provider addresses changed. The fresh root preserves that refusal
+and regenerates all fixtures without weakening the emitter. Future focused runs
+should emit `fixtures-focused`, leaving `fixtures-final` to a fixed full build.
+
+Scope: `../../docs/native-pe/legacy-void-contracts.md` and
+`../../docs/native-pe/legacy-local-constant-contracts.md`. Next model work is the
+five interlocked APIs: 378 independent fake-memory reference observations and
+an inactive Rust candidate are prepared under `output/future-interlocked-20261124/`.
+Before final M11, strengthen its proof checks to traverse raw artifact records
+and bind proof contracts and bundle/runtime identities; publishers already check
+the raw semantic proofs, but the final auditor must independently enforce this.
+The full M10 matrix and global closure remain open.
+
+Previous exact-runtime evidence remains at
+`output/rust-pe-legacy-literals-20261124/`: 160 contracts, final source fingerprint
+`0836006b929e435960dad3c28bb337e229d6d442208abf5b4f52ea1f035d2e6b`,
+1268 Rust tests, 219 accounting tests and strict Clippy, both semantic proofs and
+all 34 M8 controls checked. Preserve its bundle and immutable receipts.
+
+## Earlier qualified return-only contract batch (2026-11-24)
+
+The active source adds 156 architecture contracts for 78 explicitly reviewed
+return-only legacy exports, with A/W miss aliases where the frozen normalizer
+supports them. Source guest controls cover 144 grouped programs with zero,
+poisoned and valid-arena arguments plus two dynamic-alias programs. The complete
+64 KiB arena, results and error state are checked; no Windows UI/GDI behavior is
+claimed. The full source gate passed 1268 Rust tests, 219 accounting tests and
+strict Clippy. All 146 literal and 12 lstrlen contained controls passed
+independently, and both immutable semantic proofs passed rechecking. Maintained
+evidence contains 156 verified legacy placeholders and four verified string
+models. `audit/ledger-after-evidence.json` reports 160 closed and 2430 open of
+2590, with 2055 represented bindings and 535 missing bindings. Required final receipts are `source-validation-final/index.json` and
+`qualified-m8.json`; both must pass checking before this batch is complete.
+The next model batch is the reviewed frozen void handlers, preserving the
+pre-call return register rather than substituting zero.
+
+Scope and reproducible proof machinery: `../../docs/native-pe/legacy-literal-contracts.md`.
+The current evidence root is `output/rust-pe-legacy-literals-20261124/`. The earlier
+four lstrlen claims have been refreshed against the same runtime. Typed `_acmdln`
+data binding metadata is now represented correctly; those two data contracts
+remain semantically unverified. All 2590 contracts remain in the required scope.
+
+## Earlier qualified capture/string continuation (2026-11-24)
+
+HEAD is `88f8b2b`; capture fixes and the semantic-audit continuation are uncommitted.
+The remote-write and shared read-budget fixes have independently checked M8
+receipts at `output/rust-pe-m8-remote-20261124/` (24 controls) and
+`output/rust-pe-m8-read-budget-20261124/` (28 controls). Preserve those exact-source
+receipts. Current source also adds real companion-image scanning and a repaired
+M11 gate. The previous audit's all-open requirement could not accept semantic
+progress and did not meet the zero-open-contract exit test.
+
+Current qualification work lives under `output/rust-pe-semantic-closure-20261124/`.
+Four kernel32 lstrlenA/W x86/x64 contracts now have published semantic evidence:
+the safe frozen AST oracle contributes 580 observations, and twelve contained
+submitted-route controls check return/error state and the complete 64 KiB arena.
+The sealed proof is `qualified-semantic-lstrlen-<runtime-fingerprint>.json`; the post-publication ledger
+is `audit/ledger-after-evidence.json` and reports 4 verified / 2586 open contracts.
+Final source validation must include the maintained evidence publication. The
+full 2590-contract denominator remains required; missing receipts are not proof.
+
+No supplied sample, native host guest execution, quarantine or security-setting
+change is part of this continuation. Guest operations remain emulated in one
+contained worker. Periodic string scanning was not observed in the frozen native
+runner and is an enhancement rather than a reason to postpone baseline closure.
+
+## Historical M5 completion checkpoint (2026-11-19)
 
 M4 is committed at `2f2dc98`. All four M5 obligations and the milestone exit
 criterion are complete: the imported CRT data export and its aliases, the heap,
@@ -78,7 +249,7 @@ No M4 package qualification, semantic closure, commit or push is claimed. Review
 working plan: `.codex/plans/m4-user-runtime.md`. Preserve all task source and raw
 ignored evidence; keep output and private plans out of the eventual clean commit.
 
-## Current M3 completion checkpoint
+## Historical M3 completion checkpoint
 
 M3 completion (2026-11-11): all remaining checkboxes and the bounded M3 exit
 are qualified. Unified catalog/LDR/export views, recursive VFS graphs and lazy

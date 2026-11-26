@@ -37,6 +37,12 @@ pub enum Omission {
     PrivateScanBudget,
     /// A committed private run could not be read and was skipped.
     PrivateReadFailed,
+    /// The shared image/private read allowance could not cover a private run.
+    PrivateReadBudget,
+    ModuleScanBudget,
+    ModuleReadBudget,
+    ModuleReadFailed,
+    ModuleNotReadable,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +58,9 @@ pub struct Receipt {
     pub image_bytes: u64,
     pub scan_limit: u64,
     pub read_limit: u64,
+    /// Total allowance reserved for image and private reads, including failures.
     pub read_reserved_bytes: u64,
+    /// Total successfully read image and private bytes, before scanner admission.
     pub read_bytes: u64,
     /// Total bytes handed to the scanner: the image prefix plus every private
     /// run below. Always equals the capture report's `scanned_bytes`.
@@ -63,13 +71,21 @@ pub struct Receipt {
     /// Bytes selected from those private runs; included in `selected_bytes`.
     #[serde(default)]
     pub private_bytes: u64,
+    /// Additional accepted guest images; synthetic providers are excluded.
+    #[serde(default)]
+    pub module_runs: u32,
+    #[serde(default)]
+    pub module_bytes: u64,
     pub capture_sha256: String,
     pub boundary_instructions: u64,
     pub boundary_pc: u64,
     pub omissions: Vec<Omission>,
 }
 fn is_hex64(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 /// Validate the submitted-sample memory-string profile on an execution Value.
 /// Returns true when neither user field is present (the common no-capture run),
@@ -83,6 +99,9 @@ pub fn valid_execution(execution: &Value) -> bool {
     let Ok(receipt) = serde_json::from_value::<Receipt>(sources.clone()) else {
         return false;
     };
+    let Some(non_root_bytes) = receipt.private_bytes.checked_add(receipt.module_bytes) else {
+        return false;
+    };
     if receipt.version != VERSION
         || !reports::valid_memory_capture(capture)
         || capture.get("enabled").and_then(Value::as_bool) != Some(receipt.enabled)
@@ -90,14 +109,19 @@ pub fn valid_execution(execution: &Value) -> bool {
         || receipt.patterns.len() > crate::memory_strings::MAX_PATTERNS
         || memory_capture_hash(capture).as_deref() != Some(receipt.capture_sha256.as_str())
         || !is_hex64(&receipt.input_sha256)
-        || receipt.image_base.checked_add(receipt.image_bytes).is_none()
+        || receipt
+            .image_base
+            .checked_add(receipt.image_bytes)
+            .is_none()
         || image_load_u64(execution, "size") != Some(receipt.image_bytes)
         || image_load_u64(execution, "base") != Some(receipt.image_base)
         || receipt.read_bytes > receipt.read_reserved_bytes
         || receipt.read_reserved_bytes > receipt.read_limit
+        || receipt.selected_bytes > receipt.read_bytes
         || receipt.selected_bytes > receipt.scan_limit
-        || receipt.private_bytes > receipt.selected_bytes
+        || non_root_bytes > receipt.selected_bytes
         || (receipt.private_runs == 0) != (receipt.private_bytes == 0)
+        || (receipt.module_runs == 0) != (receipt.module_bytes == 0)
         || capture.get("scanned_bytes").and_then(Value::as_u64) != Some(receipt.selected_bytes)
         || execution.get("instruction_count").and_then(Value::as_u64)
             != Some(receipt.boundary_instructions)
@@ -114,9 +138,20 @@ pub fn valid_execution(execution: &Value) -> bool {
         Coverage::Disabled => !receipt.enabled && receipt.selected_bytes == 0 && matches_empty,
         // Coverage describes the image root only; private runs may still have
         // contributed bytes when the root itself was omitted.
-        Coverage::Omitted => receipt.enabled && receipt.selected_bytes == receipt.private_bytes,
+        Coverage::Omitted => receipt.enabled && receipt.selected_bytes == non_root_bytes,
         Coverage::CompleteSelectedRoot | Coverage::SelectedRootPrefix => {
-            receipt.enabled && receipt.selected_bytes > receipt.private_bytes
+            let root_selected = receipt.selected_bytes - non_root_bytes;
+            let Some(required_reads) = receipt.image_bytes.checked_add(non_root_bytes) else {
+                return false;
+            };
+            receipt.enabled
+                && root_selected > 0
+                && required_reads <= receipt.read_bytes
+                && match receipt.coverage {
+                    Coverage::CompleteSelectedRoot => root_selected == receipt.image_bytes,
+                    Coverage::SelectedRootPrefix => root_selected < receipt.image_bytes,
+                    _ => unreachable!(),
+                }
         }
     }
 }

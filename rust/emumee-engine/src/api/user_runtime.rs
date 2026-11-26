@@ -1271,7 +1271,7 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
 /// space. Opt-in with the submitted request's carve configuration, user-mode
 /// only, bounded by the single-artifact cap; an all-zero payload is not an
 /// artifact. This records what was injected, never that it executed.
-fn carve_remote_write(
+pub(super) fn carve_remote_write(
     engine: &mut Unicorn<Trace>,
     target_process_id: u64,
     destination: u64,

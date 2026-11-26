@@ -1,5 +1,24 @@
 use super::*;
 
+#[test]
+fn inventory_distinguishes_mutable_crt_data_from_a_callable_accessor() {
+    for arch in [Architecture::X86, Architecture::X64] {
+        let data = describe(arch, "msvcrt", "_acmdln");
+        assert_eq!(data["binding_kind"], "data");
+        assert_eq!(data["dispatch"], "data_model");
+        assert_eq!(data["callable"], false);
+        assert_eq!(data["data_layout"]["cell_bytes"], arch.width());
+        assert_eq!(data["data_layout"]["alignment"], arch.width());
+        assert_eq!(data["data_layout"]["mutable"], true);
+        assert_eq!(data["data_layout"]["executable"], false);
+        assert_eq!(data["semantic_parity_verified"], false);
+        let routine = describe(arch, "msvcrt", "__p__acmdln");
+        assert_eq!(routine["binding_kind"], "function");
+        assert_eq!(routine["callable"], true);
+        assert!(routine.get("data_layout").is_none());
+    }
+}
+
 fn engine(arch: Architecture) -> crate::NativeEngine {
     let mut engine = crate::new_engine(arch).unwrap();
     for (address, size) in [(0x10000, 0x1000), (0x20000, 0x4000)] {

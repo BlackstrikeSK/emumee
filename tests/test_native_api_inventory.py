@@ -11,6 +11,16 @@ inventory = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(inventory)
 
 class NativeApiInventoryTests(unittest.TestCase):
+    def test_dispatch_queries_retain_data_without_fabricating_width_variants(self):
+        queries = inventory.surface_queries([
+            dict(module='synthetic', export='Global', kind='data', character_width_dispatch=True),
+            dict(module='synthetic', export='Text', kind='function', character_width_dispatch=True),
+            dict(module='synthetic', export='Ordinal', kind='function', ordinal=17),
+        ])
+        names = {row['export'] for row in queries}
+        self.assertEqual({'Global','TextA','TextW','Ordinal','#17'}, names)
+        self.assertEqual(len(queries), len(names))
+
     def test_absent_or_empty_baseline_never_silently_reduces_inventory(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

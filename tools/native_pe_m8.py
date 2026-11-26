@@ -27,8 +27,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # drops an executable payload) and returns 1, and the configured submitted-sample
 # capture recovers them.
 _FAMILIES = {
-    'strings': ['Builtin', 'Custom', 'Private'],
-    'carve': ['Shellcode', 'Released', 'DroppedPe'],
+    'strings': ['Builtin', 'Custom', 'Private', 'PrivatePrefix', 'PrivateExhausted',
+                'Module', 'ModulePrefix', 'ModuleExhausted'],
+    'carve': ['Shellcode', 'Released', 'DroppedPe', 'RemoteWrite', 'RemotePe',
+              'RemoteDisabled', 'SelfWrite', 'RemoteFailed', 'RemoteZero'],
 }
 
 # The submitted-sample capture reports these controls own. The shared M4

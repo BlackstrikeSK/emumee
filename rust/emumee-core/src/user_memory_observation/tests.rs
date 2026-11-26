@@ -10,7 +10,9 @@ fn execution(patterns: &[&str], blob: &[u8], base: u64, scan_limit: u64) -> Valu
     })))
     .unwrap();
     let mut capture = Capture::new(options);
-    capture.scan_memory(blob, "guest_image_at_stop", base).unwrap();
+    capture
+        .scan_memory(blob, "guest_image_at_stop", base)
+        .unwrap();
     let scanned = capture.report().scanned_bytes();
     let capture_value = serde_json::to_value(capture.report()).unwrap();
     let capture_sha256 = memory_capture_hash(&capture_value).unwrap();
@@ -34,6 +36,8 @@ fn execution(patterns: &[&str], blob: &[u8], base: u64, scan_limit: u64) -> Valu
         selected_bytes: scanned,
         private_runs: 0,
         private_bytes: 0,
+        module_runs: 0,
+        module_bytes: 0,
         capture_sha256,
         boundary_instructions: 42,
         boundary_pc: base + 0x100,
@@ -122,9 +126,41 @@ fn tampering_with_bound_fields_is_rejected() {
 fn one_field_without_the_other_is_rejected() {
     let value = execution(&["cat"], b"a cat", 0x10000, 64 * 1024 * 1024);
     let mut only_capture = value.clone();
-    only_capture.as_object_mut().unwrap().remove("user_memory_strings");
+    only_capture
+        .as_object_mut()
+        .unwrap()
+        .remove("user_memory_strings");
     assert!(!valid_execution(&only_capture));
     let mut only_sources = value;
-    only_sources.as_object_mut().unwrap().remove("user_memory_capture");
+    only_sources
+        .as_object_mut()
+        .unwrap()
+        .remove("user_memory_capture");
     assert!(!valid_execution(&only_sources));
+}
+
+#[test]
+fn scanned_bytes_cannot_exceed_successful_reads_or_the_shared_read_allowance() {
+    let value = execution(&["cat"], b"a cat sat", 0x10000, 64 * 1024 * 1024);
+    assert!(valid_execution(&value));
+    let mut forged = value.clone();
+    forged["user_memory_capture"]["read_bytes"] = json!(1);
+    assert!(!valid_execution(&forged));
+    let mut forged = value;
+    forged["user_memory_capture"]["read_limit"] = json!(1);
+    assert!(!valid_execution(&forged));
+}
+
+#[test]
+fn module_accounting_cannot_relabel_root_bytes_or_overflow_non_root_totals() {
+    let value = execution(&["cat"], b"a cat sat", 0x10000, 1024);
+    let mut forged = value.clone();
+    forged["user_memory_capture"]["module_runs"] = json!(1);
+    assert!(!valid_execution(&forged));
+    forged["user_memory_capture"]["module_bytes"] = json!(1);
+    assert!(!valid_execution(&forged));
+    let mut forged = value;
+    forged["user_memory_capture"]["private_bytes"] = json!(u64::MAX);
+    forged["user_memory_capture"]["module_bytes"] = json!(1);
+    assert!(!valid_execution(&forged));
 }

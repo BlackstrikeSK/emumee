@@ -207,6 +207,26 @@ def baseline_sources(root):
     return paths
 
 
+def surface_queries(entries):
+    """Inspect function and data declarations without treating data as callable."""
+    queries = set()
+    for entry in entries:
+        name = entry['export']
+        if not isinstance(name, str) or entry['kind'] not in ('function', 'data'):
+            continue
+        variants = [name]
+        if entry['kind'] == 'function':
+            if name.endswith('*'):
+                variants = [name[:-1]+'A', name[:-1]+'W']
+            elif entry.get('character_width_dispatch'):
+                # The bare generic handler requires an A/W suffix.
+                variants = [name+'A', name+'W']
+        if entry.get('ordinal'):
+            variants.append('#'+str(entry['ordinal']))
+        queries.update((entry['module'], variant) for variant in variants)
+    return [{'module': module, 'export': export} for module, export in sorted(queries)]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, type=Path)
@@ -231,23 +251,8 @@ def main():
     if args.output.exists() and args.output.read_text(encoding='utf-8-sig') != content and not args.refresh_baseline:
         parser.error('Frozen inventory differs from the current legacy sources; review the changes before --refresh-baseline.')
     args.output.write_text(content, encoding='utf-8')
-    queries = set()
-    for entry in inventory.entries:
-        name = entry['export']
-        if not isinstance(name, str) or entry['kind'] != 'function':
-            continue
-        variants = [name]
-        if name.endswith('*'):
-            variants = [name[:-1]+'A', name[:-1]+'W']
-        elif entry.get('character_width_dispatch'):
-            # The generic handler itself throws without an A/W suffix; only its
-            # character-width variants are successful legacy entrypoints.
-            variants = [name+'A', name+'W']
-        if entry.get('ordinal'):
-            variants.append('#'+str(entry['ordinal']))
-        for name in variants:
-            queries.add((entry['module'], name))
-    args.output.with_name('queries.json').write_text(json.dumps([{'module':m,'export':n} for m,n in sorted(queries)], indent=2)+'\n', encoding='utf-8')
+    queries = surface_queries(inventory.entries)
+    args.output.with_name('queries.json').write_text(json.dumps(queries, indent=2)+'\n', encoding='utf-8')
     counts = {}
     for entry in inventory.entries:
         counts[entry['origin']] = counts.get(entry['origin'], 0) + 1

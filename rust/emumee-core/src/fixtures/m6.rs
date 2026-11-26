@@ -171,6 +171,32 @@ impl Probe {
     pub(super) fn call(&mut self, index: usize, args: &[Arg]) {
         call(&mut self.code, self.wide, self.base, self.slots[index], args);
     }
+    /// Seed the return register after argument marshalling, before a real IAT call.
+    pub(super) fn call_seeded(&mut self, index: usize, args: &[Arg], seed: u64) {
+        super::winhttp::marshal(&mut self.code, self.wide, args);
+        if self.wide {
+            self.code.extend([0x48, 0xb8]);
+            self.code.extend(seed.to_le_bytes());
+        } else {
+            self.code.push(0xb8);
+            self.code.extend((seed as u32).to_le_bytes());
+        }
+        call(&mut self.code, self.wide, self.base, self.slots[index], &[]);
+    }
+    /// Keep the resolved target in a volatile register while seeding RAX/EAX.
+    pub(super) fn call_pointer_seeded(&mut self, slot: u64, args: &[Arg], seed: u64) {
+        super::winhttp::marshal(&mut self.code, self.wide, args);
+        load(&mut self.code, self.wide, slot);
+        if self.wide {
+            self.code.extend([0x49, 0x89, 0xc3, 0x48, 0xb8]);
+            self.code.extend(seed.to_le_bytes());
+            self.code.extend([0x41, 0xff, 0xd3]);
+        } else {
+            self.code.extend([0x89, 0xc2, 0xb8]);
+            self.code.extend((seed as u32).to_le_bytes());
+            self.code.extend([0xff, 0xd2]);
+        }
+    }
     /// Call through an object's vtable, exactly as compiled COM code does: the
     /// first argument is the interface pointer and `slot` is the method's
     /// vtable index. The object's vtable pointer is read from the object, then
@@ -234,6 +260,12 @@ impl Probe {
         }
         self.code.extend([0xff, 0xd0]);
     }
+    /// Invoke a function pointer returned into a guest-owned pointer slot.
+    pub(super) fn call_pointer(&mut self, slot: u64, args: &[Arg]) {
+        super::winhttp::marshal(&mut self.code, self.wide, args);
+        load(&mut self.code, self.wide, slot);
+        self.code.extend([0xff, 0xd0]);
+    }
     /// A returned value must be non-zero without the guest naming it.
     pub(super) fn nonzero(&mut self) {
         self.code.extend([0x85, 0xc0, 0x75, 1, 0xcc]);
@@ -270,6 +302,19 @@ impl Probe {
     /// Store the pointer-width return value for use as a later argument.
     pub(super) fn save(&mut self, address: u64) {
         store(&mut self.code, self.wide, address);
+    }
+
+    /// Fill a low guest arena with actual CPU stores, preserving nonvolatile DI.
+    /// REP STOSD keeps large canary arenas from inflating the fixture's code.
+    pub(super) fn fill_words(&mut self, address: u64, words: u32, value: u32) {
+        assert!(address <= u32::MAX as u64);
+        self.code.extend([0x57, 0xbf]);
+        self.code.extend((address as u32).to_le_bytes());
+        self.code.push(0xb9);
+        self.code.extend(words.to_le_bytes());
+        self.code.push(0xb8);
+        self.code.extend(value.to_le_bytes());
+        self.code.extend([0xfc, 0xf3, 0xab, 0x5f]);
     }
     /// Follow a pointer a model wrote: read the pointer stored at `address`,
     /// then copy the pointer-width value `offset` bytes into the structure it

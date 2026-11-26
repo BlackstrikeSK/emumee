@@ -232,17 +232,29 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             Some(_) => succeed(engine, 0),
             None => fail(engine, 6, 0),
         },
-        Call::Validate => Ok(u64::from(engine.get_data().apis.heaps.validate(
-            args[0],
-            args[1] as u32,
-            args[2],
-        ))),
-        Call::RtlSize => Ok(engine
-            .get_data()
-            .apis
-            .heaps
-            .any_size(args[0], args[1] as u32, args[2])
-            .unwrap_or_else(|| invalid_size(engine))),
+        Call::Validate => {
+            let [heap, flags, address] = [args[0], args[1], args[2]];
+            let readable = address == 0 || accessible(engine, address, 1, false);
+            Ok(u64::from(
+                readable
+                    && engine
+                        .get_data()
+                        .apis
+                        .heaps
+                        .validate(heap, flags as u32, address),
+            ))
+        }
+        Call::RtlSize => {
+            let address = args[2];
+            let size = engine
+                .get_data()
+                .apis
+                .heaps
+                .any_size(args[0], args[1] as u32, address);
+            Ok(size
+                .filter(|_| accessible(engine, address, 1, false))
+                .unwrap_or_else(|| invalid_size(engine)))
+        }
         // The synthetic heaps carry no compatibility, corruption-termination or
         // resource-optimization state, so a recognized request changes nothing.
         Call::SetInformation => {

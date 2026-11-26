@@ -1,10 +1,10 @@
 //! Submitted-sample memory-string capture (the live-run counterpart to the
-//! closed `indicators` slice). It scans the settled image root of the *submitted*
-//! sample with the caller-configured bounded matcher (built-in IP/URL indicators
+//! closed `indicators` slice). It scans the submitted image and its live private
+//! reservations with the caller-configured bounded matcher (built-in IP/URL indicators
 //! plus admitted `custom_<i>` patterns) and emits the additive
 //! `emumee.user-memory-indicators.v1` profile. Selecting capture never changes
-//! guest instructions, permissions or status; nothing is read outside the owned
-//! image, and reads/scans are bounded by the plan's budgets.
+//! guest instructions, permissions or status; nothing is read outside owned
+//! regions, and reads/scans share the configured budgets.
 use super::*;
 use emumee_core::{
     memory_strings::{Capture, Options, Report},
@@ -58,6 +58,8 @@ pub(super) fn install(
             selected_bytes: 0,
             private_runs: 0,
             private_bytes: 0,
+            module_runs: 0,
+            module_bytes: 0,
             capture_sha256: String::new(),
             boundary_instructions: 0,
             boundary_pc: 0,
@@ -76,6 +78,7 @@ pub(super) fn settled(engine: &mut Unicorn<Trace>, pc: u64) {
         observe(engine, &mut state);
         // Live private reservations are scanned whether or not the image root
         // itself was readable within budget.
+        guest_modules(engine, &mut state);
         private_runs(engine, &mut state);
     }
     engine.get_data_mut().user_strings = Some(state);
@@ -128,8 +131,16 @@ fn private_runs(engine: &mut Unicorn<Trace>, state: &mut State) {
     for (base, size) in runs {
         let r = &mut state.receipt;
         let remaining = r.scan_limit.saturating_sub(r.selected_bytes);
+        let read_remaining = r.read_limit.saturating_sub(r.read_reserved_bytes);
         if remaining == 0 {
             r.omissions.push(Omission::PrivateScanBudget);
+            if read_remaining == 0 {
+                r.omissions.push(Omission::PrivateReadBudget);
+            }
+            break;
+        }
+        if read_remaining == 0 {
+            r.omissions.push(Omission::PrivateReadBudget);
             break;
         }
         if size == 0 {
@@ -143,11 +154,15 @@ fn private_runs(engine: &mut Unicorn<Trace>, state: &mut State) {
         {
             continue;
         }
-        let selected = size.min(remaining);
+        let selected = size.min(remaining).min(read_remaining);
+        // Reserve before touching guest memory; a failed read still consumes
+        // its allowance. The image and all private runs share this one budget.
+        r.read_reserved_bytes += selected;
         let Ok(bytes) = engine.mem_read_as_vec(base, selected as usize) else {
             state.receipt.omissions.push(Omission::PrivateReadFailed);
             continue;
         };
+        state.receipt.read_bytes += selected;
         let source = format!("guest_private_at_stop:0x{base:x}");
         if state.capture.scan_memory(&bytes, &source, base).is_err() {
             state.receipt.omissions.push(Omission::ScannerSourceRefused);
@@ -158,11 +173,86 @@ fn private_runs(engine: &mut Unicorn<Trace>, state: &mut State) {
         r.private_bytes += selected;
         r.private_runs += 1;
         if selected < size {
-            r.omissions.push(Omission::PrivateScanBudget);
+            if selected == remaining {
+                r.omissions.push(Omission::PrivateScanBudget);
+            }
+            if selected == read_remaining {
+                r.omissions.push(Omission::PrivateReadBudget);
+            }
             break;
         }
     }
 }
+/// The legacy final scan includes real mapped DLLs as well as the primary
+/// image. Accepted guest provenance distinguishes them from provider furniture.
+fn guest_modules(engine: &mut Unicorn<Trace>, state: &mut State) {
+    use emumee_core::modules::ModuleOrigin;
+    let mut modules: Vec<_> = engine
+        .get_data()
+        .apis
+        .modules
+        .modules()
+        .filter(|m| {
+            m.base != state.receipt.image_base
+                && m.provenance()
+                    .is_some_and(|p| p.origin != ModuleOrigin::SyntheticProvider)
+        })
+        .map(|m| (m.base, m.size, m.name.clone()))
+        .collect();
+    modules.sort_by_key(|m| m.0);
+    for (base, size, name) in modules {
+        let r = &mut state.receipt;
+        let scan_remaining = r.scan_limit.saturating_sub(r.selected_bytes);
+        let read_remaining = r.read_limit.saturating_sub(r.read_reserved_bytes);
+        if scan_remaining == 0 || read_remaining == 0 {
+            if scan_remaining == 0 {
+                r.omissions.push(Omission::ModuleScanBudget);
+            }
+            if read_remaining == 0 {
+                r.omissions.push(Omission::ModuleReadBudget);
+            }
+            break;
+        }
+        if size == 0 {
+            continue;
+        }
+        if !engine
+            .get_data()
+            .apis
+            .memory
+            .allows(base, size, Permissions::READ)
+        {
+            r.omissions.push(Omission::ModuleNotReadable);
+            continue;
+        }
+        let selected = size.min(scan_remaining).min(read_remaining);
+        r.read_reserved_bytes += selected;
+        let Ok(bytes) = engine.mem_read_as_vec(base, selected as usize) else {
+            state.receipt.omissions.push(Omission::ModuleReadFailed);
+            continue;
+        };
+        state.receipt.read_bytes += selected;
+        let source = format!("guest_module_at_stop:{name}:0x{base:x}");
+        if state.capture.scan_memory(&bytes, &source, base).is_err() {
+            state.receipt.omissions.push(Omission::ScannerSourceRefused);
+            continue;
+        }
+        let r = &mut state.receipt;
+        r.selected_bytes += selected;
+        r.module_bytes += selected;
+        r.module_runs += 1;
+        if selected < size {
+            if selected == scan_remaining {
+                r.omissions.push(Omission::ModuleScanBudget);
+            }
+            if selected == read_remaining {
+                r.omissions.push(Omission::ModuleReadBudget);
+            }
+            break;
+        }
+    }
+}
+
 pub(super) fn take(engine: &mut Unicorn<Trace>) -> (Option<Report>, Option<Receipt>) {
     let Some(mut state) = engine.get_data_mut().user_strings.take() else {
         return (None, None);
@@ -259,11 +349,78 @@ mod tests {
     #[test]
     fn without_the_role_there_is_no_user_profile() {
         let execution = crate::run_fixture(Architecture::X64, 500, 1000).unwrap();
-        assert!(
-            execution.user_memory_strings.is_none() && execution.user_memory_capture.is_none()
-        );
+        assert!(execution.user_memory_strings.is_none() && execution.user_memory_capture.is_none());
         let json = serde_json::to_value(&execution).unwrap();
         assert!(user_memory_observation::valid_execution(&json));
         assert!(!user_memory_observation::present(&json));
+    }
+
+    #[test]
+    fn private_runs_share_the_image_read_allowance_even_when_scan_budget_is_larger() {
+        for architecture in [Architecture::X86, Architecture::X64] {
+            let image = emumee_core::fixtures::private_mapping_probe(architecture);
+            let image_bytes = PeImage::parse(&image, "sample.exe").unwrap().image_size as u64;
+            for (extra, read_limited) in [(0, true), (8, true), (8, false)] {
+                let mut options = prepared(&[]);
+                if read_limited {
+                    options.read_limit = image_bytes + extra;
+                } else {
+                    options.scan_limit = image_bytes + extra;
+                }
+                let persona = emumee_core::fullpersona::decode(
+                    emumee_core::fullpersona::default_document().as_bytes(),
+                    &emumee_core::fullpersona::ResolveContext {
+                        clock_seed: Some(emumee_core::fullpersona::ClockSeed {
+                            utc_filetime: crate::m6_tests::CLOCK,
+                            source: emumee_core::fullpersona::ClockSource::Fixed,
+                            source_id: "shared-read-budget-control".into(),
+                        }),
+                    },
+                )
+                .unwrap();
+                let mut configured = configured::Prepared::new(
+                    persona,
+                    configured::Request {
+                        architecture,
+                        kernel: false,
+                        initial_processor: 0,
+                        process: Some(emumee_core::persona::ProcessConfig::fixture()),
+                        budget: 4000,
+                        timeout_us: 30_000_000,
+                    },
+                )
+                .unwrap();
+                configured.bind_submitted_user().unwrap();
+                let result = crate::run_generated_with_fixture_configuration(
+                    &image,
+                    &[],
+                    4000,
+                    30_000_000,
+                    GeneratedConfiguration {
+                        submitted_user: true,
+                        configured: Some(configured),
+                        user_strings: Some(options),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(result.error, None, "{architecture:?}: {result:#?}");
+                assert_eq!(result.guest_entry_return, Some(1));
+                let receipt = result.user_memory_capture.as_ref().unwrap();
+                assert_eq!(receipt.private_bytes, extra);
+                assert_eq!(receipt.selected_bytes, image_bytes + extra);
+                assert_eq!(receipt.read_bytes, image_bytes + extra);
+                assert_eq!(receipt.read_reserved_bytes, receipt.read_bytes);
+                assert!(receipt.read_bytes <= receipt.read_limit);
+                assert!(receipt.omissions.contains(if read_limited {
+                    &Omission::PrivateReadBudget
+                } else {
+                    &Omission::PrivateScanBudget
+                }));
+                assert!(obs::valid_execution(
+                    &serde_json::to_value(&result).unwrap()
+                ));
+            }
+        }
     }
 }

@@ -5,7 +5,7 @@
  "feature_matrix": "rust/api-parity/native-feature-matrix.md",
  "api_partition": "docs/native-pe/api-batches.json",
  "validation_policy": "docs/native-pe/validation-policy.json",
- "validation_index": "output/rust-pe-m10-complete-20261124/source-validation-final/index.json",
+ "validation_index": "output/rust-pe-heap-checks-20261126/source-validation-final/index.json",
  "dependency_integrity_report": "output/rust-pe-m4-complete-20261119-02/audits-02/dependencies-final.json",
  "baseline_failure_classification": "docs/native-pe/baseline-failures.md",
  "bounded_m0_package_smoke": "docs/native-pe/m0-package-smoke.md",
@@ -202,6 +202,14 @@
     {
      "id": "network-com-crypto-security-resource-families",
      "review": "docs/native-pe/m7-network-com-crypto-security-resources.md"
+    },
+    {
+     "id": "expanded-windows-string-semantic-qualification",
+     "review": "docs/native-pe/windows-string-reference.md"
+    },
+    {
+     "id": "guest-heap-validation-and-size-qualification",
+     "review": "docs/native-pe/heap-checks-qualification.md"
     }
    ]
   },
@@ -231,13 +239,9 @@
     {
      "id": "same-build-release-matrix",
      "review": "docs/native-pe/m10-same-build-release-matrix.md"
-    },
-    {
-     "id": "closure-audit",
-     "review": "docs/native-pe/m11-closure-audit.md"
     }
    ],
-   "next_action": "All four M8-M11 milestone deliverables are complete: M8 capture, M9 cross-family operational, M10 same-build release matrix and M11 independent closure audit (docs/native-pe/m8-capture-indicators-carving.md, m9-cross-family-operational.md, m10-same-build-release-matrix.md, m11-closure-audit.md). M11 (tools/native_pe_m11.py) independently reproduces the full-denominator parity ledger from the frozen inventory and the same-build dispatcher, confirms it is consistent and tamper-evident, and seals an honest receipt: 2590/2590 contracts OPEN (1899 model-bound but semantically unverified, 691 unmodeled/refused), 0 falsely closed, required gates reported in true state (0 verified, 1 stale, 7 unreviewed), complete=false. The batch stays IN_PROGRESS because the denominator is open: per-contract semantic parity for all 2590 rows -- a green `complete` -- is the standing future work the audit keeps visible, along with the M8 capture carry-overs and the cross-family chains M9 left unrun. No milestone has closed a partition row.",
+   "next_action": "The guest heap validation and size proof brings semantic qualification to 278 of 2590 contracts (210 frozen placeholders, 56 models, 12 accepted intentional changes) across eight atomically published families. The release that carries it also fixes a real defect: the previous build validated a live block whose pages were PAGE_NOACCESS. Continue the 2312 open contracts and verify every required global gate; only the effective registration review is verified so far. The current evidence is indexed in docs/native-pe/heap-checks-qualification.md and docs/native-pe/windows-string-reference.md.",
    "exit_tests": [
     "cross-family x86/x64 programs",
     "same-build release matrix",
@@ -249,7 +253,7 @@
  ],
  "limitations": [
   "M5-M7 routing metadata is replaced by the exact API partition when computing status and dependencies",
-  "No API behavioral closure has been claimed",
+  "The guest heap revision qualifies 278 of 2590 contracts, with 2312 still open",
   "Local output evidence is indexed by rust/api-parity/native-session.md; missing raw files do not become proof"
  ]
 }

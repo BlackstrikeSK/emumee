@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-24",
+  "decision": "Keep documented Rust improvements (Recommended)",
+  "scope": "Retain existing tested Rust improvements and qualify each documented departure as an intentional change; demonstrated CRT process-shared mutable command-line cell is accepted",
+  "review": "output/rust-pe-void-20261124-02/crt-cell-review/review.md",
+  "limits": "Acceptance alone is not semantic qualification; independent expectations, negative controls and submitted-route proof remain required for every claimed contract"
+}

@@ -3387,3 +3387,11 @@ mod user_test_fixtures;
 mod win_alloc_tests;
 #[cfg(test)]
 mod win_text_tests;
+#[cfg(test)]
+mod semantic_strings_tests;
+#[cfg(test)]
+mod semantic_literals_tests;
+#[cfg(test)]
+mod semantic_voids_tests;
+#[cfg(test)]
+mod semantic_interlocked_tests;

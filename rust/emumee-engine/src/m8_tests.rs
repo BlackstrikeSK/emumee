@@ -14,11 +14,13 @@ use emumee_core::{
     fixtures,
     memory_strings::Format,
     report_bundle::digest,
-    user_input::{CaptureRequest, MemoryStringRequest, Request, PROFILE},
+    user_input::{CaptureRequest, MemoryStringRequest, PROFILE, Request},
     user_memory_observation,
 };
 
 const SCAN_BYTES: u64 = 128 * 1024 * 1024;
+
+mod remote;
 
 /// Run one M8 control with its capture configuration and emit the contained
 /// fixture plus its source-tested outcome.
@@ -100,6 +102,11 @@ fn memory_string_controls_recover_builtin_and_custom_indicators() {
                 "{label}: {json:#}"
             );
             let report = result.user_memory_strings.as_ref().unwrap();
+            assert_eq!(
+                result.user_memory_capture.as_ref().unwrap().module_runs,
+                0,
+                "{label}: synthetic system provider was scanned as a guest module"
+            );
             let has = |format: Format, value: &str| {
                 report
                     .matches()
@@ -119,7 +126,12 @@ fn memory_string_controls_recover_builtin_and_custom_indicators() {
             } else {
                 // With no custom patterns configured, the regex array is empty
                 // and no custom match is reported.
-                assert!(report.matches().iter().all(|m| !matches!(m.format, Format::Custom(_))));
+                assert!(
+                    report
+                        .matches()
+                        .iter()
+                        .all(|m| !matches!(m.format, Format::Custom(_)))
+                );
             }
         }
     }
@@ -170,7 +182,9 @@ fn private_mapping_control_recovers_an_indicator_only_the_live_scan_reaches() {
             report.matches()
         );
         assert!(
-            private.iter().any(|m| m.value == "http://private.test/stage"),
+            private
+                .iter()
+                .any(|m| m.value == "http://private.test/stage"),
             "{label}: private URL absent"
         );
         assert!(
@@ -180,6 +194,149 @@ fn private_mapping_control_recovers_an_indicator_only_the_live_scan_reaches() {
                 .any(|m| m.source == "guest_image_at_stop" && m.value == "198.51.100.7"),
             "{label}: image-sourced copy absent"
         );
+    }
+}
+
+#[test]
+fn private_mapping_budget_controls_report_truncation_and_total_read_cost() {
+    for architecture in [Architecture::X86, Architecture::X64] {
+        for (case, extra) in [("PrivatePrefix", 8), ("PrivateExhausted", 0)] {
+            let label = format!("{architecture:?}-m8-strings-{case}");
+            let bytes = fixtures::private_mapping_probe(architecture);
+            let image_bytes = PeImage::parse(&bytes, "sample.exe").unwrap().image_size as u64;
+            let result = run(
+                &label,
+                bytes,
+                CaptureRequest {
+                    memory_strings: Some(MemoryStringRequest {
+                        enabled: true,
+                        patterns: vec![],
+                        scan_bytes: image_bytes + extra,
+                    }),
+                    carve_executable_regions: false,
+                },
+                4000,
+            );
+            assert_eq!(result.error, None, "{label}: {result:#?}");
+            assert_eq!(result.guest_entry_return, Some(1), "{label}");
+            let receipt = result.user_memory_capture.as_ref().unwrap();
+            assert_eq!(receipt.private_bytes, extra, "{label}");
+            assert_eq!(receipt.private_runs, u32::from(extra != 0), "{label}");
+            assert_eq!(receipt.read_bytes, image_bytes + extra, "{label}");
+            assert_eq!(receipt.read_reserved_bytes, receipt.read_bytes, "{label}");
+            assert_eq!(receipt.selected_bytes, receipt.read_bytes, "{label}");
+            assert!(
+                receipt
+                    .omissions
+                    .contains(&user_memory_observation::Omission::PrivateReadBudget),
+                "{label}"
+            );
+            assert!(
+                receipt
+                    .omissions
+                    .contains(&user_memory_observation::Omission::PrivateScanBudget),
+                "{label}"
+            );
+            assert!(
+                user_memory_observation::valid_execution(&serde_json::to_value(&result).unwrap()),
+                "{label}"
+            );
+        }
+    }
+}
+
+#[test]
+fn companion_mapping_controls_scan_only_real_guest_dlls_under_shared_budgets() {
+    use emumee_core::fixtures::M4Code;
+    for architecture in [Architecture::X86, Architecture::X64] {
+        for case in ["Module", "ModulePrefix", "ModuleExhausted"] {
+            let label = format!("{architecture:?}-m8-strings-{case}");
+            let mut code = M4Code::new(architecture, 0x1000);
+            code.prologue();
+            code.epilogue(1, 0);
+            let root = fixtures::m4_custom_probe(
+                architecture,
+                &["GetLastError"],
+                &code.finish(),
+                &[],
+                &[],
+            );
+            let (bytes, mut companion) = fixtures::m3_link_tls_companion(architecture, root);
+            let marker = b"http://companion.test/live\0";
+            companion[0x4800..0x4800 + marker.len()].copy_from_slice(marker);
+            let root_size = PeImage::parse(&bytes, "sample.exe").unwrap().image_size as u64;
+            let module_size = PeImage::parse(&companion, "tls.dll").unwrap().image_size as u64;
+            let extra = match case {
+                "Module" => module_size,
+                "ModulePrefix" => 8,
+                _ => 0,
+            };
+            let staged = [(
+                emumee_core::user_input::InputKind::Companion,
+                r"C:\emumee\tls.dll",
+                companion,
+            )];
+            let result = run_with_staged(
+                &label,
+                bytes,
+                &staged,
+                CaptureRequest {
+                    memory_strings: Some(MemoryStringRequest {
+                        enabled: true,
+                        patterns: vec![],
+                        scan_bytes: root_size + extra,
+                    }),
+                    carve_executable_regions: false,
+                },
+                10_000,
+            );
+            assert_eq!(result.error, None, "{label}: {result:#?}");
+            assert_eq!(result.guest_entry_return, Some(1), "{label}");
+            let receipt = result.user_memory_capture.as_ref().unwrap();
+            assert_eq!(receipt.module_runs, u32::from(extra != 0), "{label}");
+            assert_eq!(receipt.module_bytes, extra, "{label}");
+            assert_eq!(receipt.read_bytes, root_size + extra, "{label}");
+            assert_eq!(receipt.selected_bytes, receipt.read_bytes, "{label}");
+            assert!(
+                user_memory_observation::valid_execution(&serde_json::to_value(&result).unwrap()),
+                "{label}"
+            );
+            let module_matches: Vec<_> = result
+                .user_memory_strings
+                .as_ref()
+                .unwrap()
+                .matches()
+                .iter()
+                .filter(|m| m.source.starts_with("guest_module_at_stop:"))
+                .collect();
+            assert_eq!(
+                module_matches
+                    .iter()
+                    .any(|m| m.value == "http://companion.test/live"),
+                case == "Module",
+                "{label}"
+            );
+            assert!(
+                module_matches
+                    .iter()
+                    .all(|m| m.source.starts_with("guest_module_at_stop:tls.dll:")),
+                "{label}"
+            );
+            if case != "Module" {
+                assert!(
+                    receipt
+                        .omissions
+                        .contains(&user_memory_observation::Omission::ModuleReadBudget),
+                    "{label}"
+                );
+                assert!(
+                    receipt
+                        .omissions
+                        .contains(&user_memory_observation::Omission::ModuleScanBudget),
+                    "{label}"
+                );
+            }
+        }
     }
 }
 
@@ -245,11 +402,13 @@ fn dropped_pe_control_carves_structural_evidence_out_of_the_drop() {
             "{label}: no carved image for the drop: {summary:#?}"
         );
         assert!(
-            result.artifacts.iter().any(|artifact| artifact
-                .observations
+            result
+                .artifacts
                 .iter()
-                .any(|o| o.kind == emumee_core::artifacts::ArtifactKind::GuestFile
-                    && o.guest_path.eq_ignore_ascii_case(fixtures::DROP_DESTINATION))),
+                .any(|artifact| artifact.observations.iter().any(|o| o.kind
+                    == emumee_core::artifacts::ArtifactKind::GuestFile
+                    && o.guest_path
+                        .eq_ignore_ascii_case(fixtures::DROP_DESTINATION))),
             "{label}: dropped file itself not retained"
         );
     }
@@ -291,11 +450,15 @@ fn released_payload_control_carves_the_payload_before_free_loses_it() {
             "{label}"
         );
         assert!(
-            result.artifacts.iter().all(|artifact| artifact
-                .observations
+            result
+                .artifacts
                 .iter()
-                .all(|o| o.context.as_ref().is_none_or(|c| c["transition"]
-                    != serde_json::json!("virtual_protect_executable")))),
+                .all(|artifact| artifact.observations.iter().all(|o| o
+                    .context
+                    .as_ref()
+                    .is_none_or(
+                        |c| c["transition"] != serde_json::json!("virtual_protect_executable")
+                    ))),
             "{label}: an unexpected protection transition fired"
         );
         let payload = fixtures::executable_payload();

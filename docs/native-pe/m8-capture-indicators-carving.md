@@ -2,8 +2,8 @@
 
 Started 2026-11-23 from committed M7 (`e5d4508`). M8 closes the capture
 obligations the earlier milestones deferred: the N14 memory-string indicator
-scan over a submitted sample (including caller-configured custom patterns and
-its live private mappings) and the N15 classification and retention of a payload
+scan over a submitted sample (including caller-configured custom patterns,
+its live private mappings and accepted companion images) and the N15 classification and retention of a payload
 a sample stages, activates, releases, drops to disk or injects into another
 process. It also closes the N16/N17 report-field audit and the remaining N08
 public output-limit equivalence.
@@ -21,7 +21,7 @@ qualification gates remain open until M9–M11.
 
 | Feature | Obligation | Status |
 | --- | --- | --- |
-| N14 | Memory IP/URL/custom-regex capture, scan ordering, limits, regex admission and omissions; submitted request carries capture configuration | closed for the settled image and live private mappings |
+| N14 | Memory IP/URL/custom-regex capture, scan ordering, limits, regex admission and omissions; submitted request carries capture configuration | closed for the settled image, accepted companions and live private mappings |
 | N15 | Payload classification and retention with writer/provenance attribution | closed for the protection transition, the release, the VFS drop and the remote write |
 | N16 | Capture reports normalized into the engine report and never silently dropped | closed; the replay enforces an exact report-field set |
 | N17 | Report extraction audited independently | closed as a seal-time audit of every serialized report field |
@@ -78,8 +78,15 @@ At the settled boundary the engine's `user_strings` role scans, in order and
 under the configured read and scan budgets:
 
 1. the submitted sample's own image; then
-2. every committed private reservation the sample still holds, in address
+2. other accepted real guest images, in address order, each tagged
+   `guest_module_at_stop:<name>:<base>`; then
+3. every committed private reservation the sample still holds, in address
    order, each tagged `guest_private_at_stop:<base>`.
+
+Synthetic provider images are excluded by catalog provenance. Unloaded images
+are absent from the live catalog. Module read/scan budget omissions, unreadable
+images and backend read failures are explicit receipt reasons; `module_runs` and
+`module_bytes` account for successful additional image scans.
 
 Built-in IPv4, IPv6 and URL indicators run first, in that order, followed by
 each custom pattern; a custom match is reported as `custom_<i>` against its
@@ -101,6 +108,14 @@ cannot be dropped, swapped or edited between the execution and the summary.
 The closed indicator slice (`memory_strings` / `memory_string_sources`) and its
 validator are untouched. A run carries one profile or the other, never both,
 which is why this addition cannot alter any earlier receipt.
+
+Image, companion and private reads share one allowance. `read_reserved_bytes` charges every
+attempted read before accessing guest memory, including reads that fail;
+`read_bytes` totals successful reads before scanner admission. Both include the
+root image, accepted companions and private reservations. A private run is read only up to the smaller of
+the remaining read and scan allowances, with `private_read_budget` and/or
+`private_scan_budget` recording truncation. Receipt validation requires
+`selected_bytes <= read_bytes <= read_reserved_bytes <= read_limit`.
 
 ## N15 — payload classification and attribution
 
@@ -159,16 +174,27 @@ cannot carry it.
 
 ## Controls
 
-Twelve contained controls, each emitted for x86 and x64:
+Thirty-four contained controls: the following seventeen cases, each emitted for x86 and x64:
 
 | Control | What it drives |
 | --- | --- |
 | `strings-Builtin` | An image carrying an IPv4 and a URL; the built-in scan recovers both with no custom pattern configured, and reports no custom match. |
 | `strings-Custom` | The same image plus a lowercase-hex digest; a configured `[a-f0-9]{32}` pattern recovers it as `custom_1`. |
 | `strings-Private` | The guest copies an indicator into a committed reservation and leaves it live. The indicator is recovered twice under two sources, and the `guest_private_at_stop:<base>` match is what proves the live private-run scan ran. |
+| `strings-PrivatePrefix` | Only eight bytes of the live private reservation fit after the image; the receipt charges exactly those reads and records both exhausted allowances. |
+| `strings-PrivateExhausted` | The image consumes the entire read/scan allowance; private memory is omitted with explicit budget reasons and no additional reads. |
+| `strings-Module` | A real accepted companion contains the only copy of a URL. Only its module-attributed match can prove companion scanning; synthetic system providers must remain excluded. |
+| `strings-ModulePrefix` | Eight companion bytes fit after the root image; both allowances are charged and module truncation is explicit. |
+| `strings-ModuleExhausted` | The root image consumes both allowances; no companion read occurs and both module budget omissions are recorded. |
 | `carve-Shellcode` | The guest reserves read/write memory, writes a non-PE payload into it, then transitions it to `PAGE_EXECUTE_READ`. The payload is retained as an `ExecutableRegion` with its attribution. |
 | `carve-Released` | The reservation is executable from the outset, so no protection transition fires; only the release carve can account for the artifact, which isolates that provenance class. |
 | `carve-DroppedPe` | The guest drops a staged PE to a new guest path with `CopyFileA`. The dropped file is retained **and** its structural image evidence is carved, attributed to the dropped path. |
+| `carve-RemoteWrite` | A parent writes harmless data into a suspended emulated child's read/write reservation. The child checks the bytes after resuming; capture must retain a `MemorySnapshot` with the child's process ID, address and byte count. |
+| `carve-RemotePe` | The same flow writes a synthetic PE as data, without executing it. Capture must retain `CarvedImage` evidence with the remote-write attribution. |
+| `carve-RemoteDisabled` | The write and child check succeed with carving disabled; no remote-write artifact is retained. |
+| `carve-SelfWrite` | A real handle opened against the current process writes its own reservation; this must not be attributed as a remote write. |
+| `carve-RemoteFailed` | A write to an unallocated child address fails with zero bytes transferred; the child's reserved page remains zero and no artifact is retained. |
+| `carve-RemoteZero` | A successful all-zero write remains excluded from capture. |
 
 Unlike the API-family controls, an M8 control decides nothing beyond returning
 1 from its entry: the capture configuration, not the guest, drives the feature
@@ -178,6 +204,62 @@ configuration, arguments and limits — so the packaged worker replays the same
 bytes and the same configuration through the public CLI.
 
 ## Qualification
+
+### Companion and semantic continuation (2026-11-24)
+
+The frozen native runner's settled dump scan includes real mapped modules as
+well as private allocations. The Rust role now scans accepted companion images
+under the same shared budgets, while excluding synthetic providers by explicit
+catalog provenance. The module/prefix/exhaustion controls prove this route and
+its omissions. The current integrated qualification root is
+`output/rust-pe-semantic-closure-20261124/`; this also carries the independent
+lstrlen semantic controls and the repaired M11 audit described in
+`m11-closure-audit.md`. Earlier roots below remain exact-source historical proof.
+
+### Shared read-budget follow-up (2026-11-24)
+
+Private reads previously consumed the scan allowance but were absent from the
+receipt's read counters. With a separately configured smaller read allowance,
+they could also exceed that allowance. The image and private scanner now share
+the read counters and limit. Engine controls exercise distinct read and scan
+limits in both architectures; the public request uses equal limits, exercised
+by the prefix and exhausted controls above. A receipt claiming more scanned
+bytes than successful reads is rejected independently in the core validator.
+
+The current expanded qualification is rechecked with:
+
+```powershell
+C:\Python313\python.exe tools/native_pe_m8.py --root output/rust-pe-m8-read-budget-20261124 --source-index output/rust-pe-m8-read-budget-20261124/source-validation-final/index.json --check
+```
+
+Earlier M8 receipts below belong to their exact source revisions. Recheck them
+with those revisions' tools; the current replay requires all thirty-four
+controls and the corrected shared read accounting. Periodic scanning and API
+semantic parity remain open.
+
+### Remote-write follow-up (2026-11-24)
+
+The guest control reproduced a missing integration: `WriteProcessMemory` against
+an isolated child succeeded and the resumed child verified its bytes, but no
+artifact was retained. The old capture hook was reachable only through the
+local fallback; real remote transfers go through `user_processes::remote`.
+The remote dispatcher now invokes the bounded capture helper after the write
+succeeds and after it restores the caller's address space and capture catalog.
+Failed transfers return before capture, and the existing opt-in, size and
+all-zero filters still apply. The controls also prove that a real handle naming
+the current process does not create remote-write evidence.
+
+The expanded qualification uses a fresh root so the earlier twelve-control
+receipt remains historical:
+
+```powershell
+C:\Python313\python.exe tools/native_pe_m8.py --root output/rust-pe-m8-remote-20261124 --source-index output/rust-pe-m8-remote-20261124/source-validation-final/index.json --check
+```
+
+This follow-up qualifies the M8 capture path only. It does not refresh the
+historical M10 release matrix or M11 denominator audit, or close API parity rows.
+
+### Original twelve-control qualification
 
 | Gate | Result |
 | --- | --- |
@@ -208,18 +290,18 @@ bundles and seals remain historical, matching their own source.
 
 What this milestone does **not** establish:
 
-1. The scan is a **settled-boundary** scan. Periodic checkpoints remain
-   unported, so an indicator that existed only in memory the sample had already
-   freed before the boundary is recovered solely through the release carve, not
-   through the string scan.
-2. Remote-write attribution is implemented and covered by source tests, but it
-   has **no guest control**: a control would have to create an isolated child
-   and inject into it, which needs the child-process control machinery rather
-   than this milestone's single-process probes. The classification and the
-   process-id resolution are tested; the contained replay does not exercise it.
-3. The private-mapping scan covers committed **private reservations**. Guest
-   heap blocks inside a reservation are covered only because the reservation is,
-   and mapped images other than the sample's own are not scanned.
+1. The scan is a **settled-boundary** scan, matching the observed frozen native
+   runner. Periodic checkpoints are an unimplemented enhancement. An indicator
+   freed before this boundary is not recovered by this string scan; executable
+   bytes may instead survive through release carving.
+2. Remote-write controls cover whole successful writes, a refused destination,
+   capture disabled, a real self-process handle and all-zero bytes. They do not
+   establish partial-transfer behavior, remote thread execution or native Windows
+   process injection. All children and writes are confined to emulated state.
+3. The private scan covers committed **private reservations**, including guest
+   heap blocks backed by those reservations. The image scan covers the primary
+   image and accepted companions still loaded in the current process. It does
+   not scan synthetic providers or already-unloaded image backing.
 4. A custom pattern is an indicator extractor, not a semantic classifier. The
    matcher deliberately implements a subset; a legacy pattern using lookaround,
    backreferences or lazy quantifiers is refused, not approximated, and the

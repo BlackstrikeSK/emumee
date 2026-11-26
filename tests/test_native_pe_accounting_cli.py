@@ -13,9 +13,39 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import native_pe_status as status
 import audit_native_surface as surface
 import native_pe_batches as batching
+from native_pe_worklist import fingerprint
 
 
 class NativePeAccountingCliTests(unittest.TestCase):
+    def test_stale_gate_invalidation_binds_the_unmodified_maintained_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = {
+                'scope': 'synthetic-control', 'unresolved': [],
+                'sources': {'Cargo.toml': hashlib.sha256((ROOT / 'Cargo.toml').read_bytes()).hexdigest()},
+                'entries': [{'module': 'kernel32', 'export': 'Probe', 'kind': 'function'}],
+            }
+            maintained = {'schema': 1, 'entries': [], 'required_gates': {
+                'source_regression': {'status': 'verified', 'scope_fingerprint': '0' * 64,
+                                      'evidence': ['synthetic-only']}}}
+            documents = {
+                'inventory': legacy, 'dispatch': {'entries': []},
+                'partition': batching.partition(legacy), 'evidence': maintained,
+            }
+            for name, document in documents.items():
+                (root / f'{name}.json').write_text(json.dumps(document), encoding='utf-8')
+            evidence_before = (root / 'evidence.json').read_bytes()
+            command = [sys.executable, str(ROOT / 'tools/native_api_parity_ledger.py')]
+            for name in documents:
+                command.extend([f'--{name}', str(root / f'{name}.json')])
+            command.extend(['--output', str(root / 'ledger.json')])
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            ledger = json.loads((root / 'ledger.json').read_bytes())
+            self.assertEqual(ledger['required_gates']['source_regression']['status'], 'stale')
+            self.assertEqual(ledger['maintained_evidence_fingerprint'], fingerprint(maintained))
+            self.assertEqual((root / 'evidence.json').read_bytes(), evidence_before)
+
     def test_audit_is_static_and_retains_nested_hook_sites_without_claiming_activation(self):
         result = surface.audit_source('''
 raise RuntimeError("never execute this module")
@@ -55,6 +85,8 @@ def run_native(data, guest_env=None):
             dispatch = root / 'dispatch.json'
             output = root / 'ledger.json'
             partition_path = root / 'batches.json'
+            evidence_path = root / 'evidence.json'
+            evidence_path.write_text(json.dumps({'schema': 1, 'entries': [], 'required_gates': {}}), encoding='utf-8')
             relative = 'tools/inventory_native_api.py'
             legacy = {
                 'scope': 'synthetic-control', 'unresolved': [],
@@ -70,7 +102,7 @@ def run_native(data, guest_env=None):
             partition_path.write_text(json.dumps(batching.partition(legacy)), encoding='utf-8')
             command = [sys.executable, str(ROOT / 'tools/native_api_parity_ledger.py'),
                        '--inventory', str(inventory), '--dispatch', str(dispatch),
-                       '--partition', str(partition_path), '--output', str(output)]
+                       '--partition', str(partition_path), '--evidence', str(evidence_path), '--output', str(output)]
 
             def run(*extra, success=True):
                 result = subprocess.run([*command, *extra], capture_output=True, text=True)
@@ -82,7 +114,7 @@ def run_native(data, guest_env=None):
             self.assertEqual(len(ledger['entries']), 2)
             self.assertFalse(ledger['complete'])
             status_command = [sys.executable, str(ROOT / 'tools/native_pe_status.py'),
-                              '--ledger', str(output), '--partition', str(partition_path)]
+                              '--ledger', str(output), '--partition', str(partition_path), '--evidence', str(evidence_path)]
             original_partition = partition_path.read_bytes()
             corrupt_partition = json.loads(original_partition)
             corrupt_partition['batches'] = []

@@ -1,6 +1,7 @@
 """Combine a frozen legacy AST inventory with exact Rust dispatcher metadata."""
 import argparse
 import json
+from copy import deepcopy
 from collections import Counter
 from pathlib import Path
 
@@ -8,6 +9,17 @@ from native_pe_batches import validate_partition, variants
 from native_pe_worklist import (
     REQUIRED_GATES, apply_evidence, atomic_write, changed_sources, completion, fingerprint, merge_contracts, runtime_snapshot,
 )
+
+
+def binding_for(dispatch, module, name, kind, architecture):
+    candidate = dispatch.get((module, name, architecture))
+    if candidate is None or candidate.get('binding_kind', 'function') != kind:
+        return None
+    if kind == 'data' and (candidate.get('callable') is not False or candidate.get('dispatch') != 'data_model'):
+        return None
+    if kind == 'function' and candidate.get('callable') is False:
+        return None
+    return candidate
 
 
 def main():
@@ -48,7 +60,7 @@ def main():
     rows = []
     for (module, name, kind), sources in sorted(declarations.items()):
         for arch in ('x86', 'x64'):
-            binding = dispatch.get((module, name, arch)) if kind == 'function' else None
+            binding = binding_for(dispatch, module, name, kind, arch)
             status = 'missing_binding' if binding is None or binding['dispatch'] in ('unmodeled', 'explicit_unsupported') else 'unverified_binding'
             rows.append({'module': module, 'export': name, 'kind': kind, 'architecture': arch,
                          'status': status, 'rust_dispatch': binding,
@@ -66,7 +78,9 @@ def main():
         maintained_gates = apply_evidence(rows, maintained)
         gates = previous.get('required_gates', {}) if previous else {}
         gates = {name: gates.get(name, {'status': 'unreviewed', 'evidence': []}) for name in REQUIRED_GATES}
-        gates.update(maintained_gates)
+        # Gate invalidation belongs to the generated ledger. Keep the maintained
+        # document unchanged so its fingerprint binds the actual evidence file.
+        gates.update(deepcopy(maintained_gates))
         scope_fingerprint = fingerprint(sorted(row['source_fingerprint'] for row in rows))
         for gate in gates.values():
             if gate.get('status') == 'verified' and gate.get('scope_fingerprint') != scope_fingerprint:

@@ -1,49 +1,28 @@
-"""Independent closure audit over the full native API denominator.
+"""Independently audit native API closure against the frozen full denominator.
 
-M11 is the global gate of the M8-M11 batch. Its exit tests are "all required
-gates" and "zero open or stale required contracts", read against "an independent
-audit of the full denominator". This tool is that audit.
-
-It does **not** close the model. Every prior milestone states that no partition
-row has semantic closure, and the parity ledger confirms it: all 2590 contracts
-are open and unreviewed. An honest global gate therefore cannot report
-completion. What it can certify, and what this audit does, is that the
-denominator accounting is **reproducible, internally consistent and
-tamper-evident**, and that nothing is credited that has not been earned:
-
-1. The frozen legacy inventory is regenerated from source and must be
-   byte-identical to the committed baseline, so the denominator's left-hand side
-   is intact.
-2. The dispatcher metadata is read from the same release build the M10 matrix
-   sealed, so the audit and the release matrix describe one build.
-3. The parity ledger is produced from those two inputs, and this audit then
-   recomputes the completion status **independently** from the ledger's own
-   entries and must agree with the ledger's self-report — a second opinion on
-   the same denominator.
-4. The honesty invariant is asserted directly: **zero** contracts are credited
-   as closed (none has a closed semantic status and none a stale-but-counted
-   evidence record), so "zero open or stale required contracts" holds in the
-   only sense the evidence supports — nothing is falsely closed — while the
-   count of genuinely open contracts is reported in full.
-5. `complete` must be False and `open_contracts` must equal the contract count;
-   an audit that reported otherwise against this evidence would be the failure.
-
-The receipt binds the ledger fingerprint, the M10 matrix fingerprint and the
-source index, so the global gate is anchored to the same build as the release
-matrix.
+Recompute completion without the ledger's completion algorithm, verify every
+closed claim's source-bound evidence artifacts, and check the same-build release
+matrix and source index. Partial semantic progress is valid; completion requires
+zero open contracts, no unresolved inventory, and every required gate verified.
+The audit never creates semantic evidence or silently seals missing milestones.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from collections import Counter
 import subprocess
 import sys
 
 from native_pe_worklist import (
-    CLOSED_STATES, REQUIRED_GATES, atomic_write, completion, fingerprint,
+    CLOSED_STATES, OPEN_STATES, ROUTES, REQUIRED_GATES, atomic_write, fingerprint,
+    validate_evidence,
+    runtime_snapshot,
 )
+from native_pe_m6 import build_gate
+from native_pe_m10 import matrix as check_matrix, stages
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / 'tools'
@@ -67,10 +46,44 @@ def _load(path):
 
 
 def falsely_closed_count(entries):
-    """Contracts credited as closed. The honesty invariant requires this be 0:
-    nothing may carry a closed semantic status without the evidence to earn it,
-    and in this denominator nothing does."""
-    return sum(row['semantic_status'] in CLOSED_STATES for row in entries)
+    """Count closed semantic claims whose declared evidence is invalid."""
+    invalid = 0
+    for row in entries:
+        if row['semantic_status'] in CLOSED_STATES:
+            try:
+                validate_evidence(row)
+            except (ValueError, KeyError, TypeError):
+                invalid += 1
+    return invalid
+
+
+def independent_completion(entries, unresolved, gates):
+    """Recompute the gate without calling the ledger's completion algorithm."""
+    identities = [(r['module'], r['export'], r['kind'], r['architecture']) for r in entries]
+    assert len(set(identities)) == len(identities), 'Duplicate denominator contract'
+    for row in entries:
+        assert row['semantic_status'] in CLOSED_STATES | OPEN_STATES, 'Unknown semantic status'
+        assert row['submitted_route'] in ROUTES, 'Unknown submitted route'
+        validate_evidence(row)
+    opened = [r for r in entries if not (
+        r['semantic_status'] in CLOSED_STATES
+        and (r['status'] != 'missing_binding' or r['semantic_status'] == 'not_applicable_with_proof')
+        and r['submitted_route'] in ('verified', 'not_applicable_with_proof'))]
+    scope = fingerprint(sorted(r['source_fingerprint'] for r in entries))
+    qualified_gates = set(gates) == set(REQUIRED_GATES) and all(
+        isinstance(g, dict) and g.get('status') == 'verified' and g.get('evidence')
+        and g.get('scope_fingerprint') == scope for g in gates.values())
+    return dict(complete=bool(entries) and not unresolved and not opened and bool(qualified_gates),
+                open_contracts=len(opened),
+                semantic_counts=dict(Counter(r['semantic_status'] for r in entries)),
+                submitted_route_counts=dict(Counter(r['submitted_route'] for r in entries)),
+                scope_fingerprint=scope)
+
+
+def verify_semantic_artifacts(entries, root=ROOT, *, bundle=None, runtime_fingerprint=None, source_index=None):
+    from native_pe_semantic_proofs import verify_artifacts
+    return verify_artifacts(entries, root, bundle=bundle, runtime_fingerprint=runtime_fingerprint,
+                            source_index=source_index)
 
 
 def build_ledger(root, bundle):
@@ -92,16 +105,34 @@ def build_ledger(root, bundle):
     return ledger
 
 
+def verify_release_anchor(bundle, matrix_path, index_path):
+    release_root = bundle.resolve().parent
+    assert bundle.resolve() == release_root / 'bundle', 'Expected the frozen release bundle directory'
+    assert matrix_path.resolve() == release_root / 'qualified-m10.json', 'Matrix belongs to another release root'
+    build_gate(release_root, index_path.resolve())
+    # Check existing evidence only: an audit must not create a missing milestone
+    # seal or run controls as a side effect of checking a release claim.
+    for _, produced, _, _, check_step in stages(release_root, index_path.resolve()):
+        assert (release_root / produced).is_file(), f'Missing release milestone: {produced}'
+        check_step()
+    check_matrix(release_root, index_path.resolve(), check=True)
+
+
 def audit_document(root, bundle, matrix_path, index_path):
+    verify_release_anchor(bundle, matrix_path, index_path)
     ledger_path = root / 'audit/ledger.json'
     ledger = _load(ledger_path)
+    assert ledger['runtime_source_hashes'] == runtime_snapshot(ROOT), 'Ledger runtime dependencies are stale'
+    assert ledger['source_hashes'] == _load(BASELINE)['sources'], 'Ledger baseline dependencies differ'
+    assert ledger['maintained_evidence_fingerprint'] == fingerprint(
+        _load(ROOT / 'docs/native-pe/evidence.json')), 'Ledger maintained evidence is stale'
     partition = _load(PARTITION)
     entries = ledger['entries']
 
     # Independent recomputation of the completion status from the ledger's own
     # entries and gates: a second opinion that must match the ledger's report.
-    independent = completion(entries, ledger['inventory_unresolved'], ledger['required_gates'])
-    for field in ('complete', 'open_contracts', 'semantic_counts', 'scope_fingerprint'):
+    independent = independent_completion(entries, ledger['inventory_unresolved'], ledger['required_gates'])
+    for field in ('complete', 'open_contracts', 'semantic_counts', 'submitted_route_counts', 'scope_fingerprint'):
         assert independent[field] == ledger[field], ('ledger self-report disagrees with the audit', field)
 
     # The denominator's shape is exactly the frozen partition.
@@ -110,31 +141,35 @@ def audit_document(root, bundle, matrix_path, index_path):
     assert ledger['partition_fingerprint'] == fingerprint(partition), 'Partition fingerprint drifted'
     assert not ledger['inventory_changes']['added'] and not ledger['inventory_changes']['removed'], 'Unreviewed inventory drift'
     assert sum(ledger['counts'].values()) == 2590, 'Binding counts do not cover the denominator'
+    expected_contracts = {tuple(key) for batch in partition['batches'] for key in batch['contracts']}
+    actual_contracts = {(r['module'], r['export'], r['kind'], r['architecture']) for r in entries}
+    assert actual_contracts == expected_contracts, 'Ledger contracts differ from the frozen partition'
+    assert ledger['counts'] == dict(Counter(r['status'] for r in entries)), 'Binding counts differ from entries'
 
-    # The honesty invariant: nothing is credited that was not earned. Zero
-    # contracts are closed, and none carries a stale evidence record counted as
-    # closed, so "zero open or stale required contracts" holds as "nothing
-    # falsely closed" while the open count is reported in full.
+    # Legitimate partial closure is allowed; invalid or stale evidence cannot be
+    # credited. Open contracts and gates still prevent global completion.
     falsely_closed = falsely_closed_count(entries)
     stale_evidence = sum(row['semantic_status'] == 'stale' for row in entries)
     assert falsely_closed == 0, f'{falsely_closed} contracts credited as closed without the evidence to support it'
     open_contracts = independent['open_contracts']
     # An honest global gate over this evidence reports the denominator open, not closed.
-    assert independent['complete'] is False, 'The audit must not report completion while the denominator is open'
-    assert open_contracts == 2590, 'Every contract in the denominator is open; the count must say so'
+    semantic_artifacts = verify_semantic_artifacts(entries, bundle=bundle,
+        runtime_fingerprint=fingerprint(runtime_snapshot(ROOT)), source_index=index_path)
 
     gate_states = {name: ledger['required_gates'].get(name, {}).get('status', 'unreviewed') for name in REQUIRED_GATES}
     matrix = _load(matrix_path)
     index = _load(index_path)
 
     document = dict(
-        schema=1,
+        schema=2,
         scope='M11 independent closure audit of the full native API denominator; '
-              'certifies the accounting is reproducible, consistent and honest, not that any contract is closed',
-        complete=False,
+              'completion requires source-bound semantic evidence, submitted routes and every required gate',
+        complete=independent['complete'],
         denominator=dict(
             contracts=len(entries),
             open_contracts=open_contracts,
+            closed_contracts=len(entries) - open_contracts,
+            semantic_artifacts=semantic_artifacts,
             falsely_closed=falsely_closed,
             stale_evidence=stale_evidence,
             binding_counts=ledger['counts'],
@@ -155,8 +190,8 @@ def audit_document(root, bundle, matrix_path, index_path):
                           sha256=_sha(index_path),
                           source_fingerprint=index.get('source_fingerprint')),
         honest_scope=[
-            'No partition row has semantic closure; this audit does not create any.',
-            f'All {open_contracts} contracts are open and unreviewed; the audit reports the denominator, it does not close it.',
+            'The audit validates declared closure evidence and never creates semantic evidence.',
+            f'{open_contracts} of {len(entries)} contracts remain open, including unverified submitted routes.',
             'The required gates are reported in their true state (verified, stale or unreviewed), not forced to verified.',
             'What is certified is that the accounting is reproducible from frozen inventory and same-build dispatch, '
             'internally consistent, tamper-evident, and credits nothing it has not earned.',

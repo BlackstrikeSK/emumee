@@ -147,6 +147,12 @@ fn memory(engine: &mut Unicorn<Trace>, args: &[u64], write: bool) -> Result<u64>
             return Ok(failure(engine, 299));
         }
     };
+    // The dispatcher handles genuine remote transfers here rather than through
+    // user_runtime's local fallback. Capture only after the target write has
+    // succeeded and the caller's address space (and capture catalog) is restored.
+    if write && id != caller {
+        user_runtime::carve_remote_write(engine, id, args[1], source);
+    }
     if !write && size != 0 {
         crate::cpu::write(engine, args[2], &bytes)?;
     }

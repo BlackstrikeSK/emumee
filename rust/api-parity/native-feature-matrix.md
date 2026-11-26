@@ -31,8 +31,8 @@ the original audit revision above is historical, not the current checkout HEAD.
 | ID | Legacy contract / source | Rust implementation / public reachability | Owner and next control |
 | --- | --- | --- | --- |
 | N13 | CPU identity/time/instruction observation and mapped-file write hooks | Image-write observation now covers the submitted user route; guest-written instructions and their cache invalidation, the image protection boundary and the persona version/locale/volume/firmware observations pass M6 guest controls | M6 qualified: docs/native-pe/m6-vfs-registry-persona.md; exact legacy hook closure for remaining CPU/time hooks stays open |
-| N14 | Memory IP/URL/custom-regex capture, `--no-memory-strings` | Submitted request carries an opt-in bounded capture configuration end to end (CLI `--inputs`, request, plan, engine); built-in IPv4/IPv6/URL plus linear-time custom patterns scan the settled image under explicit read/scan budgets, with admission-time pattern refusal and recorded omissions | M8 qualified for the submitted image: docs/native-pe/m8-capture-indicators-carving.md; live private-mapping and checkpoint scans remain open |
-| N15 | File/drop/memory/PE-carving artifacts, group/context attribution | Worker saves artifact bytes; controller verifies artifacts; forced section unmaps are attributed run-wide; an executable-protection transition now classifies and retains a dropped PE (`CarvedImage`) or a non-PE payload (`ExecutableRegion`) with writer/provenance context | M8 closed the executable-protection transition: docs/native-pe/m8-capture-indicators-carving.md; VirtualFree/overwrite/delete/exit-byte and remote-write provenance remain open |
+| N14 | Memory IP/URL/custom-regex capture, `--no-memory-strings` | Submitted request carries an opt-in bounded capture configuration end to end (CLI `--inputs`, request, plan, engine); built-in IPv4/IPv6/URL plus linear-time custom patterns scan the settled image under explicit read/scan budgets, with admission-time pattern refusal and recorded omissions | M8 covers the submitted image and live private reservations with shared read/scan accounting: docs/native-pe/m8-capture-indicators-carving.md; the settled scan includes accepted companions; periodic scans are an unimplemented enhancement, not observed in the frozen native runner |
+| N15 | File/drop/memory/PE-carving artifacts, group/context attribution | Worker saves artifact bytes; controller verifies artifacts; forced section unmaps are attributed run-wide; an executable-protection transition now classifies and retains a dropped PE (`CarvedImage`) or a non-PE payload (`ExecutableRegion`) with writer/provenance context | M8 covers executable-protection transitions, executable reservation release, VFS drops and remote writes: docs/native-pe/m8-capture-indicators-carving.md; overwrite/delete/exit-byte capture remains open |
 | N16 | `engine-report.json`, API coverage/signature-only refusal, entry points and terminal reason | Versioned result/manifest and execution events exist; the submitted-sample capture fields are validated on every bundle build and re-checked in the summary, so a capture cannot be dropped or edited; exact legacy schema/event/error mapping otherwise unreviewed | M8 closed the capture fields; remaining legacy schema/event mapping stays open |
 | N17 | Console and CRT streams, registry/network/process/environment/adapter/feature events | Individual models exist; the milestone replay now holds a reviewed set of every serialized execution report field and requires the contained replay to reproduce that set exactly, so a dropped or unreviewed observation fails the seal | M8 closed the report-field audit: docs/native-pe/m8-capture-indicators-carving.md; per-family field semantics stay open |
 | N18 | Native-facing CLR/MSI declarations and conditional/ordinal overrides | Source review identifies literal-zero CorExitProcess and MsiDatabaseMergeA/name+ordinal placeholders on both arches; six contracts retained | M7: qualify placeholders without claiming general CLR/MSI or process-exit semantics |
@@ -98,16 +98,19 @@ are bound into the report and re-checked in the summary. The additive profile
 `emumee.user-memory-indicators.v1` leaves the closed indicator slice untouched,
 so every earlier milestone receipt is unchanged.
 
-Twelve contained controls (`strings-Builtin`, `strings-Custom`,
-`strings-Private`, `carve-Shellcode`, `carve-Released`, `carve-DroppedPe`, each
-for x86 and x64) are replayed through the packaged worker by
+Thirty-four contained controls (seventeen cases, each for x86 and x64) are
+replayed through the packaged worker by
 `tools/native_pe_m8.py`, which also enforces the N16/N17 report-field audit. The
 scan covers the settled image and every committed private reservation, and a
 payload is retained at each moment it becomes observable: a protection
 transition, a release, a VFS drop and a remote write. See
 `../../docs/native-pe/m8-capture-indicators-carving.md` for exact scope, the
-matcher subset and the limits; periodic checkpoints, a remote-write guest
-control, per-family field semantics and the global M10-M11 gates stay open.
+matcher subset and the limits. The 2026-11-24 follow-ups add real emulated-child
+remote-write controls and negative controls, shared image/private read-budget
+accounting, prefix/exhaustion controls and real companion-image scanning that excludes
+synthetic providers. The frozen runner performs its string scan at the settled
+boundary; periodic scanning is an enhancement rather than a missing observed
+baseline behavior. Per-family field semantics and global qualification remain open.
 
 ## N19 cross-family operational chains
 
@@ -139,20 +142,32 @@ change. See `../../docs/native-pe/m10-same-build-release-matrix.md`; the matrix
 is the union of the milestone seals and adds no new denominator, no row gains
 semantic closure, and the M11 global gates stay open.
 
-## Global closure audit
+## Global closure audit and semantic evidence
 
-`tools/native_pe_m11.py` is the independent audit of the full denominator. It
-regenerates the frozen legacy inventory from source (byte-identical to the
-committed baseline), reads the contract dispatch from the same release build the
-M10 matrix sealed, produces the parity ledger, and then recomputes the
-completion status independently from the ledger's own entries and requires the
-two to agree. It asserts the honesty invariant directly -- the denominator is
-exactly the frozen 2590 contracts, nothing is credited as closed, and `complete`
-is false with every contract open -- and seals a receipt bound to the M10 matrix
-fingerprint. It certifies the accounting is reproducible, consistent and
-tamper-evident; it closes nothing. As of this audit all 2590 contracts are open
-(1899 model-bound but semantically unverified, 691 unmodeled or refused), zero
-are falsely closed, and the required gates stand at 0 verified, 1 stale and 7
-unreviewed. See `../../docs/native-pe/m11-closure-audit.md`; per-contract
-semantic parity for every row -- a green `complete` -- remains the standing
-future work the audit keeps visible.
+The schema-2 `tools/native_pe_m11.py` independently recomputes completion over
+all 2590 contracts, checks their exact partition identities and binding counts,
+requires source/architecture-bound proof artifacts for closed claims, and verifies
+the current source index and every existing same-build M10 milestone seal.
+Evidence-backed partial closure is allowed; zero open contracts and every
+required gate remain necessary for completion. The earlier permanently-all-open
+receipt was an accounting snapshot, not satisfaction of M11's exit test.
+
+Eight semantic qualifiers now publish through one atomic family publisher:
+`tools/native_pe_semantic_strlen.py`, `_literals`, `_voids`, `_locals`,
+`_interlocked`, `_crt_data`, `_winstrings` and `_heap_checks`. Each one pins the
+frozen legacy source, regenerates its own contained guests from the reference,
+and checks arguments, return values, last error, memory artifacts and
+diagnostics against the one release build that carries them. Together they close
+278 of 2590 contracts -- 210 frozen placeholders, 56 models and 12 accepted
+intentional changes -- and 2312 rows stay open. Only independently checked
+qualification and published source-bound evidence close a row; tests or
+dispatcher presence alone do not. Exact gate and proof semantics:
+`../../docs/native-pe/m11-closure-audit.md`.
+
+The heap-check family carries a real behavioral fix rather than only accounting:
+`HeapValidate` and `RtlSizeHeap` now verify guest read access, so a live block
+left `PAGE_NOACCESS` is no longer reported valid or sizable. Its two documented
+departures -- rejecting a pointer owned by another known heap and reporting the
+requested block size -- are qualified as accepted intentional changes under
+`../../docs/native-pe/behavior-decisions.md`, not claimed as legacy equivalence.
+See `../../docs/native-pe/heap-checks-qualification.md`.

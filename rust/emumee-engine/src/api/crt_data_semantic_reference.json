@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvcrt.py",
+  "source_sha256": "17e9fb84953bc544a558b52efb0c788d8c6c2d15160f18afd914d2952bfa9673",
+  "contracts": [
+    {
+      "module": "msvcrt",
+      "export": "_acmdln",
+      "kind": "data",
+      "architecture": "x86",
+      "reference_sources": [
+        {
+          "module": "msvcrt",
+          "export": "_acmdln",
+          "kind": "data",
+          "argc": 0,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvcrt.py",
+          "line": 75,
+          "end_line": 89,
+          "body_sha256": "53e047b3e7a3623c85b0558717295792d1cd97f322fffc461f4c483d21f297f8",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "msvcrt",
+      "export": "_acmdln",
+      "kind": "data",
+      "architecture": "x64",
+      "reference_sources": [
+        {
+          "module": "msvcrt",
+          "export": "_acmdln",
+          "kind": "data",
+          "argc": 0,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvcrt.py",
+          "line": 75,
+          "end_line": 89,
+          "body_sha256": "53e047b3e7a3623c85b0558717295792d1cd97f322fffc461f4c483d21f297f8",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "msvcrt",
+      "export": "__p__acmdln",
+      "kind": "function",
+      "architecture": "x86",
+      "reference_sources": [
+        {
+          "module": "msvcrt",
+          "export": "__p__acmdln",
+          "kind": "function",
+          "argc": 0,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvcrt.py",
+          "line": 92,
+          "end_line": 97,
+          "body_sha256": "f94c7dfdbcf878aecf34bd4b81afa06c29ceca322d48ed35f289498b17537565",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    },
+    {
+      "module": "msvcrt",
+      "export": "__p__acmdln",
+      "kind": "function",
+      "architecture": "x64",
+      "reference_sources": [
+        {
+          "module": "msvcrt",
+          "export": "__p__acmdln",
+          "kind": "function",
+          "argc": 0,
+          "convention": "stdcall",
+          "ordinal": null,
+          "source": ".venv/Lib/site-packages/speakeasy/winenv/api/usermode/msvcrt.py",
+          "line": 92,
+          "end_line": 97,
+          "body_sha256": "f94c7dfdbcf878aecf34bd4b81afa06c29ceca322d48ed35f289498b17537565",
+          "literal_return_only": false,
+          "literal_result": null,
+          "origin": "speakeasy_baseline",
+          "character_width_dispatch": false
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "architecture": "x86",
+      "width": 4,
+      "imported_cell": 822083584,
+      "first_accessor_cell": 822083616,
+      "second_accessor_cell": 822083648,
+      "imported_pointer": 305418240,
+      "accessor_pointer": 822083620,
+      "provided_pointer": 305422336,
+      "allocations": 3
+    },
+    {
+      "architecture": "x64",
+      "width": 8,
+      "imported_cell": 822083584,
+      "first_accessor_cell": 822083616,
+      "second_accessor_cell": 822083648,
+      "imported_pointer": 305418240,
+      "accessor_pointer": 822083624,
+      "provided_pointer": 305422336,
+      "allocations": 3
+    }
+  ]
+}

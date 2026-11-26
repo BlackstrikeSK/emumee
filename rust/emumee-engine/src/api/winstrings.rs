@@ -347,6 +347,9 @@ pub(super) fn invoke(engine: &mut Unicorn<Trace>, args: &[u64], call: Call) -> R
             address
         }
         Call::Trim => {
+            if args[0] == 0 {
+                return Ok(0);
+            }
             let (Some(value), Some(chars)) = (
                 text(engine, args[0], -1, true),
                 text(engine, args[1], -1, true),
